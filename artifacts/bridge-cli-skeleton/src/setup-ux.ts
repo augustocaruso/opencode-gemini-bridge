@@ -8,15 +8,23 @@ import { resolveCommand } from "./command-resolution.js";
 import { normalizeRuntimeOptions, type OgbConfig } from "./ogb-config.js";
 import { OGB_VERSION } from "./types.js";
 
-export const OGB_UX_PLUGINS = [
+export const OGB_UX_SAFE_PLUGINS = [
   "opencode-gemini-auth@1.4.12",
   "@ex-machina/opencode-anthropic-auth@1.8.0",
   "opencode-update-notifier@0.1.0",
-  "opencode-auto-fallback@0.4.2",
   "@tarquinen/opencode-dcp@3.1.9",
   "opencode-pty@0.3.4",
+];
+
+export const OGB_UX_POST_AUTH_PLUGINS = [
   "opencode-websearch-cited@1.2.0",
 ];
+
+export const OGB_UX_DISABLED_PLUGINS = [
+  "opencode-auto-fallback@0.4.2",
+];
+
+export const OGB_UX_PLUGINS = OGB_UX_SAFE_PLUGINS;
 
 export const RESEARCH_COMMAND = `---
 description: Pesquisa web com citacoes e sintese curta
@@ -132,7 +140,7 @@ export const OGB_UX_PROJECT_CONFIG: OgbConfig = {
       percentDisplayMode: "used",
     },
     autoFallback: {
-      enabled: true,
+      enabled: false,
       plugin: "opencode-auto-fallback@0.4.2",
       installProjectPlugin: false,
       cooldownMs: 60_000,
@@ -256,24 +264,60 @@ function unique(values: string[]): string[] {
   return [...new Set(values.map((item) => item.trim()).filter(Boolean))];
 }
 
-function cleanManagedProviderOptions(value: unknown): Record<string, unknown> | undefined {
+function authFilePath(homeDir: string): string {
+  if (process.platform === "win32") {
+    return path.join(process.env.LOCALAPPDATA || path.join(homeDir, "AppData", "Local"), "opencode", "auth.json");
+  }
+  if (process.env.XDG_DATA_HOME && path.resolve(homeDir) === os.homedir()) {
+    return path.join(process.env.XDG_DATA_HOME, "opencode", "auth.json");
+  }
+  return path.join(homeDir, ".local", "share", "opencode", "auth.json");
+}
+
+function hasCredential(auth: Record<string, unknown>, provider: string): boolean {
+  const credential = asRecord(auth[provider]);
+  if (Object.keys(credential).length === 0) return false;
+  const type = typeof credential.type === "string" ? credential.type : "";
+  if (type === "oauth") return typeof credential.refresh === "string" || typeof credential.access === "string";
+  if (type === "api") return typeof credential.key === "string" || typeof credential.apiKey === "string";
+  return type.length > 0;
+}
+
+function authenticatedProviders(homeDir: string): Record<"openai" | "google", boolean> {
+  const auth = readJsonc(authFilePath(homeDir));
+  return {
+    openai: hasCredential(auth, "openai"),
+    google: hasCredential(auth, "google"),
+  };
+}
+
+function pluginsForAuthState(auth: Record<"openai" | "google", boolean>): string[] {
+  const plugins = [...OGB_UX_SAFE_PLUGINS];
+  if (auth.openai && auth.google) plugins.push(...OGB_UX_POST_AUTH_PLUGINS);
+  return unique(plugins);
+}
+
+function cleanManagedProviderOptions(value: unknown, enableWebsearchCited: boolean): Record<string, unknown> | undefined {
   const provider = asRecord(value);
   const cleanedProvider: Record<string, unknown> = { ...provider };
   const openai = asRecord(cleanedProvider.openai);
 
-  if (Object.keys(openai).length > 0) {
+  if (Object.keys(openai).length > 0 || enableWebsearchCited) {
     const cleanedOpenai: Record<string, unknown> = { ...openai };
     const options = asRecord(cleanedOpenai.options);
+    const cleanedOptions: Record<string, unknown> = { ...options };
+    delete cleanedOptions.websearch_cited;
 
-    if (Object.keys(options).length > 0) {
-      const cleanedOptions: Record<string, unknown> = { ...options };
-      delete cleanedOptions.websearch_cited;
+    if (enableWebsearchCited) {
+      cleanedOptions.websearch_cited = {
+        model: "gpt-5.5",
+      };
+    }
 
-      if (Object.keys(cleanedOptions).length > 0) {
-        cleanedOpenai.options = cleanedOptions;
-      } else {
-        delete cleanedOpenai.options;
-      }
+    if (Object.keys(cleanedOptions).length > 0) {
+      cleanedOpenai.options = cleanedOptions;
+    } else {
+      delete cleanedOpenai.options;
     }
 
     if (Object.keys(cleanedOpenai).length > 0) {
@@ -286,9 +330,9 @@ function cleanManagedProviderOptions(value: unknown): Record<string, unknown> | 
   return Object.keys(cleanedProvider).length > 0 ? cleanedProvider : undefined;
 }
 
-function mergeGlobalConfig(current: Record<string, unknown>, defaultAgent = "agent"): Record<string, unknown> {
+function mergeGlobalConfig(current: Record<string, unknown>, defaultAgent = "agent", plugins = OGB_UX_SAFE_PLUGINS): Record<string, unknown> {
   const { provider: currentProvider, ...currentWithoutProvider } = current;
-  const cleanedProvider = cleanManagedProviderOptions(currentProvider);
+  const cleanedProvider = cleanManagedProviderOptions(currentProvider, plugins.includes("opencode-websearch-cited@1.2.0"));
   const agent = asRecord(current.agent);
   const buildAgent = asRecord(agent.build);
   const primaryAgent = asRecord(agent.agent);
@@ -297,7 +341,7 @@ function mergeGlobalConfig(current: Record<string, unknown>, defaultAgent = "age
   return {
     ...currentWithoutProvider,
     $schema: "https://opencode.ai/config.json",
-    plugin: unique(OGB_UX_PLUGINS),
+    plugin: unique(plugins),
     share: "manual",
     autoupdate: "notify",
     small_model: "openai/gpt-5.4-mini",
@@ -490,6 +534,17 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
   const writes: SetupUxWrite[] = [];
   const commands: SetupUxCommand[] = [];
   const warnings: string[] = [];
+  const auth = authenticatedProviders(homeDir);
+  const desiredPlugins = pluginsForAuthState(auth);
+  const enableWebsearchCited = desiredPlugins.includes("opencode-websearch-cited@1.2.0");
+
+  if (!enableWebsearchCited) {
+    const missing = [
+      auth.openai ? undefined : "OpenAI",
+      auth.google ? undefined : "Google/Gemini",
+    ].filter((item): item is string => Boolean(item));
+    warnings.push(`opencode-websearch-cited foi adiado ate concluir auth em ${missing.join(" e ")}. Rode /connect e depois ogb setup-ux para reativar automaticamente.`);
+  }
 
   const existingOpenCode = resolveCommand("opencode", { homeDir });
   if (options.installOpenCode === false) {
@@ -500,7 +555,7 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
     commands.push(runCommand(installOpenCodeCommand(), options.dryRun));
   }
 
-  const merged = mergeGlobalConfig(readJsonc(configPath), OGB_UX_PROJECT_CONFIG.openCode?.defaultAgent);
+  const merged = mergeGlobalConfig(readJsonc(configPath), OGB_UX_PROJECT_CONFIG.openCode?.defaultAgent, desiredPlugins);
   writes.push(writeText({
     filePath: configPath,
     text: `${JSON.stringify(merged, null, 2)}\n`,
@@ -548,7 +603,7 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
   }
 
   if (options.installPlugins !== false) {
-    for (const plugin of OGB_UX_PLUGINS) {
+    for (const plugin of desiredPlugins) {
       const opencodeCommand = options.dryRun === true ? "opencode" : resolveCommand("opencode", { homeDir });
       if (!opencodeCommand) {
         commands.push({ command: ["opencode", "plugin", plugin, "--global", "--force"], status: "skipped", message: "OpenCode is not available" });

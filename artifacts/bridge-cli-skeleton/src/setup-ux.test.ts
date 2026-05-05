@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { parse as parseJsonc } from "jsonc-parser";
-import { OGB_UX_PLUGINS, setupUx } from "./setup-ux.js";
+import { OGB_UX_PLUGINS, OGB_UX_POST_AUTH_PLUGINS, setupUx } from "./setup-ux.js";
 
 function tempRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ogb-ux-"));
@@ -35,6 +35,8 @@ test("setupUx writes global OpenCode UX profile and project fallback profile", (
 
   const globalConfig = readJson(path.join(configDir, "opencode.json"));
   assert.deepEqual(globalConfig.plugin, OGB_UX_PLUGINS);
+  assert.equal(globalConfig.plugin.includes("opencode-auto-fallback@0.4.2"), false);
+  assert.equal(globalConfig.plugin.includes("opencode-websearch-cited@1.2.0"), false);
   assert.equal(globalConfig.share, "manual");
   assert.equal(globalConfig.default_agent, "YOLO");
   assert.equal(globalConfig.agent.build.disable, true);
@@ -50,7 +52,7 @@ test("setupUx writes global OpenCode UX profile and project fallback profile", (
   assert.match(yolo, /external_directory: ask/);
 
   const fallback = readJson(path.join(configDir, "plugins", "fallback.json"));
-  assert.equal(fallback.enabled, true);
+  assert.equal(fallback.enabled, false);
   assert.equal(fallback.cooldownMs, 60_000);
   assert.equal(fallback.maxRetries, 2);
   assert.equal(fallback.agentFallbacks["med-chat-triager"][0].model, "openai/gpt-5.4-mini");
@@ -96,6 +98,11 @@ test("setupUx removes stale websearch_cited provider option without dropping use
   fs.mkdirSync(configDir, { recursive: true });
   fs.mkdirSync(projectRoot, { recursive: true });
   fs.writeFileSync(path.join(configDir, "opencode.json"), JSON.stringify({
+    plugin: [
+      "opencode-gemini-auth@1.4.12",
+      "opencode-auto-fallback@0.4.2",
+      "opencode-websearch-cited@1.2.0",
+    ],
     provider: {
       openai: {
         options: {
@@ -118,9 +125,48 @@ test("setupUx removes stale websearch_cited provider option without dropping use
   });
 
   const globalConfig = readJson(path.join(configDir, "opencode.json"));
+  assert.equal(globalConfig.plugin.includes("opencode-auto-fallback@0.4.2"), false);
+  assert.equal(globalConfig.plugin.includes("opencode-websearch-cited@1.2.0"), false);
   assert.equal(globalConfig.provider.openai.options.websearch_cited, undefined);
   assert.equal(globalConfig.provider.openai.options.organization, "org-user");
   assert.equal(globalConfig.provider["my-provider"].name, "My Provider");
+});
+
+test("setupUx re-enables websearch-cited automatically after OpenAI and Google auth exist", () => {
+  const root = tempRoot();
+  const homeDir = path.join(root, "home");
+  const configDir = path.join(root, "config", "opencode");
+  const projectRoot = path.join(root, "project");
+  const authPath = path.join(homeDir, ".local", "share", "opencode", "auth.json");
+  fs.mkdirSync(path.dirname(authPath), { recursive: true });
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.writeFileSync(authPath, JSON.stringify({
+    openai: {
+      type: "oauth",
+      access: "openai-access",
+      refresh: "openai-refresh",
+      expires: Date.now() + 60_000,
+    },
+    google: {
+      type: "oauth",
+      access: "google-access",
+      refresh: "google-refresh",
+      expires: Date.now() + 60_000,
+    },
+  }), "utf8");
+
+  const report = setupUx({
+    homeDir,
+    configDir,
+    projectRoot,
+    installOpenCode: false,
+    installPlugins: false,
+  });
+
+  const globalConfig = readJson(path.join(configDir, "opencode.json"));
+  assert.deepEqual(globalConfig.plugin, [...OGB_UX_PLUGINS, ...OGB_UX_POST_AUTH_PLUGINS]);
+  assert.equal(globalConfig.provider.openai.options.websearch_cited.model, "gpt-5.5");
+  assert.equal(report.warnings.some((warning) => warning.includes("opencode-websearch-cited foi adiado")), false);
 });
 
 test("setupUx dry-run previews OpenCode install or update by default", () => {

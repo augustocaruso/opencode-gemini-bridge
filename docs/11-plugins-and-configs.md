@@ -8,9 +8,15 @@ Configuracao ativa hoje, sem instalar nada novo:
 
 - global `~/.config/opencode/opencode.json`: `opencode-gemini-auth@1.4.12`,
   `@ex-machina/opencode-anthropic-auth@1.8.0`,
-  `opencode-update-notifier@0.1.0`, `opencode-auto-fallback@0.4.2`,
-  `@tarquinen/opencode-dcp@3.1.9`, `opencode-pty@0.3.4` e
-  `opencode-websearch-cited@1.2.0`;
+  `opencode-update-notifier@0.1.0`, `@tarquinen/opencode-dcp@3.1.9`,
+  `opencode-pty@0.3.4`.
+  `opencode-websearch-cited@1.2.0` entra automaticamente apenas depois que
+  OpenAI e Google/Gemini ja tiverem credenciais no `auth.json`, porque registra
+  auth hooks de OpenAI/Google apenas com API key e pode esconder OAuth desses
+  providers em maquina limpa.
+  `opencode-auto-fallback@0.4.2` foi observado no ambiente local antigo, mas
+  falha no OpenCode 1.14.39 com `Cannot find module '@/core/plugin'` e nao faz
+  mais parte do perfil distribuivel padrao;
 - global `~/.config/opencode/opencode.json`: `autoupdate: "notify"`,
   `share: "manual"`, `small_model: "openai/gpt-5.4-mini"`, `tool_output`
   compacto, compaction automatica com pruning, cauda recente preservada e
@@ -24,13 +30,13 @@ Configuracao ativa hoje, sem instalar nada novo:
 - projeto `~/opencode.jsonc`: contexto OGB, agente primario `agent`, `build`
   desabilitado, MCPs `anki-mcp` e `gemini-md-export`, sem plugins de projeto
   duplicando os globais;
-- config resolvida por `opencode debug config`: plugins globais + fallback +
+- config resolvida por `opencode debug config`: plugins globais compativeis +
   startup sync local `file://~/.opencode/plugins/ogb-startup-sync.js`;
 - TUI global `~/.config/opencode/tui.json`: mouse ligado, plugin vazio;
 - TUI de projeto `~/.opencode/tui.jsonc`: sidebar OGB local em
   `./tui-plugins/ogb-sidebar.js`;
-- runtime fallback gerado em
-  `~/.config/opencode/plugins/fallback.json`.
+- runtime fallback gerado em `~/.config/opencode/plugins/fallback.json`, mas
+  desabilitado no perfil padrao ate o plugin externo voltar a carregar limpo.
 
 Observacao importante: a config atual nao define permissao global explicita para
 `edit`/`bash`. Os subagentes medicos projetados usam `ask`, mas o agente
@@ -40,9 +46,25 @@ perguntar antes de editar ou rodar shell.
 ## Perfil distribuivel do OGB
 
 `ogb setup-ux` replica esse estado em outra maquina sem copiar dados pessoais.
-Ele grava somente configuracoes, plugins, comandos globais, DCP, YOLO e as
-politicas de fallback/subagente. O conteudo unico do Gemini CLI de cada pessoa
-continua local e entra no OpenCode pelo `ogb sync`.
+Ele garante a instalacao/atualizacao do OpenCode, grava somente configuracoes,
+plugins compativeis, comandos globais, DCP, YOLO e as politicas de
+fallback/subagente. O conteudo unico do Gemini CLI de cada pessoa continua local
+e entra no OpenCode pelo `ogb sync`.
+
+Motivo: auth e plugins do OpenCode mudam rapido. Se a maquina ja tinha um
+`opencode` antigo no `PATH`, pular a atualizacao podia deixar o usuario vendo
+somente o fluxo de API key, mesmo com a config nova gravada.
+
+Fluxo de onboarding:
+
+- antes do auth, `ogb setup-ux` instala so os plugins seguros para abrir OAuth
+  de OpenAI, Google/Gemini e Anthropic;
+- depois de autenticar OpenAI e Google/Gemini com `/connect`, rode
+  `ogb setup-ux` novamente; ele detecta as credenciais e reativa
+  `opencode-websearch-cited@1.2.0` automaticamente;
+- se uma maquina antiga ja tinha `opencode-websearch-cited`, a proxima execucao
+  remove temporariamente o plugin e limpa `provider.openai.options.websearch_cited`
+  ate o auth estar completo.
 
 O agente padrao tambem fica no perfil OGB:
 
@@ -135,6 +157,12 @@ formatter compacto inspirado no plugin.
 
 ### 3. `opencode-auto-fallback`
 
+Estado atual:
+
+- Desabilitado no `ogb setup-ux` por incompatibilidade observada com OpenCode
+  1.14.39: o plugin tenta importar `@/core/plugin` e falha durante o load.
+- Pode voltar para o perfil padrao quando houver uma versao compativel validada.
+
 Uso:
 
 - Runtime fallback real: escuta erro/status da sessao, aplica retry/backoff,
@@ -151,7 +179,7 @@ Config OGB:
 {
   "externalPlugins": {
     "autoFallback": {
-      "enabled": true,
+      "enabled": false,
       "cooldownMs": 60000,
       "maxRetries": 2,
       "logging": false
@@ -170,7 +198,7 @@ Config OGB:
 }
 ```
 
-Quando habilitado, `ogb sync`:
+Quando habilitado manualmente, `ogb sync`:
 
 - adiciona `opencode-auto-fallback` ao `opencode.jsonc`;
 - converte as cadeias `modelFallbacks.*.fallback_models` do OGB para
@@ -235,8 +263,7 @@ Estado recomendado:
 
 - [x] Primeiro trocar plugins flutuantes por versoes pinadas apos validar uma versao
   boa. Exemplo: `opencode-gemini-auth@1.4.12`,
-  `@ex-machina/opencode-anthropic-auth@1.8.0`,
-  `opencode-auto-fallback@0.4.2`.
+  `@ex-machina/opencode-anthropic-auth@1.8.0`.
 - [x] Instalar `opencode-update-notifier@0.1.0`.
 - Testar visualmente o toast depois de reiniciar o OpenCode.
 
@@ -293,9 +320,15 @@ Valor:
 
 Estado recomendado:
 
-- Ativo globalmente em `opencode-websearch-cited@1.2.0`.
-- Provider: OpenAI, modelo interno da busca `gpt-5.5`.
-- Mantido por ultimo na lista de plugins como o README recomenda.
+- Usar como plugin pos-auth. O `setup-ux` so adiciona
+  `opencode-websearch-cited@1.2.0` quando `~/.local/share/opencode/auth.json`
+  ja tem credenciais de `openai` e `google`.
+- Em `1.2.0`, o plugin exporta auth hooks para `openai` e `google` com metodo
+  unico de API key. Como o OpenCode escolhe o ultimo auth hook registrado para
+  cada provider, isso pode esconder `ChatGPT Pro/Plus` e `OAuth with Google
+  (Gemini CLI)`.
+- O comando `/research` do OGB continua existindo antes do plugin, mas passa a
+  se beneficiar da busca citada quando o pos-auth estiver ativo.
 
 Risco:
 
