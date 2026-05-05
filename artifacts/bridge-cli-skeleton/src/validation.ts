@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parse as parseJsonc } from "jsonc-parser";
 import { BUILT_IN_AGENTS, BUILT_IN_COMMANDS, REMOVED_BUILT_IN_AGENT_NAMES } from "./built-ins.js";
 import { runDoctor } from "./doctor.js";
@@ -179,8 +180,62 @@ function listMarkdownFiles(root: string): string[] {
   return out.sort();
 }
 
+function candidateRepoRoots(projectRoot: string): string[] {
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  return Array.from(new Set([
+    projectRoot,
+    process.cwd(),
+    path.resolve(moduleDir, "..", "..", ".."),
+  ]));
+}
+
+function findRepoRootWithScripts(projectRoot: string): string | undefined {
+  return candidateRepoRoots(projectRoot).find((root) => (
+    fs.existsSync(path.join(root, "artifacts", "scripts", "install-mac.sh")) &&
+    fs.existsSync(path.join(root, "artifacts", "scripts", "install-windows.ps1"))
+  ));
+}
+
+function validateReleaseBootstrap(projectRoot: string, checks: ValidationCheck[]): void {
+  const repoRoot = findRepoRootWithScripts(projectRoot);
+  if (!repoRoot) {
+    checks.push({ name: "Release bootstrap static check", status: "skip", message: "Release scripts are not present in this checkout/package." });
+    return;
+  }
+
+  const scripts = {
+    macBootstrap: fs.readFileSync(path.join(repoRoot, "artifacts", "scripts", "bootstrap-mac.sh"), "utf8"),
+    windowsBootstrap: fs.readFileSync(path.join(repoRoot, "artifacts", "scripts", "bootstrap-windows.ps1"), "utf8"),
+    macInstaller: fs.readFileSync(path.join(repoRoot, "artifacts", "scripts", "install-mac.sh"), "utf8"),
+    windowsInstaller: fs.readFileSync(path.join(repoRoot, "artifacts", "scripts", "install-windows.ps1"), "utf8"),
+  };
+  const required = [
+    ["bootstrap-mac.sh default repo", scripts.macBootstrap, "augustocaruso/opencode-gemini-bridge"],
+    ["bootstrap-mac.sh release asset", scripts.macBootstrap, "releases/latest/download/opencode-gemini-bridge-pack.zip"],
+    ["bootstrap-mac.sh installer", scripts.macBootstrap, "install-mac.sh"],
+    ["bootstrap-windows.ps1 default repo", scripts.windowsBootstrap, "augustocaruso/opencode-gemini-bridge"],
+    ["bootstrap-windows.ps1 release asset", scripts.windowsBootstrap, "releases/latest/download/opencode-gemini-bridge-pack.zip"],
+    ["bootstrap-windows.ps1 installer", scripts.windowsBootstrap, "install-windows.ps1"],
+    ["install-mac.sh setup-ux", scripts.macInstaller, "setup-ux"],
+    ["install-mac.sh setup-opencode", scripts.macInstaller, "setup-opencode"],
+    ["install-windows.ps1 setup-ux", scripts.windowsInstaller, "setup-ux"],
+    ["install-windows.ps1 setup-opencode", scripts.windowsInstaller, "setup-opencode"],
+  ] as const;
+  const missing = required.filter(([, text, needle]) => !text.includes(needle)).map(([label]) => label);
+
+  checks.push({
+    name: "Release bootstrap static check",
+    status: missing.length ? "fail" : "pass",
+    message: missing.length
+      ? `Missing expected release/bootstrap token(s): ${missing.join(", ")}.`
+      : "Bootstrap scripts download the release pack and installers apply setup-ux plus setup-opencode.",
+    details: { repoRoot },
+  });
+}
+
 function validateWindowsInstaller(projectRoot: string, checks: ValidationCheck[]): void {
-  const scriptPath = path.join(projectRoot, "artifacts", "scripts", "install-windows.ps1");
+  const repoRoot = findRepoRootWithScripts(projectRoot) ?? projectRoot;
+  const scriptPath = path.join(repoRoot, "artifacts", "scripts", "install-windows.ps1");
   if (!fs.existsSync(scriptPath)) {
     checks.push({ name: "Windows installer static check", status: "skip", message: "artifacts/scripts/install-windows.ps1 is not present in this package checkout." });
     return;
@@ -195,6 +250,7 @@ function validateWindowsInstaller(projectRoot: string, checks: ValidationCheck[]
     "ogb.cmd",
     "import",
     "setup-opencode",
+    "setup-ux",
     "doctor",
     "validate --windows",
     "security-check",
@@ -255,6 +311,7 @@ export function runValidation(options: ValidationOptions = {}): ValidationReport
   });
 
   validateOpenCodeDebugConfig(paths.projectRoot, checks);
+  validateReleaseBootstrap(paths.projectRoot, checks);
   if (options.windows) validateWindowsInstaller(paths.projectRoot, checks);
   if (options.opencodeRun) validateOptionalOpenCodeRun(paths.projectRoot, checks);
 

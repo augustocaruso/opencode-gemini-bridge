@@ -8,6 +8,13 @@
 - Atualiza `ogb sync`, `ogb setup-opencode`, `opencode.jsonc` e `.opencode/tui.jsonc` para projetar os plugins externos de forma opcional e testada.
 - Copia a gramatica visual compacta do plugin de quota para a sidebar nativa do OGB, usando barras de percentual usado e mantendo os dados do OGB como fonte.
 
+## 0.0.23 - self-update and release hardening
+
+- Adiciona `ogb self-update`/`ogb upgrade-ogb` para atualizar pelo GitHub Release pack e reaplicar o perfil OpenCode local.
+- Adiciona licença MIT e metadados de repositório no pacote CLI.
+- Fortalece validação estática de bootstrap/instaladores e adiciona smoke de `setup-ux --dry-run` e `self-update --dry-run`.
+- Configura GitHub Actions para forçar runtime Node 24 e evitar warning futuro dos actions JavaScript.
+
 ## 0.0.17 - compact TUI status and provider limits
 
 - Redesenha o bloco OGB da sidebar para ficar compacto, menos parecido com relatorio.

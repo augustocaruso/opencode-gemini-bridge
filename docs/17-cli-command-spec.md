@@ -196,6 +196,36 @@ ogb validate --opencode-run
 
 O `--opencode-run` e opcional porque pode gastar tokens.
 
+### `ogb self-update`
+
+Atualiza o OGB a partir do GitHub Release oficial e reaplica o perfil local.
+
+```bash
+ogb --project "$PWD" self-update
+ogb --project "$PWD" self-update --dry-run
+ogb --project "$PWD" self-update --version v0.0.23
+ogb --project "$PWD" self-update --no-setup
+```
+
+Atalho equivalente:
+
+```bash
+ogb --project "$PWD" upgrade-ogb
+```
+
+Modelo mental:
+
+```text
+GitHub Release pack
+  -> bootstrap oficial
+  -> instalador macOS/Windows
+  -> ogb setup-ux/import/setup-opencode/doctor/validate
+```
+
+O comando nao sincroniza nem copia conteudo unico do Gemini CLI de outra
+pessoa. Ele apenas atualiza o `ogb`, reinstala/reaplica settings e plugins do
+OpenCode e depois deixa o `ogb sync` projetar o conteudo Gemini local.
+
 ### `ogb security-check`
 
 Verifica riscos obvios:

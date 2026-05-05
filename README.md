@@ -68,22 +68,29 @@ node dist/cli.js --project /caminho/do/projeto import
 node dist/cli.js --project /caminho/do/projeto setup-opencode
 ```
 
-Distribuição por GitHub Release, depois que o repositório existir:
+Distribuição por GitHub Release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/artifacts/scripts/bootstrap-mac.sh | bash -s -- --project "$PWD"
+curl -fsSL https://raw.githubusercontent.com/augustocaruso/opencode-gemini-bridge/main/artifacts/scripts/bootstrap-mac.sh | bash -s -- --project "$PWD"
 ```
 
 No Windows, baixe `artifacts/scripts/bootstrap-windows.ps1` do repositório e
 rode:
 
 ```powershell
-.\bootstrap-windows.ps1 -Repo OWNER/REPO -Project $PWD
+.\bootstrap-windows.ps1 -Repo augustocaruso/opencode-gemini-bridge -Project $PWD
 ```
 
-Update é o mesmo fluxo: publicar uma tag `vX.Y.Z` no GitHub e pedir para a
-pessoa rodar o bootstrap de novo. Ele baixa a última release e reaplica o perfil
-sem copiar secrets, sessões ou conteúdo único do Gemini CLI dela.
+Update depois que o `ogb` ja esta instalado:
+
+```bash
+ogb --project "$PWD" self-update
+ogb --project "$PWD" self-update --dry-run
+```
+
+O `self-update` baixa a release escolhida, roda o bootstrap oficial e reaplica
+o perfil OGB/OpenCode. Ele nao copia secrets, sessoes ou conteudo unico do
+Gemini CLI da pessoa; esse conteudo continua sendo lido localmente pelo sync.
 
 Dia a dia:
 

@@ -9,8 +9,8 @@ Downloads the OpenCode Gemini Bridge release pack from GitHub and runs the
 bundled macOS installer.
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/artifacts/scripts/bootstrap-mac.sh | bash -s -- --project "$PWD"
-  OGB_GITHUB_REPO=OWNER/REPO bash bootstrap-mac.sh --project "$PWD" --force
+  curl -fsSL https://raw.githubusercontent.com/augustocaruso/opencode-gemini-bridge/main/artifacts/scripts/bootstrap-mac.sh | bash -s -- --project "$PWD"
+  OGB_GITHUB_REPO=augustocaruso/opencode-gemini-bridge bash bootstrap-mac.sh --project "$PWD" --force
 EOF
 }
 

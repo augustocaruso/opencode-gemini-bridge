@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -49,6 +52,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ogb-smoke"
           printf 'Smoke rules\n' > "$RUNNER_TEMP/ogb-smoke/GEMINI.md"
           node artifacts/bridge-cli-skeleton/dist/cli.js --project "$RUNNER_TEMP/ogb-smoke" init
+          node artifacts/bridge-cli-skeleton/dist/cli.js --project "$RUNNER_TEMP/ogb-smoke" setup-ux --dry-run --no-install-opencode --no-plugins
+          node artifacts/bridge-cli-skeleton/dist/cli.js --project "$RUNNER_TEMP/ogb-smoke" self-update --dry-run --no-setup --no-ux --no-install-opencode
           node artifacts/bridge-cli-skeleton/dist/cli.js --project "$RUNNER_TEMP/ogb-smoke" sync --rulesync off
           node artifacts/bridge-cli-skeleton/dist/cli.js --project "$RUNNER_TEMP/ogb-smoke" validate
           node artifacts/bridge-cli-skeleton/dist/cli.js --project "$RUNNER_TEMP/ogb-smoke" security-check

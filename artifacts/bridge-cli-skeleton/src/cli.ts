@@ -17,6 +17,7 @@ import { rulesyncDefaultFeatures, type RulesyncMode } from "./rulesync.js";
 import { printSetupReport, setupOpenCode } from "./setup-opencode.js";
 import { printSetupUxReport, setupUx } from "./setup-ux.js";
 import { runSecurityCheck } from "./security.js";
+import { printSelfUpdateReport, runSelfUpdate } from "./self-update.js";
 import { syncToOpenCode } from "./sync.js";
 import { runTrustExtension, runTrustReview } from "./trust.js";
 import { OGB_VERSION } from "./types.js";
@@ -390,6 +391,37 @@ program.command("setup-ux")
     });
     printSetupUxReport(report, opts.json);
     if (opts.strict && report.warnings.length > 0) process.exitCode = 1;
+  });
+
+program.command("self-update")
+  .alias("upgrade-ogb")
+  .description("Update OGB from the GitHub release pack and reapply the local UX profile")
+  .option("--repo <owner/repo>", "GitHub repo that publishes OGB releases", "augustocaruso/opencode-gemini-bridge")
+  .option("--version <tag>", "Release tag to install; defaults to latest", "latest")
+  .option("--prefix <path>", "Install prefix passed to the installer")
+  .option("--rulesync <mode>", "Rulesync mode passed to first-run setup", "auto")
+  .option("--no-setup", "Update ogb/profile only; skip import/setup/doctor validation")
+  .option("--no-ux", "Do not reapply the global OpenCode UX profile")
+  .option("--no-install-opencode", "Do not install OpenCode when it is missing")
+  .option("--force", "Pass force to the bootstrap installer")
+  .option("--dry-run", "Print the bootstrap command without running it")
+  .option("--json", "Print JSON report")
+  .action((opts) => {
+    const { project } = commonProjectOptions();
+    const report = runSelfUpdate({
+      repo: opts.repo,
+      version: opts.version,
+      projectRoot: project,
+      prefix: opts.prefix,
+      rulesync: opts.rulesync,
+      setup: opts.setup,
+      ux: opts.ux,
+      installOpenCode: opts.installOpencode,
+      force: opts.force,
+      dryRun: opts.dryRun,
+    });
+    printSelfUpdateReport(report, opts.json);
+    if (report.status === "error") process.exitCode = 2;
   });
 
 program.command("install-extension")

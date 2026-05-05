@@ -16,7 +16,7 @@ Com o tempo, o sync deixa de ser Gemini-first e vira tool-neutral.
 
 ## Estado atual
 
-Ultima verificacao local: `ogb 0.0.22`, OpenCode `1.14.35`, dashboard
+Ultima verificacao local: `ogb 0.0.23`, OpenCode `1.14.35`, dashboard
 `PASS` na home local.
 
 Ja existe uma base funcional:
@@ -81,8 +81,9 @@ Esta e a ordem recomendada a partir daqui:
 6. Limpar comandos importados, aliases e documentacao de comandos.
 7. Fortalecer `update-extensions` e remocao de recursos obsoletos.
 8. Avancar sync bidirecional seguro alem do escopo rules-only.
-9. Criar repositório GitHub e publicar a primeira release.
-10. Validar instalador Windows em PC/VM real.
+9. [x] Criar repositório GitHub e publicar a primeira release.
+10. [x] Adicionar `ogb self-update` para atualizar direto do GitHub Release.
+11. Validar instalador Windows em PC/VM real.
 
 ## Principios
 
@@ -580,10 +581,11 @@ Tarefas:
 - [x] instalar OpenCode automaticamente quando ausente;
 - [x] preparar bootstrap por GitHub Release;
 - [x] preparar instalador Windows equivalente;
+- [x] publicar release em um repositorio GitHub real;
+- [x] adicionar licenca MIT e metadados de repositorio no pacote CLI;
+- [x] criar `ogb self-update`/`upgrade-ogb` para atualizar pelo GitHub Release;
 - tornar mensagens do instalador mais amigaveis para usuario final;
 - criar `uninstall`;
-- criar `upgrade`;
-- publicar release em um repositorio GitHub real;
 - validar Windows em ambiente real.
 
 Resultado esperado:
@@ -646,6 +648,7 @@ Evitar regressao no bridge enquanto a UI e sync ficam mais ambiciosos.
 Tarefas:
 
 - [x] GitHub Actions;
+- [x] forcar runtime Node 24 nos Actions para evitar warning futuro;
 - testes Mac;
 - testes Windows quando houver instalador;
 - fixtures de extensoes Gemini;
@@ -659,6 +662,7 @@ Tarefas:
 - [x] teste para impedir barra de quota invertida;
 - [x] teste para garantir `wrapMode: "none"` nas linhas de quota;
 - [x] teste/smoke para validar que o `ogb` global aponta para a versao esperada;
+- [x] teste/smoke de `setup-ux --dry-run` e `self-update --dry-run`;
 - teste manual documentado de runtime fallback externo;
 - teste do agente `agent` substituindo `build native`;
 - teste da descricao curta do `YOLO`;
