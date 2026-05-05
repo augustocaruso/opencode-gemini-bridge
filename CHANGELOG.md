@@ -8,13 +8,16 @@
 - Atualiza `ogb sync`, `ogb setup-opencode`, `opencode.jsonc` e `.opencode/tui.jsonc` para projetar os plugins externos de forma opcional e testada.
 - Copia a gramatica visual compacta do plugin de quota para a sidebar nativa do OGB, usando barras de percentual usado e mantendo os dados do OGB como fonte.
 
-## 0.0.24 - self-update and release hardening
+## 0.0.25 - self-update and release hardening
 
 - Adiciona `ogb self-update`/`ogb upgrade-ogb` para atualizar pelo GitHub Release pack e reaplicar o perfil OpenCode local.
-- Usa `--release` no `self-update` para escolher uma tag sem conflitar com o `--version` global da CLI.
 - Adiciona licença MIT e metadados de repositório no pacote CLI.
 - Fortalece validação estática de bootstrap/instaladores e adiciona smoke de `setup-ux --dry-run` e `self-update --dry-run`.
-- Configura GitHub Actions para forçar runtime Node 24 e evitar warning futuro dos actions JavaScript.
+- Atualiza `actions/checkout`, `actions/setup-node`, `actions/upload-artifact` e `softprops/action-gh-release` para versões Node 24.
+
+## 0.0.24 - self-update flag fix
+
+- Usa `--release` no `self-update` para escolher uma tag sem conflitar com o `--version` global da CLI.
 
 ## 0.0.23 - superseded self-update draft
 

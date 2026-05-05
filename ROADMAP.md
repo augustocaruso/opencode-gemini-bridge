@@ -16,7 +16,7 @@ Com o tempo, o sync deixa de ser Gemini-first e vira tool-neutral.
 
 ## Estado atual
 
-Ultima verificacao local: `ogb 0.0.24`, OpenCode `1.14.35`, dashboard
+Ultima verificacao local: `ogb 0.0.25`, OpenCode `1.14.35`, dashboard
 `PASS` na home local.
 
 Ja existe uma base funcional:
@@ -648,7 +648,7 @@ Evitar regressao no bridge enquanto a UI e sync ficam mais ambiciosos.
 Tarefas:
 
 - [x] GitHub Actions;
-- [x] forcar runtime Node 24 nos Actions para evitar warning futuro;
+- [x] atualizar Actions para versoes Node 24 e remover anotacao deprecada;
 - testes Mac;
 - testes Windows quando houver instalador;
 - fixtures de extensoes Gemini;
