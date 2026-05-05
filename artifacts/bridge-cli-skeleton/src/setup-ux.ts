@@ -224,7 +224,10 @@ function configRoot(homeDir: string): string {
   if (process.platform === "win32") {
     return path.join(process.env.APPDATA || path.join(homeDir, "AppData", "Roaming"), "opencode");
   }
-  return path.join(process.env.XDG_CONFIG_HOME || path.join(homeDir, ".config"), "opencode");
+  if (process.env.XDG_CONFIG_HOME && path.resolve(homeDir) === os.homedir()) {
+    return path.join(process.env.XDG_CONFIG_HOME, "opencode");
+  }
+  return path.join(homeDir, ".config", "opencode");
 }
 
 function readJsonc(filePath: string): Record<string, unknown> {
