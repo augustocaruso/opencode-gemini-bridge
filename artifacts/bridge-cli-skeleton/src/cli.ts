@@ -336,11 +336,12 @@ program.command("adopt-agent-sync")
 
 program.command("open")
   .description("Open OpenCode with YOLO unless this project defines another default_agent")
+  .argument("[projectPath]", "Project root to open")
   .option("--agent <name>", "Start OpenCode with a specific agent")
   .option("--yolo", "Start OpenCode with the YOLO agent")
-  .action((opts) => {
+  .action((projectPath: string | undefined, opts) => {
     const { project } = commonProjectOptions();
-    const paths = resolveProjectPaths(project);
+    const paths = resolveProjectPaths(projectPath ?? project);
     const args = buildOpenCodeOpenArgs({ projectRoot: paths.projectRoot, agent: opts.agent, yolo: opts.yolo });
     spawnOpenCode(paths.projectRoot, args);
   });

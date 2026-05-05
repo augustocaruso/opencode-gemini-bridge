@@ -427,10 +427,13 @@ function projectConfigText(): string {
 const SHELL_LAUNCHER_BEGIN = "OGB OpenCode launcher";
 const POSIX_SHELL_LAUNCHER = `# >>> ${SHELL_LAUNCHER_BEGIN} >>>
 # Plain \`opencode\` opens through OGB so YOLO is forced unless the project has
-# another local default_agent. Subcommands still go to the real OpenCode CLI.
+# another local default_agent. \`opencode <path>\` does the same for that project.
+# Subcommands still go to the real OpenCode CLI.
 opencode() {
   if [ "$#" -eq 0 ]; then
     command ogb open
+  elif [ "$#" -eq 1 ] && [ -e "$1" ]; then
+    command ogb --project "$1" open
   else
     command opencode "$@"
   fi
@@ -440,10 +443,13 @@ opencode() {
 
 const POWERSHELL_LAUNCHER = `# >>> ${SHELL_LAUNCHER_BEGIN} >>>
 # Plain opencode opens through OGB so YOLO is forced unless the project has
-# another local default_agent. Subcommands still go to the real OpenCode CLI.
+# another local default_agent. opencode <path> does the same for that project.
+# Subcommands still go to the real OpenCode CLI.
 function opencode {
   if ($args.Count -eq 0) {
     ogb open
+  } elseif ($args.Count -eq 1 -and (Test-Path $args[0])) {
+    ogb --project $args[0] open
   } else {
     $realOpenCode = Get-Command opencode -CommandType Application | Select-Object -First 1
     & $realOpenCode.Source @args

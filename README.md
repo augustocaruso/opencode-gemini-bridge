@@ -86,7 +86,7 @@ Update depois que o `ogb` ja esta instalado:
 ```bash
 ogb --project "$PWD" self-update
 ogb --project "$PWD" self-update --dry-run
-ogb --project "$PWD" self-update --release v0.0.29
+ogb --project "$PWD" self-update --release v0.0.30
 ```
 
 O `self-update` baixa a release escolhida, roda o bootstrap oficial e reaplica
@@ -108,8 +108,9 @@ O Rulesync entra como auxiliar opcional no `ogb import` e no `ogb sync`: o bridg
 
 O `setup-ux` tambem deixa o OpenCode global com `default_agent: "YOLO"` e
 instala o agente YOLO globalmente. Ele tambem instala uma funcao no perfil do
-shell: `opencode` sem argumentos passa pelo `ogb open`, mas subcomandos como
-`opencode run` e `opencode --version` continuam indo para o OpenCode real.
+shell: `opencode` sem argumentos e `opencode <pasta>` passam pelo `ogb open`,
+mas subcomandos como `opencode run` e `opencode --version` continuam indo para
+o OpenCode real.
 
 O modo YOLO e instalado como agente separado do OpenCode:
 
@@ -133,6 +134,8 @@ Equivalente manual no zsh/bash:
 opencode() {
   if [ "$#" -eq 0 ]; then
     command ogb open
+  elif [ "$#" -eq 1 ] && [ -e "$1" ]; then
+    command ogb --project "$1" open
   else
     command opencode "$@"
   fi

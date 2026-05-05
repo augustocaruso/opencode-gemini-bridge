@@ -70,7 +70,9 @@ test("setupUx writes global OpenCode UX profile and project fallback profile", (
   assert.equal(fs.existsSync(path.join(configDir, "commands", "upgrade-ogb.md")), true);
   assert.match(fs.readFileSync(path.join(configDir, "commands", "upgrade-ogb.md"), "utf8"), /ogb self-update --project/);
   assert.equal(fs.existsSync(path.join(configDir, "dcp.jsonc")), true);
-  assert.match(fs.readFileSync(report.shellLauncherPath, "utf8"), /command ogb open/);
+  const shellLauncher = fs.readFileSync(report.shellLauncherPath, "utf8");
+  assert.match(shellLauncher, /command ogb open/);
+  assert.match(shellLauncher, /command ogb --project "\$1" open/);
 });
 
 test("setupUx dry-run previews without writing files", () => {
