@@ -37,6 +37,7 @@ const BRIDGE_COMMANDS = new Set([
   "agent-sync",
   "status",
   "update-extensions",
+  "upgrade-ogb",
 ]);
 
 function splitArgs(raw) {

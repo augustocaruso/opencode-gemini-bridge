@@ -203,7 +203,7 @@ Atualiza o OGB a partir do GitHub Release oficial e reaplica o perfil local.
 ```bash
 ogb --project "$PWD" self-update
 ogb --project "$PWD" self-update --dry-run
-ogb --project "$PWD" self-update --release v0.0.27
+ogb --project "$PWD" self-update --release v0.0.28
 ogb --project "$PWD" self-update --no-setup
 ```
 
@@ -291,6 +291,10 @@ inventory → flatten → sync → doctor → opencode [--agent <name>]
 
 Esse agente e o equivalente pratico do "YOLO mode" no fluxo OpenCode: `edit` e `bash` ficam em `allow` quando o agente ativo e `YOLO`. Nao tornar essas permissoes globais.
 
+`setup-ux` grava `default_agent: "YOLO"` no config global do OpenCode. Isso vale
+fora de projetos OGB tambem, salvo quando o projeto aberto tiver um
+`default_agent` local diferente.
+
 O agente padrao pode ser escolhido no perfil OGB do projeto:
 
 ```jsonc
@@ -321,6 +325,7 @@ Deve:
 - gravar `~/.config/opencode/opencode.json` no macOS/Linux ou `%APPDATA%\opencode\opencode.json` no Windows;
 - instalar os plugins globais recomendados: auths, update notifier, auto-fallback, DCP, PTY e websearch citado;
 - gravar comandos globais `/research` e `/dev-server`;
+- gravar comando global `/upgrade-ogb`;
 - gravar config global de DCP e `plugins/fallback.json`;
 - instalar `YOLO.md` como agente global OpenCode;
 - definir o agente padrao global a partir de `openCode.defaultAgent` do perfil OGB;

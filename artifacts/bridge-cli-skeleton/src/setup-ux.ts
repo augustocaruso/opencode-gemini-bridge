@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parse as parseJsonc } from "jsonc-parser";
-import { BUILT_IN_AGENTS } from "./built-ins.js";
+import { BUILT_IN_AGENTS, BUILT_IN_COMMANDS } from "./built-ins.js";
 import { normalizeRuntimeOptions, type OgbConfig } from "./ogb-config.js";
 import { OGB_VERSION } from "./types.js";
 
@@ -62,6 +62,10 @@ Regras:
 - se ja existir uma session equivalente rodando, mostre a existente e pergunte
   antes de criar duplicata.
 `;
+
+export function globalBuiltInCommandContent(name: string): string {
+  return BUILT_IN_COMMANDS.find((command) => command.name === name)?.content ?? "";
+}
 
 export const DCP_CONFIG = {
   $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
@@ -527,6 +531,11 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
   writes.push(writeText({
     filePath: path.join(commandsDir, "dev-server.md"),
     text: DEV_SERVER_COMMAND,
+    dryRun: options.dryRun,
+  }));
+  writes.push(writeText({
+    filePath: path.join(commandsDir, "upgrade-ogb.md"),
+    text: globalBuiltInCommandContent("upgrade-ogb"),
     dryRun: options.dryRun,
   }));
   writes.push(writeText({

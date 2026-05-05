@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.28 - global YOLO and updater command
+
+- Garante que `setup-ux` instale o comando global `/upgrade-ogb` dentro do OpenCode.
+- Documenta que `setup-ux` define `default_agent: "YOLO"` no config global do OpenCode, valendo fora de projetos OGB quando nao houver override local.
+- Projeta `/upgrade-ogb` tambem como comando gerenciado do projeto.
+
 ## 0.0.27 - default agent profile
 
 - Adiciona `openCode.defaultAgent` ao perfil OGB para escolher o agente padrao projetado em `opencode.jsonc`.

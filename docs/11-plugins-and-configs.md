@@ -57,12 +57,18 @@ O agente padrao tambem fica no perfil OGB:
 `ogb sync` projeta esse valor para `default_agent` no `opencode.jsonc`. Se a
 pessoa preferir abrir no agente conservador, troque para `"agent"`.
 
+O `setup-ux` tambem grava esse default no config global do OpenCode, para o
+YOLO ser usado fora de projetos OGB. Um projeto ainda pode sobrescrever com seu
+proprio `default_agent`; nesses casos, `opencode --agent YOLO` ou
+`ogb launch --yolo` forcam o agente.
+
 Arquivos principais:
 
 - macOS/Linux: `~/.config/opencode/opencode.json`;
 - Windows: `%APPDATA%\opencode\opencode.json`;
 - global: `commands/research.md`, `commands/dev-server.md`,
-  `agents/YOLO.md`, `dcp.jsonc`, `plugins/fallback.json`;
+  `commands/upgrade-ogb.md`, `agents/YOLO.md`, `dcp.jsonc`,
+  `plugins/fallback.json`;
 - projeto: `.opencode/ogb.config.jsonc`.
 
 ## Plugins recomendados

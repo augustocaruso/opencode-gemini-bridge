@@ -199,4 +199,26 @@ Se o dry-run parecer seguro, peca confirmacao antes de rodar ogb update-extensio
 Depois rode ou resuma ogb doctor.
 `,
   },
+  {
+    name: "upgrade-ogb",
+    content: `---
+description: Atualiza o OpenCode Gemini Bridge pela release oficial
+subtask: false
+---
+
+Execute exatamente:
+
+ogb self-update --project "$PWD"
+
+Depois execute:
+
+ogb doctor --project "$PWD"
+
+Explique em linguagem simples:
+- versao anterior e nova, se aparecerem na saida;
+- se o update reaplicou setup-ux/setup-opencode;
+- se o doctor ficou limpo;
+- se o OpenCode precisa ser reiniciado para carregar plugins, comandos ou agente default novos.
+`,
+  },
 ];

@@ -86,7 +86,7 @@ Update depois que o `ogb` ja esta instalado:
 ```bash
 ogb --project "$PWD" self-update
 ogb --project "$PWD" self-update --dry-run
-ogb --project "$PWD" self-update --release v0.0.27
+ogb --project "$PWD" self-update --release v0.0.28
 ```
 
 O `self-update` baixa a release escolhida, roda o bootstrap oficial e reaplica
@@ -105,6 +105,11 @@ ogb launch --yolo
 ```
 
 O Rulesync entra como auxiliar opcional no `ogb import` e no `ogb sync`: o bridge roda a conversão em staging temporário, promove apenas arquivos seguros/gerenciados e mantém `GEMINI.md` como fonte de verdade.
+
+O `setup-ux` tambem deixa o OpenCode global com `default_agent: "YOLO"` e
+instala o agente YOLO globalmente, entao abrir `opencode` em qualquer pasta sem
+override local entra no YOLO. Se um projeto tiver outro `default_agent`, use
+`opencode --agent YOLO` ou `ogb launch --yolo` para forcar.
 
 O modo YOLO e instalado como agente separado do OpenCode:
 
@@ -146,6 +151,7 @@ O sync tambem instala comandos de uso diario dentro do OpenCode:
 /security-check
 /trust-extension
 /update-extensions
+/upgrade-ogb
 ```
 
 Extensoes Gemini podem ser instaladas ou atualizadas pelo wrapper do bridge:
