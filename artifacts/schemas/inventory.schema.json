@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OpenCode Gemini Bridge Inventory",
+  "type": "object",
+  "required": [
+    "version",
+    "projectRoot",
+    "geminiFiles",
+    "imports",
+    "mcps",
+    "skills",
+    "agents"
+  ],
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "projectRoot": {
+      "type": "string"
+    },
+    "geminiFiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "imports": {
+      "type": "array"
+    },
+    "mcps": {
+      "type": "array"
+    },
+    "skills": {
+      "type": "array"
+    },
+    "agents": {
+      "type": "array"
+    }
+  }
+}

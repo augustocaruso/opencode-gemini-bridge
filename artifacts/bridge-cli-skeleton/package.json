@@ -1,0 +1,36 @@
+{
+  "name": "opencode-gemini-bridge",
+  "version": "0.0.22",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist/**/*.js",
+    "package.json"
+  ],
+  "bin": {
+    "ogb": "dist/cli.js"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc && node -e \"require('node:fs').chmodSync('dist/cli.js',0o755)\"",
+    "dev": "tsx src/cli.ts",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "lint": "echo add eslint later",
+    "pack:local": "npm run build && npm pack",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "jsonc-parser": "^3.3.1",
+    "rulesync": "^8.15.0",
+    "yaml": "^2.5.1"
+  },
+  "overrides": {
+    "smol-toml": "1.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

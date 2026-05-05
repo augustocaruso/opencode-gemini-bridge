@@ -1,0 +1,49 @@
+name: Release Pack
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: artifacts/bridge-cli-skeleton/package-lock.json
+      - name: Install
+        working-directory: artifacts/bridge-cli-skeleton
+        run: npm ci
+      - name: Build
+        working-directory: artifacts/bridge-cli-skeleton
+        run: npm run build
+      - name: Test
+        working-directory: artifacts/bridge-cli-skeleton
+        run: npm test
+      - name: Create npm tarball
+        working-directory: artifacts/bridge-cli-skeleton
+        run: npm pack
+      - name: Create zip
+        run: |
+          zip -r opencode-gemini-bridge-pack.zip . -x '*.git*' '*/node_modules/*' '*.tgz'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opencode-gemini-bridge-pack
+          path: |
+            opencode-gemini-bridge-pack.zip
+            artifacts/bridge-cli-skeleton/opencode-gemini-bridge-*.tgz
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            opencode-gemini-bridge-pack.zip
+            artifacts/bridge-cli-skeleton/opencode-gemini-bridge-*.tgz

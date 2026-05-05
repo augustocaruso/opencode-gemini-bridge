@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "instructions": [
+    ".opencode/generated/GEMINI.expanded.md"
+  ],
+
+  "watcher": {
+    "ignore": [
+      ".git/**",
+      "node_modules/**",
+      "dist/**",
+      "build/**",
+      ".venv/**",
+      "__pycache__/**",
+      ".opencode/generated/**"
+    ]
+  }
+}

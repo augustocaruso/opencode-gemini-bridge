@@ -1,0 +1,25 @@
+.DS_Store
+*.log
+*.tmp
+*.zip
+*.tgz
+
+# Local credentials/configuration
+.env
+.env.*
+opencode.jsonc
+
+# Local OpenCode/Gemini projections. These contain generated paths and user data.
+.opencode/
+.gemini/
+
+# Build/dependency output
+node_modules/
+dist/
+coverage/
+
+# Package manager/editor caches
+.npm/
+.cache/
+.idea/
+.vscode/
