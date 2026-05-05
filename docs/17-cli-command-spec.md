@@ -203,7 +203,7 @@ Atualiza o OGB a partir do GitHub Release oficial e reaplica o perfil local.
 ```bash
 ogb --project "$PWD" self-update
 ogb --project "$PWD" self-update --dry-run
-ogb --project "$PWD" self-update --release v0.0.32
+ogb --project "$PWD" self-update --release v0.0.33
 ogb --project "$PWD" self-update --no-setup
 ```
 

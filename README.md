@@ -74,11 +74,14 @@ Distribuição por GitHub Release:
 curl -fsSL https://raw.githubusercontent.com/augustocaruso/opencode-gemini-bridge/main/artifacts/scripts/bootstrap-mac.sh | bash -s -- --project "$PWD"
 ```
 
-No Windows, baixe `artifacts/scripts/bootstrap-windows.ps1` do repositório e
-rode:
+No Windows, pelo PowerShell:
 
 ```powershell
-.\bootstrap-windows.ps1 -Repo augustocaruso/opencode-gemini-bridge -Project $PWD
+iwr -UseB https://github.com/augustocaruso/opencode-gemini-bridge/releases/latest/download/opencode-gemini-bridge-pack.zip -OutFile $env:TEMP\ogb.zip
+Remove-Item -Recurse -Force $env:TEMP\ogb -ErrorAction SilentlyContinue
+Expand-Archive -Force $env:TEMP\ogb.zip $env:TEMP\ogb
+Set-ExecutionPolicy -Scope Process Bypass -Force
+& $env:TEMP\ogb\install.ps1 -Project $PWD -Force
 ```
 
 Update depois que o `ogb` ja esta instalado:
@@ -86,7 +89,7 @@ Update depois que o `ogb` ja esta instalado:
 ```bash
 ogb --project "$PWD" self-update
 ogb --project "$PWD" self-update --dry-run
-ogb --project "$PWD" self-update --release v0.0.32
+ogb --project "$PWD" self-update --release v0.0.33
 ```
 
 O `self-update` baixa a release escolhida, roda o bootstrap oficial e reaplica

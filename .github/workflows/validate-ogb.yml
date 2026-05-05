@@ -39,6 +39,9 @@ jobs:
         shell: pwsh
         run: |
           $errors = $null
+          $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content install.ps1 -Raw), [ref]$errors)
+          if ($errors) { throw ($errors | Out-String) }
+          $errors = $null
           $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content artifacts/scripts/install-windows.ps1 -Raw), [ref]$errors)
           if ($errors) { throw ($errors | Out-String) }
           $errors = $null
