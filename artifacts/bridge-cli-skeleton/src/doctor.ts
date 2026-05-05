@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse as parseJsonc } from "jsonc-parser";
 import { BUILT_IN_AGENTS, BUILT_IN_COMMANDS } from "./built-ins.js";
+import { commandExists, resolveCommand } from "./command-resolution.js";
 import { buildInventory } from "./inventory.js";
 import { AUTO_FALLBACK_PLUGIN, resolveFallbackConfigPath } from "./external-integrations.js";
 import { readOgbConfig } from "./ogb-config.js";
@@ -157,13 +158,6 @@ function configHasPlugin(filePath: string, pattern: RegExp): boolean {
   return plugins.some((plugin: unknown) => typeof plugin === "string" && pattern.test(plugin));
 }
 
-function resolveCommand(command: string): string | undefined {
-  const lookup = process.platform === "win32" ? "where" : "which";
-  const result = spawnSync(lookup, [command], { encoding: "utf8" });
-  if (result.error || result.status !== 0) return undefined;
-  return String(result.stdout || "").split(/\r?\n/).find(Boolean)?.trim();
-}
-
 function listConfiguredPlugins(projectRoot: string, homeDir: string): string[] {
   const files = [
     path.join(projectRoot, "opencode.jsonc"),
@@ -230,7 +224,7 @@ function modelCandidates(model: string, providerId?: string): string[] {
   return [...new Set(candidates)];
 }
 
-function resolveOpenCodeModels(projectRoot: string, modelRouting: any): DoctorReport["modelResolution"] {
+function resolveOpenCodeModels(projectRoot: string, homeDir: string, modelRouting: any): DoctorReport["modelResolution"] {
   const referenced = collectReferencedModels(modelRouting);
   if (referenced.length === 0) {
     return {
@@ -242,7 +236,7 @@ function resolveOpenCodeModels(projectRoot: string, modelRouting: any): DoctorRe
     };
   }
 
-  const command = resolveCommand("opencode");
+  const command = resolveCommand("opencode", { homeDir });
   if (!command) {
     return {
       checked: false,
@@ -257,6 +251,7 @@ function resolveOpenCodeModels(projectRoot: string, modelRouting: any): DoctorRe
     cwd: projectRoot,
     encoding: "utf8",
     timeout: 30_000,
+    shell: process.platform === "win32",
     env: { ...process.env, NO_COLOR: process.env.NO_COLOR ?? "1", OGB_STARTUP_SYNC: "0" },
   });
   if (result.error || result.status !== 0) {
@@ -289,13 +284,6 @@ function resolveOpenCodeModels(projectRoot: string, modelRouting: any): DoctorRe
 
 function generatedMarkdownVersion(text: string | undefined): string | undefined {
   return text?.match(/^Generator:\s+ogb\s+(.+)$/m)?.[1]?.trim();
-}
-
-function commandExists(command: string): boolean {
-  if (path.isAbsolute(command) || command.includes(path.sep)) return fs.existsSync(command);
-  const lookup = process.platform === "win32" ? "where" : "which";
-  const result = spawnSync(lookup, [command], { encoding: "utf8" });
-  return !result.error && result.status === 0;
 }
 
 function missingBuiltIns(projectRoot: string, relDir: ".opencode/agents" | ".opencode/commands", names: string[]): string[] {
@@ -366,11 +354,11 @@ export function runDoctor(options: DoctorOptions = {}): DoctorReport {
       : 0,
   };
   const runtimeFallback = readRuntimeFallback(paths.projectRoot, paths.homeDir);
-  const modelResolution = resolveOpenCodeModels(paths.projectRoot, modelRouting);
+  const modelResolution = resolveOpenCodeModels(paths.projectRoot, paths.homeDir, modelRouting);
   const mcpCommandCheck = inv.mcps.map((mcp) => {
     if (mcp.type !== "stdio") return { name: mcp.name, command: mcp.command, ok: true };
     if (!mcp.command) return { name: mcp.name, command: mcp.command, ok: false, message: "Missing stdio command" };
-    const ok = commandExists(mcp.command);
+    const ok = commandExists(mcp.command, { homeDir: paths.homeDir });
     return {
       name: mcp.name,
       command: mcp.command,

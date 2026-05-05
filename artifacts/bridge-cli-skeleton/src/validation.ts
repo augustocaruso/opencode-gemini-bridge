@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseJsonc } from "jsonc-parser";
 import { BUILT_IN_AGENTS, BUILT_IN_COMMANDS, REMOVED_BUILT_IN_AGENT_NAMES } from "./built-ins.js";
+import { resolveCommand } from "./command-resolution.js";
 import { runDoctor } from "./doctor.js";
 import { resolveProjectPaths } from "./paths.js";
 import { OGB_VERSION } from "./types.js";
@@ -31,24 +32,12 @@ export interface ValidationReport {
   checks: ValidationCheck[];
 }
 
-function commandExists(command: string): boolean {
-  const lookup = process.platform === "win32" ? "where" : "which";
-  const result = spawnSync(lookup, [command], { encoding: "utf8" });
-  return !result.error && result.status === 0;
-}
-
-function resolveCommand(command: string): string | undefined {
-  const lookup = process.platform === "win32" ? "where" : "which";
-  const result = spawnSync(lookup, [command], { encoding: "utf8" });
-  if (result.error || result.status !== 0) return undefined;
-  return String(result.stdout || "").split(/\r?\n/).find(Boolean)?.trim();
-}
-
 function run(command: string, args: string[], cwd: string, timeout = 30000, extraEnv: Record<string, string> = {}) {
   return spawnSync(command, args, {
     cwd,
     encoding: "utf8",
     timeout,
+    shell: process.platform === "win32",
     env: {
       ...process.env,
       NO_COLOR: process.env.NO_COLOR ?? "1",
@@ -65,13 +54,14 @@ function readJsonc(filePath: string): any {
   }
 }
 
-function addToolCheck(checks: ValidationCheck[], command: string, args: string[], cwd: string): void {
-  if (!commandExists(command)) {
+function addToolCheck(checks: ValidationCheck[], command: string, args: string[], cwd: string, homeDir: string): void {
+  const resolved = resolveCommand(command, { homeDir });
+  if (!resolved) {
     checks.push({ name: `${command} on PATH`, status: "warn", message: `${command} is not available on PATH.` });
     return;
   }
 
-  const result = run(command, args, cwd, 15000);
+  const result = run(resolved, args, cwd, 15000);
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
   checks.push({
     name: `${command} executable`,
@@ -80,8 +70,8 @@ function addToolCheck(checks: ValidationCheck[], command: string, args: string[]
   });
 }
 
-function validateOgbGlobal(checks: ValidationCheck[], projectRoot: string): void {
-  const resolved = resolveCommand("ogb");
+function validateOgbGlobal(checks: ValidationCheck[], projectRoot: string, homeDir: string): void {
+  const resolved = resolveCommand("ogb", { homeDir });
   if (!resolved) {
     checks.push({ name: "ogb global binary", status: "warn", message: "ogb is not available on PATH." });
     return;
@@ -98,13 +88,14 @@ function validateOgbGlobal(checks: ValidationCheck[], projectRoot: string): void
   });
 }
 
-function validateOpenCodeDebugConfig(projectRoot: string, checks: ValidationCheck[]): void {
-  if (!commandExists("opencode")) {
+function validateOpenCodeDebugConfig(projectRoot: string, homeDir: string, checks: ValidationCheck[]): void {
+  const opencode = resolveCommand("opencode", { homeDir });
+  if (!opencode) {
     checks.push({ name: "OpenCode resolved config", status: "skip", message: "opencode is not on PATH." });
     return;
   }
 
-  const result = run("opencode", ["debug", "config"], projectRoot, 45000, { OGB_STARTUP_SYNC: "0" });
+  const result = run(opencode, ["debug", "config"], projectRoot, 45000, { OGB_STARTUP_SYNC: "0" });
   if (result.error || result.status !== 0) {
     checks.push({
       name: "OpenCode resolved config",
@@ -245,6 +236,8 @@ function validateWindowsInstaller(projectRoot: string, checks: ValidationCheck[]
   const required = [
     "Require-Command \"node\"",
     "Require-Command \"npm\"",
+    "Resolve-DefaultPrefix",
+    "npm prefix -g",
     "npm --prefix $CliDir install",
     "npm install --prefix $Prefix -g $CliDir",
     "ogb.cmd",
@@ -255,6 +248,7 @@ function validateWindowsInstaller(projectRoot: string, checks: ValidationCheck[]
     "validate --windows",
     "security-check",
     "dashboard",
+    "SetEnvironmentVariable(\"Path\"",
   ];
   const missing = required.filter((needle) => !text.includes(needle));
   checks.push({
@@ -264,13 +258,14 @@ function validateWindowsInstaller(projectRoot: string, checks: ValidationCheck[]
   });
 }
 
-function validateOptionalOpenCodeRun(projectRoot: string, checks: ValidationCheck[]): void {
-  if (!commandExists("opencode")) {
+function validateOptionalOpenCodeRun(projectRoot: string, homeDir: string, checks: ValidationCheck[]): void {
+  const opencode = resolveCommand("opencode", { homeDir });
+  if (!opencode) {
     checks.push({ name: "OpenCode live run", status: "skip", message: "opencode is not on PATH." });
     return;
   }
 
-  const result = run("opencode", ["run", "--agent", "YOLO", "Say exactly: OGB_VALIDATE_OK"], projectRoot, 120000);
+  const result = run(opencode, ["run", "--agent", "YOLO", "Say exactly: OGB_VALIDATE_OK"], projectRoot, 120000);
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   checks.push({
     name: "OpenCode live run",
@@ -295,11 +290,11 @@ export function runValidation(options: ValidationOptions = {}): ValidationReport
     details: { warnings: doctor.warnings, errors: doctor.errors },
   });
 
-  addToolCheck(checks, "node", ["--version"], paths.projectRoot);
-  addToolCheck(checks, "npm", ["--version"], paths.projectRoot);
-  addToolCheck(checks, "gemini", ["--version"], paths.projectRoot);
-  addToolCheck(checks, "opencode", ["--version"], paths.projectRoot);
-  validateOgbGlobal(checks, paths.projectRoot);
+  addToolCheck(checks, "node", ["--version"], paths.projectRoot, paths.homeDir);
+  addToolCheck(checks, "npm", ["--version"], paths.projectRoot, paths.homeDir);
+  addToolCheck(checks, "gemini", ["--version"], paths.projectRoot, paths.homeDir);
+  addToolCheck(checks, "opencode", ["--version"], paths.projectRoot, paths.homeDir);
+  validateOgbGlobal(checks, paths.projectRoot, paths.homeDir);
 
   const generatedConfig = readJsonc(paths.generatedOpenCodeConfigPath);
   checks.push({
@@ -310,10 +305,10 @@ export function runValidation(options: ValidationOptions = {}): ValidationReport
       : "Missing ogb generated config marker.",
   });
 
-  validateOpenCodeDebugConfig(paths.projectRoot, checks);
+  validateOpenCodeDebugConfig(paths.projectRoot, paths.homeDir, checks);
   validateReleaseBootstrap(paths.projectRoot, checks);
   if (options.windows) validateWindowsInstaller(paths.projectRoot, checks);
-  if (options.opencodeRun) validateOptionalOpenCodeRun(paths.projectRoot, checks);
+  if (options.opencodeRun) validateOptionalOpenCodeRun(paths.projectRoot, paths.homeDir, checks);
 
   const outcome = checks.some((check) => check.status === "fail")
     ? "fail"

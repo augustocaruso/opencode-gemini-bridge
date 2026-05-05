@@ -1,6 +1,6 @@
 param(
   [string]$Project = (Get-Location).Path,
-  [string]$Prefix = $(if ($env:OGB_PREFIX) { $env:OGB_PREFIX } else { Join-Path $HOME ".local" }),
+  [string]$Prefix = $(if ($env:OGB_PREFIX) { $env:OGB_PREFIX } else { "" }),
   [string]$Rulesync = "auto",
   [switch]$NoSetup,
   [switch]$NoUx,
@@ -16,6 +16,41 @@ function Require-Command($Name) {
   }
 }
 
+function Resolve-DefaultPrefix {
+  $NpmPrefix = ""
+  try {
+    $NpmPrefix = (& npm prefix -g 2>$null)
+  } catch {
+    $NpmPrefix = ""
+  }
+  if ($NpmPrefix) {
+    return $NpmPrefix.Trim()
+  }
+  if ($env:APPDATA) {
+    return Join-Path $env:APPDATA "npm"
+  }
+  return Join-Path $HOME "AppData\Roaming\npm"
+}
+
+function Add-UserPath($Dir) {
+  if (-not $Dir) {
+    return
+  }
+  $FullDir = [System.IO.Path]::GetFullPath($Dir)
+  $CurrentParts = @($env:Path -split ";" | Where-Object { $_ })
+  if ($CurrentParts -notcontains $FullDir) {
+    $env:Path = "$FullDir;$env:Path"
+  }
+
+  $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $UserParts = @($UserPath -split ";" | Where-Object { $_ })
+  if ($UserParts -notcontains $FullDir) {
+    $NextUserPath = if ($UserPath) { "$FullDir;$UserPath" } else { $FullDir }
+    [Environment]::SetEnvironmentVariable("Path", $NextUserPath, "User")
+    Write-Host "Added $FullDir to your user PATH. Open a new terminal to use ogb directly."
+  }
+}
+
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ArtifactsDir = Split-Path -Parent $ScriptDir
 $CliDir = Join-Path $ArtifactsDir "bridge-cli-skeleton"
@@ -23,10 +58,14 @@ $CliDir = Join-Path $ArtifactsDir "bridge-cli-skeleton"
 Require-Command "node"
 Require-Command "npm"
 
+if (-not $Prefix) {
+  $Prefix = Resolve-DefaultPrefix
+}
+
 New-Item -ItemType Directory -Force (Join-Path $HOME ".config\opencode") | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $HOME ".agents\skills") | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $HOME ".ai\opencode-pack") | Out-Null
-New-Item -ItemType Directory -Force (Join-Path $Prefix "bin") | Out-Null
+New-Item -ItemType Directory -Force $Prefix | Out-Null
 
 Write-Host "Building ogb CLI..."
 npm --prefix $CliDir install
@@ -63,10 +102,8 @@ if (-not (Test-Path $OgbBin)) {
 
 & $OgbBin --version | Out-Null
 
-$PrefixBin = Join-Path $Prefix "bin"
-if (($env:Path -split ";") -notcontains $PrefixBin) {
-  Write-Host "Note: add $PrefixBin to PATH to run ogb directly."
-}
+$OgbBinDir = Split-Path -Parent $OgbBin
+Add-UserPath $OgbBinDir
 
 if (-not $NoUx) {
   $UxArgs = @("--project", $Project, "setup-ux")
