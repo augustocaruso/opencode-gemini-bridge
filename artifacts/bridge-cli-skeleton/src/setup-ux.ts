@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { parse as parseJsonc } from "jsonc-parser";
 import { BUILT_IN_AGENTS, BUILT_IN_COMMANDS } from "./built-ins.js";
+import { resolveCommand } from "./command-resolution.js";
 import { normalizeRuntimeOptions, type OgbConfig } from "./ogb-config.js";
 import { OGB_VERSION } from "./types.js";
 
@@ -25,8 +26,8 @@ Pesquise na web sobre:
 
 $ARGUMENTS
 
-Use \`websearch_cited\` quando precisar de informacao atual, verificacao externa
-ou fontes. Responda em portugues.
+Use pesquisa web quando precisar de informacao atual, verificacao externa ou
+fontes. Responda em portugues.
 
 Contrato da resposta:
 
@@ -255,17 +256,46 @@ function unique(values: string[]): string[] {
   return [...new Set(values.map((item) => item.trim()).filter(Boolean))];
 }
 
+function cleanManagedProviderOptions(value: unknown): Record<string, unknown> | undefined {
+  const provider = asRecord(value);
+  const cleanedProvider: Record<string, unknown> = { ...provider };
+  const openai = asRecord(cleanedProvider.openai);
+
+  if (Object.keys(openai).length > 0) {
+    const cleanedOpenai: Record<string, unknown> = { ...openai };
+    const options = asRecord(cleanedOpenai.options);
+
+    if (Object.keys(options).length > 0) {
+      const cleanedOptions: Record<string, unknown> = { ...options };
+      delete cleanedOptions.websearch_cited;
+
+      if (Object.keys(cleanedOptions).length > 0) {
+        cleanedOpenai.options = cleanedOptions;
+      } else {
+        delete cleanedOpenai.options;
+      }
+    }
+
+    if (Object.keys(cleanedOpenai).length > 0) {
+      cleanedProvider.openai = cleanedOpenai;
+    } else {
+      delete cleanedProvider.openai;
+    }
+  }
+
+  return Object.keys(cleanedProvider).length > 0 ? cleanedProvider : undefined;
+}
+
 function mergeGlobalConfig(current: Record<string, unknown>, defaultAgent = "agent"): Record<string, unknown> {
-  const provider = asRecord(current.provider);
-  const openai = asRecord(provider.openai);
-  const openaiOptions = asRecord(openai.options);
+  const { provider: currentProvider, ...currentWithoutProvider } = current;
+  const cleanedProvider = cleanManagedProviderOptions(currentProvider);
   const agent = asRecord(current.agent);
   const buildAgent = asRecord(agent.build);
   const primaryAgent = asRecord(agent.agent);
   const compactionAgent = asRecord(agent.compaction);
 
   return {
-    ...current,
+    ...currentWithoutProvider,
     $schema: "https://opencode.ai/config.json",
     plugin: unique(OGB_UX_PLUGINS),
     share: "manual",
@@ -301,18 +331,7 @@ function mergeGlobalConfig(current: Record<string, unknown>, defaultAgent = "age
       max_lines: 800,
       max_bytes: 30_000,
     },
-    provider: {
-      ...provider,
-      openai: {
-        ...openai,
-        options: {
-          ...openaiOptions,
-          websearch_cited: {
-            model: "gpt-5.5",
-          },
-        },
-      },
-    },
+    ...(cleanedProvider ? { provider: cleanedProvider } : {}),
     compaction: {
       auto: true,
       prune: true,
@@ -439,33 +458,6 @@ function writeText(options: {
   return { path: options.filePath, status: exists ? "updated" : "created" };
 }
 
-function findCommand(command: string, homeDir = os.homedir()): string | undefined {
-  const lookup = process.platform === "win32" ? "where" : "which";
-  const result = spawnSync(lookup, [command], { encoding: "utf8" });
-  if (!result.error && result.status === 0) {
-    const found = result.stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean);
-    if (found) return found;
-  }
-
-  const npmPrefix = spawnSync("npm", ["prefix", "-g"], { encoding: "utf8", shell: process.platform === "win32" });
-  const prefix = !npmPrefix.error && npmPrefix.status === 0 ? npmPrefix.stdout.trim() : "";
-  const candidates = process.platform === "win32"
-    ? [
-      ...(prefix ? [
-        path.join(prefix, `${command}.cmd`),
-        path.join(prefix, command),
-        path.join(prefix, "bin", `${command}.cmd`),
-        path.join(prefix, "bin", command),
-      ] : []),
-    ]
-    : [
-      ...(prefix ? [path.join(prefix, "bin", command), path.join(prefix, command)] : []),
-      path.join(homeDir, ".opencode", "bin", command),
-      path.join(homeDir, ".local", "bin", command),
-    ];
-  return candidates.find((candidate) => fs.existsSync(candidate));
-}
-
 function runCommand(command: string[], dryRun?: boolean): SetupUxCommand {
   if (dryRun) return { command, status: "preview", message: `Would run ${command.join(" ")}` };
   const result = spawnSync(command[0], command.slice(1), { encoding: "utf8", stdio: "pipe", shell: process.platform === "win32" });
@@ -481,7 +473,7 @@ function runCommand(command: string[], dryRun?: boolean): SetupUxCommand {
 
 function installOpenCodeCommand(): string[] {
   return process.platform === "win32"
-    ? ["npm", "install", "-g", "opencode-ai"]
+    ? ["npm", "install", "-g", "opencode-ai@latest"]
     : ["sh", "-c", "curl -fsSL https://opencode.ai/install | bash"];
 }
 
@@ -499,12 +491,13 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
   const commands: SetupUxCommand[] = [];
   const warnings: string[] = [];
 
-  if (!findCommand("opencode", homeDir)) {
-    if (options.installOpenCode === false) {
+  const existingOpenCode = resolveCommand("opencode", { homeDir });
+  if (options.installOpenCode === false) {
+    if (!existingOpenCode) {
       warnings.push("OpenCode is not installed. Re-run with --install-opencode or install OpenCode first.");
-    } else {
-      commands.push(runCommand(installOpenCodeCommand(), options.dryRun));
     }
+  } else {
+    commands.push(runCommand(installOpenCodeCommand(), options.dryRun));
   }
 
   const merged = mergeGlobalConfig(readJsonc(configPath), OGB_UX_PROJECT_CONFIG.openCode?.defaultAgent);
@@ -556,7 +549,7 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
 
   if (options.installPlugins !== false) {
     for (const plugin of OGB_UX_PLUGINS) {
-      const opencodeCommand = options.dryRun === true ? "opencode" : findCommand("opencode", homeDir);
+      const opencodeCommand = options.dryRun === true ? "opencode" : resolveCommand("opencode", { homeDir });
       if (!opencodeCommand) {
         commands.push({ command: ["opencode", "plugin", plugin, "--global", "--force"], status: "skipped", message: "OpenCode is not available" });
       } else {

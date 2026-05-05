@@ -40,7 +40,6 @@ test("setupUx writes global OpenCode UX profile and project fallback profile", (
   assert.equal(globalConfig.agent.build.disable, true);
   assert.equal(globalConfig.agent.agent.permission.question, "allow");
   assert.equal(globalConfig.agent.compaction.model, "openai/gpt-5.4-mini");
-  assert.equal(globalConfig.provider.openai.options.websearch_cited.model, "gpt-5.5");
   assert.equal(globalConfig.permission.websearch, "allow");
   assert.equal(globalConfig.permission.bash["npm run dev*"], "allow");
   assert.equal(globalConfig.permission.bash["git push*"], "deny");
@@ -87,6 +86,58 @@ test("setupUx dry-run previews without writing files", () => {
   assert.equal(report.writes.every((write) => write.status === "preview"), true);
   assert.equal(fs.existsSync(configDir), false);
   assert.equal(fs.existsSync(path.join(projectRoot, ".opencode", "ogb.config.jsonc")), false);
+});
+
+test("setupUx removes stale websearch_cited provider option without dropping user provider config", () => {
+  const root = tempRoot();
+  const homeDir = path.join(root, "home");
+  const configDir = path.join(root, "config", "opencode");
+  const projectRoot = path.join(root, "project");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.writeFileSync(path.join(configDir, "opencode.json"), JSON.stringify({
+    provider: {
+      openai: {
+        options: {
+          websearch_cited: { model: "gpt-5.5" },
+          organization: "org-user",
+        },
+      },
+      "my-provider": {
+        name: "My Provider",
+      },
+    },
+  }, null, 2));
+
+  setupUx({
+    homeDir,
+    configDir,
+    projectRoot,
+    installOpenCode: false,
+    installPlugins: false,
+  });
+
+  const globalConfig = readJson(path.join(configDir, "opencode.json"));
+  assert.equal(globalConfig.provider.openai.options.websearch_cited, undefined);
+  assert.equal(globalConfig.provider.openai.options.organization, "org-user");
+  assert.equal(globalConfig.provider["my-provider"].name, "My Provider");
+});
+
+test("setupUx dry-run previews OpenCode install or update by default", () => {
+  const root = tempRoot();
+  const report = setupUx({
+    homeDir: path.join(root, "home"),
+    configDir: path.join(root, "config", "opencode"),
+    projectRoot: path.join(root, "project"),
+    dryRun: true,
+    installPlugins: false,
+  });
+
+  const installCommand = report.commands.find((command) =>
+    command.command.join(" ").includes("opencode-ai@latest")
+    || command.command.join(" ").includes("opencode.ai/install")
+  );
+  assert.equal(installCommand?.status, "preview");
 });
 
 test("setupUx preserves existing project profile unless forced", () => {

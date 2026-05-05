@@ -58,7 +58,7 @@ try {
     }
     $Args = @("-Project", $Project, "-Force")
   } else {
-    $Args = @("-NoSetup", "-NoUx", "-Force")
+    $Args = @("-NoSetup", "-Force")
   }
 
   Write-Host ""

@@ -51,7 +51,7 @@ if ($Project -and $Project.Trim()) {
   }
   $InstallerArgs = @("-Project", $Project, "-Force")
 } else {
-  $InstallerArgs = @("-NoSetup", "-NoUx", "-Force")
+  $InstallerArgs = @("-NoSetup", "-Force")
 }
 
 Write-Step "Instalando"
