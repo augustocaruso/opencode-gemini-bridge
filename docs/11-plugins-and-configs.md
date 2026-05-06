@@ -10,10 +10,9 @@ Configuracao ativa hoje, sem instalar nada novo:
   `@ex-machina/opencode-anthropic-auth@1.8.0`,
   `opencode-update-notifier@0.1.0`, `@tarquinen/opencode-dcp@3.1.9`,
   `opencode-pty@0.3.4`.
-  `opencode-websearch-cited@1.2.0` entra automaticamente apenas depois que
-  OpenAI e Google/Gemini ja tiverem credenciais no `auth.json`, porque registra
-  auth hooks de OpenAI/Google apenas com API key e pode esconder OAuth desses
-  providers em maquina limpa.
+  `opencode-websearch-cited@1.2.0` foi observado no ambiente local antigo, mas
+  nao faz mais parte do perfil distribuivel padrao porque registra auth hooks
+  de OpenAI/Google apenas com API key e esconde OAuth desses providers.
   `opencode-auto-fallback@0.4.2` foi observado no ambiente local antigo, mas
   falha no OpenCode 1.14.39 com `Cannot find module '@/core/plugin'` e nao faz
   mais parte do perfil distribuivel padrao;
@@ -57,14 +56,12 @@ somente o fluxo de API key, mesmo com a config nova gravada.
 
 Fluxo de onboarding:
 
-- antes do auth, `ogb setup-ux` instala so os plugins seguros para abrir OAuth
-  de OpenAI, Google/Gemini e Anthropic;
-- depois de autenticar OpenAI e Google/Gemini com `/connect`, rode
-  `ogb setup-ux` novamente; ele detecta as credenciais e reativa
-  `opencode-websearch-cited@1.2.0` automaticamente;
+- `ogb setup-ux` instala so os plugins seguros para abrir OAuth de OpenAI,
+  Google/Gemini e Anthropic;
 - se uma maquina antiga ja tinha `opencode-websearch-cited`, a proxima execucao
-  remove temporariamente o plugin e limpa `provider.openai.options.websearch_cited`
-  ate o auth estar completo.
+  remove o plugin da config global e limpa `provider.openai.options.websearch_cited`;
+- a busca citada so deve voltar quando houver uma versao ou wrapper que nao
+  registre auth hooks para `openai` e `google`.
 
 O agente padrao tambem fica no perfil OGB:
 
@@ -320,15 +317,13 @@ Valor:
 
 Estado recomendado:
 
-- Usar como plugin pos-auth. O `setup-ux` so adiciona
-  `opencode-websearch-cited@1.2.0` quando `~/.local/share/opencode/auth.json`
-  ja tem credenciais de `openai` e `google`.
+- Nao usar no perfil global do OGB com o OpenCode atual.
 - Em `1.2.0`, o plugin exporta auth hooks para `openai` e `google` com metodo
   unico de API key. Como o OpenCode escolhe o ultimo auth hook registrado para
   cada provider, isso pode esconder `ChatGPT Pro/Plus` e `OAuth with Google
   (Gemini CLI)`.
-- O comando `/research` do OGB continua existindo antes do plugin, mas passa a
-  se beneficiar da busca citada quando o pos-auth estiver ativo.
+- O comando `/research` do OGB continua existindo, mas usa a ferramenta de
+  websearch disponivel no ambiente sem depender desse plugin.
 
 Risco:
 

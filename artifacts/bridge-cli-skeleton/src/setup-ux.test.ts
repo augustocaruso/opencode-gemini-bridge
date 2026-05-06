@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { parse as parseJsonc } from "jsonc-parser";
-import { OGB_UX_PLUGINS, OGB_UX_POST_AUTH_PLUGINS, setupUx } from "./setup-ux.js";
+import { OGB_UX_PLUGINS, setupUx } from "./setup-ux.js";
 
 function tempRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ogb-ux-"));
@@ -132,13 +132,14 @@ test("setupUx removes stale websearch_cited provider option without dropping use
   assert.equal(globalConfig.provider["my-provider"].name, "My Provider");
 });
 
-test("setupUx re-enables websearch-cited automatically after OpenAI and Google auth exist", () => {
+test("setupUx keeps websearch-cited disabled even after OpenAI and Google auth exist", () => {
   const root = tempRoot();
   const homeDir = path.join(root, "home");
   const configDir = path.join(root, "config", "opencode");
   const projectRoot = path.join(root, "project");
   const authPath = path.join(homeDir, ".local", "share", "opencode", "auth.json");
   fs.mkdirSync(path.dirname(authPath), { recursive: true });
+  fs.mkdirSync(configDir, { recursive: true });
   fs.mkdirSync(projectRoot, { recursive: true });
   fs.writeFileSync(authPath, JSON.stringify({
     openai: {
@@ -154,6 +155,19 @@ test("setupUx re-enables websearch-cited automatically after OpenAI and Google a
       expires: Date.now() + 60_000,
     },
   }), "utf8");
+  fs.writeFileSync(path.join(configDir, "opencode.json"), JSON.stringify({
+    plugin: [
+      ...OGB_UX_PLUGINS,
+      "opencode-websearch-cited@1.2.0",
+    ],
+    provider: {
+      openai: {
+        options: {
+          websearch_cited: { model: "gpt-5.5" },
+        },
+      },
+    },
+  }), "utf8");
 
   const report = setupUx({
     homeDir,
@@ -164,9 +178,9 @@ test("setupUx re-enables websearch-cited automatically after OpenAI and Google a
   });
 
   const globalConfig = readJson(path.join(configDir, "opencode.json"));
-  assert.deepEqual(globalConfig.plugin, [...OGB_UX_PLUGINS, ...OGB_UX_POST_AUTH_PLUGINS]);
-  assert.equal(globalConfig.provider.openai.options.websearch_cited.model, "gpt-5.5");
-  assert.equal(report.warnings.some((warning) => warning.includes("opencode-websearch-cited foi adiado")), false);
+  assert.deepEqual(globalConfig.plugin, OGB_UX_PLUGINS);
+  assert.equal(globalConfig.provider, undefined);
+  assert.equal(report.warnings.some((warning) => warning.includes("opencode-websearch-cited foi desativado")), true);
 });
 
 test("setupUx dry-run previews OpenCode install or update by default", () => {
