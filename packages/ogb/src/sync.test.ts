@@ -345,7 +345,7 @@ test("syncToOpenCode projects built-in OpenCode commands", () => {
   assert.equal(fs.existsSync(path.join(projectRoot, ".opencode", "commands", "study.md")), false);
   assert.equal(fs.existsSync(path.join(projectRoot, ".opencode", "commands", "automate.md")), false);
   assert.doesNotMatch(doctorCommand, /^agent:/m);
-  assert.match(bridgeCommand, /ogb bridge/);
+  assert.match(bridgeCommand, /ogb pass/);
   assert.match(bridgeCommand, /Nao use glob/);
   assert.match(resourcesCommand, /MCPs ativos/);
 });

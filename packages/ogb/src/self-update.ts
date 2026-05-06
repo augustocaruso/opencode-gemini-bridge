@@ -1,8 +1,10 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveCommand } from "./command-resolution.js";
 import { formatCommand } from "./extensions.js";
 import { normalizePathInput, resolveProjectPaths } from "./paths.js";
+import { spawnCommandSync } from "./process.js";
 import { OGB_VERSION } from "./types.js";
 
 const DEFAULT_REPO = "augustocaruso/opencode-gemini-bridge";
@@ -19,12 +21,25 @@ export interface SelfUpdateOptions {
   installOpenCode?: boolean;
   force?: boolean;
   dryRun?: boolean;
+  postUpdate?: boolean;
+  writeStatus?: boolean;
 }
 
 export interface SelfUpdateReport {
   status: "preview" | "applied" | "error";
   command: string[];
   message: string;
+  postUpdate?: PostUpdateRitualReport;
+}
+
+export interface PostUpdateRitualReport {
+  status: "preview" | "skipped" | "pass" | "warn" | "fail" | "error";
+  command: string[];
+  exitCode?: number | null;
+  signal?: string | null;
+  message: string;
+  stdoutTail?: string;
+  stderrTail?: string;
 }
 
 export interface UpdateCheckOptions {
@@ -65,6 +80,7 @@ export interface AutoUpdateReport {
   message: string;
   check: UpdateCheckReport;
   selfUpdate?: SelfUpdateReport;
+  postUpdate?: PostUpdateRitualReport;
 }
 
 type FetchResponseLike = {
@@ -154,12 +170,84 @@ export function writeSelfUpdateSuccessStatus(options: SelfUpdateOptions = {}, no
     finishedAt: checkedAt,
     restartRequired: true,
     message: latestTag
-      ? `OGB self-update completed for ${latestTag}. Restart OpenCode and run ogb validate.`
-      : "OGB self-update completed. Restart OpenCode and run ogb validate.",
+      ? `OGB self-update completed for ${latestTag}. Running the full bridge pass and then restart OpenCode.`
+      : "OGB self-update completed. Running the full bridge pass and then restart OpenCode.",
     check,
   };
   writeUpdateReport(options.projectRoot, report);
   return report;
+}
+
+function outputTail(value: unknown, maxChars = 4000): string | undefined {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) return undefined;
+  return text.length > maxChars ? text.slice(-maxChars) : text;
+}
+
+export function buildPostUpdateRitualCommand(options: SelfUpdateOptions = {}, platform: NodeJS.Platform = process.platform): string[] {
+  const paths = resolveProjectPaths(options.projectRoot);
+  const ogb = resolveCommand("ogb", { homeDir: paths.homeDir }) ?? "ogb";
+  const args = ["--project", paths.projectRoot, "pass", "--force"];
+  if (platform === "win32") args.push("--windows");
+  return [ogb, ...args];
+}
+
+export function runPostUpdateRitual(options: SelfUpdateOptions = {}): PostUpdateRitualReport {
+  const command = buildPostUpdateRitualCommand(options);
+  if (options.setup === false) {
+    return {
+      status: "skipped",
+      command,
+      message: "Post-update pass skipped because setup was disabled.",
+    };
+  }
+  if (options.dryRun) {
+    return {
+      status: "preview",
+      command,
+      message: "Would run the full post-update bridge pass.",
+    };
+  }
+
+  const paths = resolveProjectPaths(options.projectRoot);
+  const result = spawnCommandSync(command[0], command.slice(1), {
+    cwd: paths.projectRoot,
+    encoding: "utf8",
+    timeout: 5 * 60_000,
+    env: {
+      ...process.env,
+      NO_COLOR: process.env.NO_COLOR ?? "1",
+    },
+  });
+  const stdoutTail = outputTail(result.stdout);
+  const stderrTail = outputTail(result.stderr);
+
+  if (result.error) {
+    return {
+      status: "error",
+      command,
+      exitCode: result.status,
+      signal: result.signal,
+      message: `Post-update pass could not run: ${result.error.message}`,
+      stdoutTail,
+      stderrTail,
+    };
+  }
+
+  const status = result.status === 0 ? "pass" : result.status === 1 ? "warn" : "fail";
+  return {
+    status,
+    command,
+    exitCode: result.status,
+    signal: result.signal,
+    message: status === "pass"
+      ? "Post-update pass completed cleanly."
+      : status === "warn"
+        ? "Post-update pass completed with warnings."
+        : `Post-update pass failed with exit code ${result.status ?? "unknown"}.`,
+    stdoutTail,
+    stderrTail,
+  };
 }
 
 async function fetchLatestRelease(options: UpdateCheckOptions, repo: string): Promise<{
@@ -246,6 +334,7 @@ export function runSelfUpdate(options: SelfUpdateOptions = {}): SelfUpdateReport
       status: "preview",
       command,
       message: "Would download the selected OGB release and rerun the official bootstrap installer.",
+      postUpdate: runPostUpdateRitual({ ...options, dryRun: true }),
     };
   }
 
@@ -260,15 +349,38 @@ export function runSelfUpdate(options: SelfUpdateOptions = {}): SelfUpdateReport
   if (result.status !== 0) {
     return { status: "error", command, message: `Bootstrap exited with code ${result.status ?? "unknown"}.` };
   }
+  let successStatus: AutoUpdateReport | undefined;
   try {
-    writeSelfUpdateSuccessStatus(options);
+    if (options.writeStatus !== false) successStatus = writeSelfUpdateSuccessStatus(options);
   } catch {
     // Updating dashboard status must never turn a successful bootstrap into a failed self-update.
+  }
+  const postUpdate = options.postUpdate === false ? undefined : runPostUpdateRitual(options);
+  if (successStatus && postUpdate) {
+    try {
+      writeUpdateReport(options.projectRoot, { ...successStatus, postUpdate });
+    } catch {
+      // Updating dashboard status must never turn a successful bootstrap into a failed self-update.
+    }
+  }
+  const postUpdateFailed = postUpdate?.status === "fail" || postUpdate?.status === "error";
+  if (postUpdateFailed) {
+    return {
+      status: "error",
+      command,
+      postUpdate,
+      message: `OGB bootstrap completed, but the post-update pass did not finish cleanly: ${postUpdate.message}`,
+    };
   }
   return {
     status: "applied",
     command,
-    message: "OGB bootstrap completed. OpenCode settings were reapplied without copying Gemini user content.",
+    postUpdate,
+    message: postUpdate?.status === "warn"
+      ? "OGB bootstrap completed. Full bridge pass ran with warnings; see ogb pass/dashboard for details."
+      : postUpdate?.status === "skipped"
+        ? "OGB bootstrap completed. Post-update pass was skipped because setup was disabled."
+        : "OGB bootstrap completed. Full bridge pass was refreshed.",
   };
 }
 
@@ -346,6 +458,8 @@ export async function runAutoUpdate(options: AutoUpdateOptions = {}): Promise<Au
     installOpenCode: options.installOpenCode ?? false,
     force: options.force,
     dryRun: options.dryRun,
+    postUpdate: false,
+    writeStatus: false,
   };
   const selfUpdate = runSelfUpdate(selfUpdateOptions);
   const updated = selfUpdate.status === "applied";
@@ -361,12 +475,23 @@ export async function runAutoUpdate(options: AutoUpdateOptions = {}): Promise<Au
     message: options.dryRun
       ? `Would update OGB from ${check.currentVersion} to ${check.latestTag ?? check.latestVersion}.`
       : updated
-        ? `OGB updated to ${check.latestTag ?? check.latestVersion}. Restart OpenCode to load the new plugin and commands.`
+        ? `OGB updated to ${check.latestTag ?? check.latestVersion}. Running the full bridge pass and then restart OpenCode.`
         : `OGB auto-update failed: ${selfUpdate.message}`,
     check,
     selfUpdate,
   };
   if (options.write !== false) writeUpdateReport(options.projectRoot, report);
+  if (updated && !options.dryRun) {
+    const postUpdate = runPostUpdateRitual(options);
+    report.postUpdate = postUpdate;
+    report.selfUpdate = { ...selfUpdate, postUpdate };
+    if (postUpdate.status === "fail" || postUpdate.status === "error") {
+      report.status = "error";
+      report.restartRequired = false;
+      report.message = `OGB updated, but the post-update pass did not finish cleanly: ${postUpdate.message}`;
+    }
+    if (options.write !== false) writeUpdateReport(options.projectRoot, report);
+  }
   return report;
 }
 
@@ -378,6 +503,11 @@ export function printSelfUpdateReport(report: SelfUpdateReport, json = false): v
   console.log(`OGB self-update: ${report.status}`);
   console.log(report.message);
   console.log(formatCommand(report.command));
+  if (report.postUpdate) {
+    console.log(`Post-update pass: ${report.postUpdate.status}`);
+    console.log(report.postUpdate.message);
+    console.log(formatCommand(report.postUpdate.command));
+  }
 }
 
 export function printUpdateCheckReport(report: UpdateCheckReport, json = false): void {
@@ -398,4 +528,9 @@ export function printAutoUpdateReport(report: AutoUpdateReport, json = false): v
   console.log(`OGB auto-update: ${report.status}`);
   console.log(report.message);
   if (report.selfUpdate) console.log(formatCommand(report.selfUpdate.command));
+  if (report.postUpdate) {
+    console.log(`Post-update pass: ${report.postUpdate.status}`);
+    console.log(report.postUpdate.message);
+    console.log(formatCommand(report.postUpdate.command));
+  }
 }

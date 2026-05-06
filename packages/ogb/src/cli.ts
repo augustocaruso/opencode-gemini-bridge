@@ -331,6 +331,7 @@ program.command("pass")
   .option("--dry-run", "Preview pass actions without writing trust changes")
   .option("--force", "Overwrite files previously changed outside ogb management")
   .option("--accept-hooks", "Record current Gemini hooks as reviewed by hash")
+  .option("--windows", "Include Windows installer/static checks during validation")
   .option("--no-setup", "Skip setup-opencode")
   .option("--no-sync", "Skip sync")
   .option("--no-validation", "Skip validate")
@@ -345,6 +346,7 @@ program.command("pass")
         dryRun: opts.dryRun,
         force: opts.force,
         acceptHooks: opts.acceptHooks,
+        windows: opts.windows,
         skipSetup: opts.setup === false,
         skipSync: opts.sync === false,
         skipValidation: opts.validation === false,

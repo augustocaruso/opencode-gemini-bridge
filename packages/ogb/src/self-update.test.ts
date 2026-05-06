@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { buildSelfUpdateCommand, checkOgbUpdate, runAutoUpdate, runSelfUpdate, writeSelfUpdateSuccessStatus } from "./self-update.js";
+import { buildPostUpdateRitualCommand, buildSelfUpdateCommand, checkOgbUpdate, runAutoUpdate, runSelfUpdate, writeSelfUpdateSuccessStatus } from "./self-update.js";
 import { resolveProjectPaths } from "./paths.js";
 
 test("buildSelfUpdateCommand uses GitHub bootstrap on POSIX platforms", () => {
@@ -96,9 +96,20 @@ test("writeSelfUpdateSuccessStatus overwrites stale update errors", () => {
   assert.equal(saved.status, "updated");
   assert.equal(saved.latestTag, "v0.0.53");
   assert.equal(saved.restartRequired, true);
-  assert.match(saved.message, /run ogb validate/);
+  assert.match(saved.message, /full bridge pass/);
   assert.doesNotMatch(saved.message, /reset --yes/);
   assert.doesNotMatch(saved.message, /old failure/);
+});
+
+test("buildPostUpdateRitualCommand runs a full forced pass once after update", () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-post-update-"));
+  const command = buildPostUpdateRitualCommand({ projectRoot }, "win32");
+
+  assert.equal(command.slice(-5)[0], "--project");
+  assert.equal(command.slice(-4)[0], projectRoot);
+  assert.equal(command.slice(-3)[0], "pass");
+  assert.equal(command.slice(-2)[0], "--force");
+  assert.equal(command.slice(-1)[0], "--windows");
 });
 
 test("buildSelfUpdateCommand rejects invalid repo names", () => {
@@ -161,6 +172,7 @@ test("runAutoUpdate dry-run builds a self-update command without installing Open
   assert.ok(report.selfUpdate);
   assert.match(report.selfUpdate.command.join(" "), /v0\.0\.39/);
   assert.match(report.selfUpdate.command.join(" "), /no-(opencode|openCode)/i);
+  assert.equal(report.selfUpdate.postUpdate?.status, "preview");
 });
 
 test("checkOgbUpdate reports unknown when the release lookup fails", async () => {

@@ -393,9 +393,21 @@ function commandForPlatform(command, args) {
 }
 
 function baseArgsFrom(syncPlan) {
-  const verbs = new Set(["sync", "startup-sync", "import", "doctor", "dashboard", "auto-update", "check-update", "telemetry", "validate", "security-check", "adopt-agent-sync", "update-extensions", "self-update"]);
+  const verbs = new Set(["sync", "startup-sync", "import", "doctor", "dashboard", "pass", "auto-update", "check-update", "telemetry", "validate", "security-check", "adopt-agent-sync", "update-extensions", "self-update"]);
   const verbIndex = syncPlan.args.findIndex((arg) => verbs.has(String(arg)));
   return verbIndex >= 0 ? syncPlan.args.slice(0, verbIndex) : [];
+}
+
+function withoutProjectArgs(args) {
+  const clean = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (String(args[index]) === "--project") {
+      index += 1;
+      continue;
+    }
+    clean.push(args[index]);
+  }
+  return clean;
 }
 
 function withoutApplyFlags(args) {
@@ -421,11 +433,11 @@ function isLocalOgbSyncCommand(cwd) {
 
 function directCommandPlans(cwd, syncPlan, commandName, rawArgs) {
   const userArgs = splitCommandArgs(rawArgs);
-  const baseArgs = baseArgsFrom(syncPlan);
+  const baseArgs = withoutProjectArgs(baseArgsFrom(syncPlan));
   const projectArgs = ["--project", cwd];
   const plan = (args) => ({ command: syncPlan.command, args: [...baseArgs, ...projectArgs, ...args] });
 
-  if (commandName === "bridge") return [plan(["dashboard", ...userArgs])];
+  if (commandName === "bridge") return [plan(["pass", ...userArgs])];
   if (commandName === "doctor") return [plan(["doctor", ...userArgs])];
   if (commandName === "resources") return [plan(["dashboard", "--no-refresh", ...userArgs])];
   if (commandName === "validate") return [plan(["validate", ...userArgs])];
@@ -441,10 +453,7 @@ function directCommandPlans(cwd, syncPlan, commandName, rawArgs) {
     const args = withoutApplyFlags(userArgs);
     return [plan(["update-extensions", ...(hasApplyFlag(userArgs) || hasDryRunFlag(args) ? args : ["--dry-run", ...args])])];
   }
-  if (commandName === "upgrade-ogb") return [
-    plan(["self-update", ...userArgs]),
-    plan(["doctor"]),
-  ];
+  if (commandName === "upgrade-ogb") return [plan(["self-update", ...userArgs])];
   return [];
 }
 

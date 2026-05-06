@@ -286,7 +286,7 @@ test("startup plugin sends OGB command output directly to chat", async () => {
     enabled: true,
     autoUpdate: false,
     command: process.execPath,
-    baseArgs: [runnerPath],
+    baseArgs: [runnerPath, "--project", projectRoot],
     syncArgs: ["startup-sync"],
     updateArgs: ["check-update", "--no-write"],
     lockTtlMs: 10 * 60_000,
@@ -325,6 +325,20 @@ test("startup plugin sends OGB command output directly to chat", async () => {
     assert.match(prompts[0].body.parts[0].text, /RUNNER_ARGS=/);
     assert.match(prompts[0].body.parts[0].text, /"doctor"/);
     assert.match(prompts[0].body.parts[0].text, /"--project"/);
+    const doctorArgs = JSON.parse(prompts[0].body.parts[0].text.match(/RUNNER_ARGS=(\[[^\n]+\])/)?.[1] ?? "[]");
+    assert.equal(doctorArgs.filter((arg: string) => arg === "--project").length, 1);
+
+    await assert.rejects(
+      () => plugin["command.execute.before"]({ command: "bridge", arguments: "", sessionID: "session-2" }),
+      /__OGB_COMMAND_HANDLED__/,
+    );
+
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[1].body.parts[0].text, /OpenCode Gemini Bridge \/bridge/);
+    assert.match(prompts[1].body.parts[0].text, /"pass"/);
+    assert.doesNotMatch(prompts[1].body.parts[0].text, /"dashboard"/);
+    const bridgeArgs = JSON.parse(prompts[1].body.parts[0].text.match(/RUNNER_ARGS=(\[[^\n]+\])/)?.[1] ?? "[]");
+    assert.equal(bridgeArgs.filter((arg: string) => arg === "--project").length, 1);
   } finally {
     if (previousDelay === undefined) delete process.env.OGB_STARTUP_DELAY_MS;
     else process.env.OGB_STARTUP_DELAY_MS = previousDelay;

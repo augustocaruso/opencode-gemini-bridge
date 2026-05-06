@@ -19,6 +19,7 @@ export interface PassOptions {
   force?: boolean;
   json?: boolean;
   acceptHooks?: boolean;
+  windows?: boolean;
   skipSetup?: boolean;
   skipSync?: boolean;
   skipValidation?: boolean;
@@ -272,7 +273,7 @@ export function runPass(options: PassOptions = {}): PassReport {
   }
 
   if (!options.skipValidation) {
-    validation = runValidation({ projectRoot: paths.projectRoot, homeDir: paths.homeDir, silent: true });
+    validation = runValidation({ projectRoot: paths.projectRoot, homeDir: paths.homeDir, silent: true, windows: options.windows });
     automated.push("validate");
   }
 

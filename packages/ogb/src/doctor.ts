@@ -147,11 +147,20 @@ function collectWarnings(inv: Inventory, projectRoot: string, homeDir: string): 
     seen.add(warning);
     warnings.push(warning);
   };
+  const skillHash = (skill: Inventory["skills"][number]): string | undefined => {
+    const skillPath = path.join(skill.path, "SKILL.md");
+    if (!fs.existsSync(skillPath)) return undefined;
+    return sha256File(skillPath);
+  };
   const pushDuplicateSkillWarnings = () => {
     const duplicateSkills = inv.skills.filter((skill) => skill.status !== "ok" && /duplicate name/i.test(skill.message ?? ""));
     const byName = new Map<string, typeof duplicateSkills>();
     for (const skill of duplicateSkills) byName.set(skill.name, [...(byName.get(skill.name) ?? []), skill]);
     for (const [name, skills] of byName) {
+      const hashes = new Set(skills.map(skillHash));
+      const scopes = new Set(skills.map((skill) => skill.scope));
+      const sameContentAcrossProjectAndGlobal = hashes.size === 1 && !hashes.has(undefined) && scopes.has("project") && scopes.has("global");
+      if (sameContentAcrossProjectAndGlobal) continue;
       pushWarning(`Skill warning: ${name} - Duplicate name (${skills.map((skill) => skill.path).join("; ")})`);
     }
     return new Set(duplicateSkills.map((skill) => skill.path));

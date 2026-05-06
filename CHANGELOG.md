@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.0.59 - Update com pass completo
+
+- Faz `self-update` e `auto-update` gravarem o status de update e rodarem `ogb pass --force` logo depois, regenerando sync, doctor, validation, security e dashboard no mesmo fluxo.
+- Mantem `restart OpenCode` como proximo passo informativo, sem transformar um bridge limpo em `WARN`.
+- Corrige comandos diretos do plugin para remover `--project` duplicado antes de chamar `doctor`, `bridge` ou outros comandos.
+- Faz `/bridge` rodar o healthcheck completo (`ogb pass`) em vez de apenas reler dashboard antigo.
+- Ignora duplicatas de skills OpenCode quando projeto e global carregam a mesma copia byte a byte.
+
 ## 0.0.58 - Contagem global sem somar fonte e destino
 
 - Faz o inventario tratar a home como global de verdade, evitando `scope: project` para recursos em `~/.gemini` quando `--project` e a home.

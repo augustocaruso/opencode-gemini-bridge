@@ -518,7 +518,6 @@ export function runDashboard(options: DashboardOptions = {}): DashboardReport {
     const staleWarning = "OpenCode startup sync ficou preso em running, mas o processo nao existe mais. Reinicie o OpenCode para carregar o plugin novo.";
     if (!warnings.includes(staleWarning)) warnings.push(staleWarning);
   }
-  if (updateStatus?.restartRequired === true) warnings.push("OGB foi atualizado automaticamente; reinicie o OpenCode para carregar plugin, comandos e sidebar novos.");
   if (updateStatus?.status === "error" && !staleUpdateVersion && typeof updateStatus.message === "string") warnings.push(`Auto-update do OGB falhou: ${updateStatus.message}`);
 
   const counts = doctor?.counts ?? {};

@@ -85,8 +85,8 @@ test("runDashboard combines generated reports into JSON and Markdown", () => {
       message: "All referenced routed/fallback models were found in opencode models.",
     },
   });
-  writeJson(paths.validationPath, { version: OGB_VERSION, projectRoot, outcome: "pass", checks: [] });
-  writeJson(paths.securityPath, { version: OGB_VERSION, projectRoot, outcome: "pass", findings: [] });
+  writeJson(paths.validationPath, { version: OGB_VERSION, projectRoot, generatedAt: "2026-05-06T12:02:00.000Z", outcome: "pass", checks: [] });
+  writeJson(paths.securityPath, { version: OGB_VERSION, projectRoot, generatedAt: "2026-05-06T12:02:00.000Z", outcome: "pass", findings: [] });
   writeJson(paths.limitsPath, {
     version: OGB_VERSION,
     projectRoot,
@@ -143,7 +143,7 @@ test("runDashboard combines generated reports into JSON and Markdown", () => {
   assert.match(markdown, /2 MCPs/);
 });
 
-test("runDashboard warns when auto-update requires an OpenCode restart", () => {
+test("runDashboard keeps a clean bridge passing when only OpenCode restart is pending", () => {
   const projectRoot = tempProject();
   const paths = resolveProjectPaths(projectRoot);
 
@@ -158,8 +158,8 @@ test("runDashboard warns when auto-update requires an OpenCode restart", () => {
       projectConfig: true,
     },
   });
-  writeJson(paths.validationPath, { version: OGB_VERSION, projectRoot, outcome: "pass", checks: [] });
-  writeJson(paths.securityPath, { version: OGB_VERSION, projectRoot, outcome: "pass", findings: [] });
+  writeJson(paths.validationPath, { version: OGB_VERSION, projectRoot, generatedAt: "2026-05-06T12:02:00.000Z", outcome: "pass", checks: [] });
+  writeJson(paths.securityPath, { version: OGB_VERSION, projectRoot, generatedAt: "2026-05-06T12:02:00.000Z", outcome: "pass", findings: [] });
   writeJson(paths.updateStatusPath, {
     version: 1,
     status: "updated",
@@ -175,11 +175,12 @@ test("runDashboard warns when auto-update requires an OpenCode restart", () => {
   const report = runDashboard({ projectRoot, refresh: false, silent: true });
   const markdown = fs.readFileSync(paths.dashboardMarkdownPath, "utf8");
 
-  assert.equal(report.outcome, "warn");
+  assert.equal(report.outcome, "pass");
   assert.equal(report.update.status, "updated");
   assert.equal(report.update.restartRequired, true);
   assert.match(markdown, /OGB update: UPDATED v0\.0\.39 - restart OpenCode/);
   assert.ok(report.nextSteps.some((step) => step.includes("Reinicie o OpenCode")));
+  assert.equal(report.warnings.some((warning) => warning.includes("reinicie o OpenCode")), false);
 });
 
 test("runDashboard treats validation/security reports without generatedAt as stale after self-update", () => {

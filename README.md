@@ -115,18 +115,20 @@ Update depois que o `ogb` ja esta instalado:
 ```bash
 ogb --project "$PWD" self-update
 ogb --project "$PWD" self-update --dry-run
-ogb --project "$PWD" self-update --release v0.0.58
+ogb --project "$PWD" self-update --release v0.0.59
 ogb --project "$PWD" check-update
 ogb --project "$PWD" auto-update
 ```
 
-O `self-update` baixa a release escolhida, roda o bootstrap oficial e reaplica
-o perfil OGB/OpenCode. Ele nao copia secrets, sessoes ou conteudo unico do
-Gemini CLI da pessoa; esse conteudo continua sendo lido localmente pelo sync.
+O `self-update` baixa a release escolhida, roda o bootstrap oficial, reaplica
+o perfil OGB/OpenCode e em seguida roda `ogb pass --force` para regenerar sync,
+doctor, validation, security-check e dashboard. Ele nao copia secrets, sessoes
+ou conteudo unico do Gemini CLI da pessoa; esse conteudo continua sendo lido
+localmente pelo sync.
 O `auto-update` compara a versao local com a ultima GitHub Release, aplica a
-release nova quando existir e grava `.opencode/generated/ogb-update-status.json`;
-por padrao ele nao tenta instalar/atualizar o proprio OpenCode enquanto o
-OpenCode ja esta aberto.
+release nova quando existir, grava `.opencode/generated/ogb-update-status.json`
+e tambem roda o mesmo pass completo; por padrao ele nao tenta instalar/atualizar
+o proprio OpenCode enquanto o OpenCode ja esta aberto.
 
 Depois de atualizar uma maquina que deve ficar com o perfil global limpo, rode:
 
@@ -315,7 +317,7 @@ Setup OpenCode com sync no startup:
 ogb setup-opencode
 ```
 
-Esse comando instala um plugin local em `.opencode/plugins/`, grava a configuração em `.opencode/generated/ogb-startup-sync.json`, valida o comando de startup e roda `doctor`. Quando o OpenCode inicia, o plugin roda `ogb auto-update`, aplica uma release nova do OGB se existir, avisa para reiniciar o OpenCode quando atualizar, roda `ogb sync`, grava `.opencode/generated/ogb-plugin-status.json` e `.opencode/generated/ogb-update-status.json`, registra telemetria local best-effort, atualiza `.opencode/generated/ogb-dashboard.md` e mostra toast de sucesso/falha quando a TUI permite. O caminho mais confiável ainda é abrir pelo wrapper:
+Esse comando instala um plugin local em `.opencode/plugins/`, grava a configuração em `.opencode/generated/ogb-startup-sync.json`, valida o comando de startup e roda `doctor`. Quando um update real acontece via `self-update` ou `auto-update`, o OGB roda o ritual completo (`pass`: setup, sync, doctor, validate, security-check e dashboard) antes de devolver o controle. No startup, o plugin checa update sem aplicar automaticamente por padrão, roda `ogb sync`, grava `.opencode/generated/ogb-plugin-status.json` e `.opencode/generated/ogb-update-status.json`, registra telemetria local best-effort, atualiza `.opencode/generated/ogb-dashboard.md` e mostra toast de sucesso/falha quando a TUI permite. O caminho mais confiável ainda é abrir pelo wrapper:
 
 ```bash
 ogb launch

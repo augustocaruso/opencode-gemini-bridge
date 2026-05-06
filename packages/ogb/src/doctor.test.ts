@@ -28,6 +28,23 @@ test("runDoctor prints one warning line for duplicate skill names", () => {
   assert.match(duplicateWarnings[0], /\.opencode\/skill\/gemini-importer/);
 });
 
+test("runDoctor ignores identical project/global OpenCode skill copies", () => {
+  const projectRoot = tempRoot();
+  const homeDir = tempRoot();
+  const skillText = "---\nname: shared-skill\n---\n";
+  for (const root of [
+    path.join(projectRoot, ".opencode", "skills", "shared-skill"),
+    path.join(homeDir, ".config", "opencode", "skills", "shared-skill"),
+  ]) {
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, "SKILL.md"), skillText, "utf8");
+  }
+
+  const report = runDoctor({ projectRoot, homeDir, silent: true });
+
+  assert.equal(report.warnings.some((warning) => warning.includes("shared-skill")), false);
+});
+
 test("runDoctor counts OpenCode skills without double-counting Gemini sources in home mode", () => {
   const homeDir = tempRoot();
   for (const root of [
