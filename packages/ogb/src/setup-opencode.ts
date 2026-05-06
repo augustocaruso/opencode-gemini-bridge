@@ -344,6 +344,21 @@ function cmdQuote(value) {
   return '"' + escaped + '"';
 }
 
+function normalizeCommandInput(value) {
+  let normalized = String(value).trim();
+  let changed = true;
+  while (changed && normalized.length >= 2) {
+    changed = false;
+    const first = normalized[0];
+    const last = normalized[normalized.length - 1];
+    if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+      normalized = normalized.slice(1, -1).trim();
+      changed = true;
+    }
+  }
+  return normalized;
+}
+
 function cmdToken(value, command = false) {
   const text = String(value);
   if (command && /^[A-Za-z0-9_.-]+$/.test(text)) return text;
@@ -352,13 +367,14 @@ function cmdToken(value, command = false) {
 }
 
 function commandForPlatform(command, args) {
-  if (process.platform !== "win32") return { command, args };
+  const normalizedCommand = normalizeCommandInput(command);
+  if (process.platform !== "win32") return { command: normalizedCommand, args };
 
-  const ext = path.basename(String(command)).toLowerCase().match(/\.[^.]+$/)?.[0];
-  if (ext === ".exe") return { command, args };
+  const ext = path.basename(normalizedCommand).toLowerCase().match(/\.[^.]+$/)?.[0];
+  if (ext === ".exe") return { command: normalizedCommand, args };
 
   const comspec = process.env.ComSpec || process.env.COMSPEC || "cmd.exe";
-  const commandLine = ["call", cmdToken(command, true), ...args.map((arg) => cmdToken(arg))].join(" ");
+  const commandLine = ["call", cmdToken(normalizedCommand, true), ...args.map((arg) => cmdToken(arg))].join(" ");
   return {
     command: comspec,
     args: ["/d", "/v:off", "/c", commandLine],

@@ -16,6 +16,21 @@ function cmdQuote(value: string): string {
   return `"${escaped}"`;
 }
 
+export function normalizeCommandInput(value: string): string {
+  let normalized = String(value).trim();
+  let changed = true;
+  while (changed && normalized.length >= 2) {
+    changed = false;
+    const first = normalized[0];
+    const last = normalized[normalized.length - 1];
+    if ((first === "\"" && last === "\"") || (first === "'" && last === "'")) {
+      normalized = normalized.slice(1, -1).trim();
+      changed = true;
+    }
+  }
+  return normalized;
+}
+
 function cmdToken(value: string, command = false): string {
   if (command && /^[A-Za-z0-9_.-]+$/.test(value)) return value;
   if (!command && /^[A-Za-z0-9_./:@+=-]+$/.test(value)) return value;
@@ -23,13 +38,14 @@ function cmdToken(value: string, command = false): string {
 }
 
 export function commandForPlatform(command: string, args: readonly string[] = [], platform: NodeJS.Platform = process.platform): { command: string; args: string[] } {
-  if (platform !== "win32") return { command, args: [...args] };
+  const normalizedCommand = normalizeCommandInput(command);
+  if (platform !== "win32") return { command: normalizedCommand, args: [...args] };
 
-  const ext = command.split(/[\\/]/).pop()?.toLowerCase().match(/\.[^.]+$/)?.[0];
-  if (ext === ".exe") return { command, args: [...args] };
+  const ext = normalizedCommand.split(/[\\/]/).pop()?.toLowerCase().match(/\.[^.]+$/)?.[0];
+  if (ext === ".exe") return { command: normalizedCommand, args: [...args] };
 
   const comspec = process.env.ComSpec || "cmd.exe";
-  const commandLine = ["call", cmdToken(command, true), ...args.map((arg) => cmdToken(arg))].join(" ");
+  const commandLine = ["call", cmdToken(normalizedCommand, true), ...args.map((arg) => cmdToken(arg))].join(" ");
   return {
     command: comspec,
     args: ["/d", "/v:off", "/c", commandLine],

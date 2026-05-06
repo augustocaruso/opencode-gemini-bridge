@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.55 - Windows valida comandos sem aspas literais
+
+- Normaliza caminhos de comandos antes de resolver/executar `npm.cmd`, `gemini.cmd`, `opencode.cmd` e `ogb.cmd`, removendo aspas externas acidentais vindas do PATH/where/npm prefix.
+- Faz o runner Windows montar `cmd.exe /c call ...` usando o caminho limpo, evitando erros como `"C:\...\opencode.cmd" nao e reconhecido`.
+- Atualiza o plugin de startup gerado para aplicar a mesma limpeza antes de executar o OGB.
+- Adiciona testes cobrindo paths `.cmd` e `.exe` quoteados no resolvedor e no runner Windows.
+
 ## 0.0.54 - Dashboard ignora relatorios obsoletos
 
 - Faz o dashboard tratar `ogb-validation.json` e `ogb-security.json` de versoes antigas como aviso para regenerar, nao como FAIL atual.

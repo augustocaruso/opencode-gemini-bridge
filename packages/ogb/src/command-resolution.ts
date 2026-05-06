@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnCommandSync } from "./process.js";
+import { normalizeCommandInput, spawnCommandSync } from "./process.js";
 
 export interface CommandResolutionOptions {
   homeDir?: string;
@@ -12,12 +12,12 @@ export interface CommandResolutionOptions {
 }
 
 function unique(values: string[]): string[] {
-  return [...new Set(values.filter(Boolean))];
+  return [...new Set(values.map(normalizeCommandInput).filter(Boolean))];
 }
 
 function pathExists(filePath: string): boolean {
   try {
-    const stat = fs.statSync(filePath);
+    const stat = fs.statSync(normalizeCommandInput(filePath));
     return stat.isFile() || stat.isSymbolicLink();
   } catch {
     return false;
@@ -25,6 +25,7 @@ function pathExists(filePath: string): boolean {
 }
 
 function isPathLike(command: string, platform: NodeJS.Platform): boolean {
+  command = normalizeCommandInput(command);
   return path.isAbsolute(command)
     || (platform === "win32" && path.win32.isAbsolute(command))
     || command.includes("/")
@@ -32,11 +33,13 @@ function isPathLike(command: string, platform: NodeJS.Platform): boolean {
 }
 
 function windowsCommandVariants(command: string): string[] {
+  command = normalizeCommandInput(command);
   if (path.extname(command)) return [command];
   return [`${command}.cmd`, `${command}.exe`, `${command}.bat`, `${command}.ps1`, command];
 }
 
 function commandVariants(command: string, platform: NodeJS.Platform): string[] {
+  command = normalizeCommandInput(command);
   return platform === "win32" ? windowsCommandVariants(command) : [command];
 }
 
@@ -56,7 +59,7 @@ function npmPrefixCandidates(command: string, platform: NodeJS.Platform, env: No
     encoding: "utf8",
     env: { ...process.env, ...env },
   });
-  const prefix = !result.error && result.status === 0 ? String(result.stdout || "").trim() : "";
+  const prefix = !result.error && result.status === 0 ? normalizeCommandInput(String(result.stdout || "")) : "";
   if (!prefix) return [];
   const roots = platform === "win32" ? [prefix, path.join(prefix, "bin")] : [path.join(prefix, "bin"), prefix];
   return roots.flatMap((root) => commandVariants(path.join(root, command), platform));
@@ -83,9 +86,10 @@ export function resolveCommand(command: string, options: CommandResolutionOption
   const platform = options.platform ?? process.platform;
   const homeDir = options.homeDir ?? os.homedir();
   const env = options.env ?? process.env;
+  command = normalizeCommandInput(command);
 
   if (isPathLike(command, platform)) {
-    return commandVariants(command, platform).find(pathExists);
+    return commandVariants(command, platform).map(normalizeCommandInput).find(pathExists);
   }
 
   const candidates = [
