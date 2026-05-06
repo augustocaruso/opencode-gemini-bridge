@@ -1,8 +1,9 @@
 # OpenCode Gemini Bridge
 
 **Data de consolidação:** 2026-05-04
+**Estrutura reorganizada:** 2026-05-06
 
-Este pacote documenta o projeto **OpenCode Gemini Bridge**: uma camada para usar o **OpenCode como interface primária** para estudos e automação, preservando o ecossistema já existente no **Gemini CLI**.
+Este repositório contém o **OpenCode Gemini Bridge**, um CLI chamado `ogb` para usar o **OpenCode como interface primária** para estudos e automação, preservando o ecossistema já existente no **Gemini CLI**.
 
 A ideia central:
 
@@ -12,20 +13,20 @@ OpenCode   = interface principal nova
 Bridge     = camada que sincroniza, converte, expande e valida recursos
 ```
 
-Este pacote foi feito para você abrir no Codex ou em outro agente e continuar o projeto sem precisar reconstruir o raciocínio da conversa.
+O projeto começou como handoff/spec, mas hoje o caminho principal é produto: código do CLI, instaladores, workflows e documentação de uso.
 
 ## Onde começar
 
 Leia nesta ordem:
 
-1. [`00-HANDOFF-FOR-CODEX.md`](00-HANDOFF-FOR-CODEX.md) — prompt pronto para colar no Codex.
+1. [`README.md`](README.md) — fluxo atual de instalação e uso.
 2. [`ROADMAP.md`](ROADMAP.md) — mapa atual do produto e prioridades.
 3. [`docs/01-cheat-sheet.md`](docs/01-cheat-sheet.md) — visão de bolso do projeto.
-4. [`docs/02-project-charter.md`](docs/02-project-charter.md) — propósito, escopo e não-escopo.
-5. [`docs/04-architecture.md`](docs/04-architecture.md) — arquitetura proposta.
-6. [`docs/08-mvp-roadmap.md`](docs/08-mvp-roadmap.md) — roadmap historico do MVP.
-7. [`docs/12-dia-a-dia.md`](docs/12-dia-a-dia.md) — fluxo curto de uso diario.
-8. [`artifacts/README.md`](artifacts/README.md) — configs, scripts e templates incluídos.
+4. [`docs/12-dia-a-dia.md`](docs/12-dia-a-dia.md) — fluxo curto de uso diario.
+5. [`docs/04-architecture.md`](docs/04-architecture.md) — arquitetura do bridge.
+6. [`docs/17-cli-command-spec.md`](docs/17-cli-command-spec.md) — comandos do `ogb`.
+
+Material histórico de handoff e MVP antigo fica em [`docs/archive/`](docs/archive/).
 
 ## Princípios fixados
 
@@ -41,26 +42,51 @@ Leia nesta ordem:
 Instalação local a partir deste checkout:
 
 ```bash
-artifacts/scripts/install-mac.sh --project "$PWD"
+scripts/install-mac.sh --project "$PWD"
 ```
 
 No Windows, em PowerShell:
 
 ```powershell
-.\artifacts\scripts\install-windows.ps1 -Project $PWD
+.\scripts\install-windows.ps1 -Project $PWD
 ```
 
-Esses instaladores agora fazem três coisas: instalam o `ogb`, instalam o
+Esses instaladores agora fazem quatro coisas: instalam o `ogb`, limpam artefatos
+de projeto que versões antigas possam ter criado por engano no home, instalam o
 OpenCode se ele ainda não existir e aplicam o perfil OGB do OpenCode
-globalmente. Esse perfil inclui plugins, `/research`, `/dev-server`, DCP,
-websearch, PTY, auto-fallback, YOLO, permissões conservadoras e a cadeia de
-fallback dos subagentes. O conteúdo próprio do Gemini CLI de cada pessoa não é
-copiado; ele é lido e projetado localmente pelo `ogb sync`.
+globalmente. A limpeza faz backup em
+`~/.config/opencode-gemini-bridge/backups/home-cleanup/` antes de remover
+`~/opencode.jsonc` ou arquivos OGB dentro de `~/.opencode`. Esse perfil inclui
+plugins, `/research`, `/upgrade-ogb`, DCP, websearch, PTY, auto-fallback, YOLO,
+o preset global `AGENTS.md` e a cadeia de fallback dos subagentes. O conteúdo
+próprio do Gemini CLI de cada pessoa não é copiado; ele é lido e projetado
+localmente pelo `ogb sync`.
+
+Para o websearch nativo do OpenCode funcionar com Exa, o instalador tambem
+garante `OPENCODE_ENABLE_EXA=1`: no Mac ele cria ou atualiza
+`~/.config/zsh/.zshrc`; no Windows ele grava a variável de ambiente de usuário.
+
+Quando `--project` aponta para o home (`~`), o instalador não cria setup de
+projeto. Ele ainda roda o sync global para gerar
+`~/.config/opencode-gemini-bridge/generated/GEMINI.expanded.md` e injetar esse
+arquivo no contexto global do OpenCode via `instructions`. Se nao existir
+`~/.gemini/GEMINI.md`, os `GEMINI.md` das extensoes Gemini instaladas tambem
+alimentam esse contexto global.
+
+Para resetar de verdade o perfil global depois de instalar ou atualizar o OGB,
+rode `ogb reset` a partir do home. Ele so aceita home como projeto e pede
+confirmacao antes de limpar artefatos antigos e sobrescrever o perfil global.
+Esse reset tambem reinstala o plugin global OGB do OpenCode:
+
+```bash
+cd ~
+ogb reset
+```
 
 Importação inicial:
 
 ```bash
-cd artifacts/bridge-cli-skeleton
+cd packages/ogb
 npm install
 npm run build
 node dist/cli.js --project /caminho/do/projeto setup-ux
@@ -71,7 +97,7 @@ node dist/cli.js --project /caminho/do/projeto setup-opencode
 Distribuição por GitHub Release:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/augustocaruso/opencode-gemini-bridge/main/artifacts/scripts/bootstrap-mac.sh | bash -s -- --project "$PWD"
+curl -fsSL https://raw.githubusercontent.com/augustocaruso/opencode-gemini-bridge/main/scripts/bootstrap-mac.sh | bash -s -- --project "$PWD"
 ```
 
 No Windows, pelo PowerShell:
@@ -89,7 +115,7 @@ Update depois que o `ogb` ja esta instalado:
 ```bash
 ogb --project "$PWD" self-update
 ogb --project "$PWD" self-update --dry-run
-ogb --project "$PWD" self-update --release v0.0.33
+ogb --project "$PWD" self-update --release v0.0.45
 ogb --project "$PWD" check-update
 ogb --project "$PWD" auto-update
 ```
@@ -102,6 +128,13 @@ release nova quando existir e grava `.opencode/generated/ogb-update-status.json`
 por padrao ele nao tenta instalar/atualizar o proprio OpenCode enquanto o
 OpenCode ja esta aberto.
 
+Depois de atualizar uma maquina que deve ficar com o perfil global limpo, rode:
+
+```bash
+cd ~
+ogb reset
+```
+
 Dia a dia:
 
 ```bash
@@ -112,6 +145,34 @@ ogb dashboard
 opencode
 opencode --agent YOLO
 ogb launch --yolo
+```
+
+Se voce abrir o `ogb` ou o `opencode` diretamente no diretorio home (`~`), o
+OGB entra em modo home. Nesse modo ele usa os arquivos globais e nao cria
+projeto dentro da home: nada de `~/.opencode`, nada de `~/opencode.jsonc` e
+nada de perfil `.opencode/ogb.config.jsonc` ali. O perfil OpenCode global fica
+em `~/.config/opencode/`, e os relatorios/estado do OGB ficam em
+`~/.config/opencode-gemini-bridge/generated/`. Para ter configuracao de projeto,
+abra uma pasta de projeto fora do home.
+
+No modo home, `ogb sync` e `ogb import` sincronizam recursos globais do Gemini:
+`~/.gemini/GEMINI.md` e `~/.gemini/extensions/*/GEMINI.md` sao expandidos para
+`~/.config/opencode-gemini-bridge/generated/GEMINI.expanded.md`, e esse conteúdo
+expandido é injetado no contexto via `instructions` em
+`~/.config/opencode/opencode.json`. O `setup-ux`/`reset` sobrescreve
+`~/.config/opencode/AGENTS.md` com o preset OGB; o `sync` não usa esse arquivo
+como fonte de verdade. Comandos vão para `~/.config/opencode/commands/`, agents para
+`~/.config/opencode/agents/` e skills para `~/.config/opencode/skills/`.
+Comandos/agents/skills vindos de extensoes Gemini tambem entram nesses
+diretórios globais. MCPs compativeis de `~/.gemini/settings.json` e dos
+manifestos das extensoes Gemini entram em `~/.config/opencode/opencode.json`.
+Hooks e scripts continuam fora dessa copia automatica porque exigem revisao.
+
+Para limpar manualmente a bagunca deixada por instalacoes antigas no home:
+
+```bash
+ogb cleanup-home
+ogb cleanup-home --dry-run
 ```
 
 O Rulesync entra como auxiliar opcional no `ogb import` e no `ogb sync`: o bridge roda a conversão em staging temporário, promove apenas arquivos seguros/gerenciados e mantém `GEMINI.md` como fonte de verdade.
@@ -133,7 +194,9 @@ O modo YOLO e instalado como agente separado do OpenCode:
 .opencode/agents/YOLO.md
 ```
 
-Ele libera `edit` e `bash` quando o agente ativo e `YOLO`; as permissoes globais continuam conservadoras.
+Ele deixa as permissoes declaradas do agente `YOLO` em `allow`, incluindo
+`edit`, `bash`, `task` e `external_directory`; as permissoes globais continuam
+mais conservadoras.
 
 Para abrir diretamente no YOLO:
 
@@ -289,7 +352,7 @@ pacote privado, as instalacoes dos seus usuarios passam a enviar envelopes
 redigidos para o seu Worker por padrao. Eles recebem apenas o endpoint e o token
 de ingestao do Worker; a chave do Resend fica somente nos secrets da Cloudflare.
 
-O arquivo `artifacts/bridge-cli-skeleton/telemetry.defaults.json` e ignorado
+O arquivo `packages/ogb/telemetry.defaults.json` e ignorado
 pelo Git para nao vazar o token, mas entra no pacote npm/tarball quando existe.
 Use `ogb telemetry setup-email --no-distribution-defaults` se quiser configurar
 so a sua maquina sem autoativar builds privados.
@@ -303,16 +366,22 @@ tarball/zip, sem mostrar o token nos logs.
 ```text
 opencode-gemini-bridge/
   README.md
-  00-HANDOFF-FOR-CODEX.md
+  packages/
+    ogb/
+      src/
+      schemas/
+      telemetry-email-worker/
+  scripts/
   docs/
+    archive/
   adrs/
   checklists/
+  examples/
+    gemini/
   artifacts/
-    opencode/
-    bridge-cli-skeleton/
-    scripts/
-    github-actions/
-    schemas/
+    scripts/       # wrappers legados para self-update de versões antigas
+  .github/
+    workflows/
 ```
 
 ## Atenção
@@ -321,8 +390,8 @@ O bridge ja e funcional, mas ainda esta em evolucao. Antes de distribuir para
 terceiros, rode:
 
 ```bash
-npm --prefix artifacts/bridge-cli-skeleton test
-npm --prefix artifacts/bridge-cli-skeleton run build
+npm --prefix packages/ogb test
+npm --prefix packages/ogb run build
 ogb validate
 ogb security-check
 ogb bridge

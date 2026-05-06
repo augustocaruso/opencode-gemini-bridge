@@ -7,7 +7,7 @@
 - [ ] Install OpenCode.
 - [ ] Confirm Gemini CLI works.
 - [ ] Clone/create OpenCode Gemini Bridge repo.
-- [ ] Run `artifacts/scripts/install-mac.sh --project <project>`.
+- [ ] Run `scripts/install-mac.sh --project <project>`.
 - [ ] Confirm `ogb --version` or use the printed full `ogb` path.
 - [ ] Confirm `.opencode/plugins/ogb-startup-sync.js` exists.
 - [ ] Confirm `.opencode/generated/ogb-startup-sync.json` exists.

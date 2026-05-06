@@ -56,7 +56,7 @@ Não edite manualmente arquivos gerados do OpenCode.
     "todowrite": "allow",
     "edit": "ask",
     "bash": "ask",
-    "task": "ask"
+    "task": "allow"
   }
 }
 ```
@@ -65,7 +65,7 @@ Não edite manualmente arquivos gerados do OpenCode.
 
 | Agente | Serve para | Permissões |
 |---|---|---|
-| `YOLO` | executar com mínima fricção quando escolhido explicitamente | `edit`/`bash` allow, `task`/diretório externo ask |
+| `YOLO` | executar com mínima fricção quando escolhido explicitamente | `edit`/`bash`/`task`/diretório externo allow |
 
 ## MVP real
 

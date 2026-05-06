@@ -53,7 +53,7 @@ Casos:
 
 - Setup limpo passa.
 - Secret de alta confianca falha.
-- YOLO mantem `external_directory: ask` e `task: ask`.
+- YOLO instala `external_directory: allow` e `task: allow`.
 - Hooks/scripts de extensoes nao sao auto-projetados.
 - Hook/script confiado falha quando hash muda.
 

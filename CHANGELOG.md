@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.0.45 - global profile reset and TUI hardening
+
+- Move o pacote CLI de `artifacts/bridge-cli-skeleton` para `packages/ogb`.
+- Move instaladores e bootstraps para `scripts/`.
+- Arquiva handoffs e docs antigas de MVP em `docs/archive/`.
+- Remove templates/workflows duplicados e mantém o Worker de telemetria dentro do pacote CLI.
+- Faz `ogb reset` e `setup-ux --reset-global` tratarem a home como perfil global, limpando artefatos antigos e sobrescrevendo as configuracoes globais gerenciadas.
+- Registra o plugin global do OGB no `opencode.json`, corrige o lock global do startup sync e evita status `running` preso.
+- Gera `GEMINI.expanded.md` global a partir dos `GEMINI.md` das extensoes Gemini e injeta esse contexto por `instructions`, sem mexer no `AGENTS.md` durante o sync.
+- Importa MCPs globais do Gemini CLI e das extensoes para o OpenCode global.
+- Remove o comando `/dev-server` do perfil inicial e instala apenas os comandos globais que continuam fazendo sentido.
+- Instala as dependencias globais da TUI quando necessario, para o plugin visual carregar no OpenCode.
+- Distribui um `AGENTS.md` global inicial do OGB e configura o agente YOLO com todas as permissoes em `allow`.
+
 ## 0.0.34 - Windows installer repair
 
 - Instala o CLI em uma pasta estável local e registra `ogb.cmd` apontando direto para `dist/cli.js`, evitando shim quebrado sem `node_modules`.
@@ -157,7 +171,7 @@
 
 ## 0.0.2 — CLI MVP com Rulesync em staging
 
-- Transforma `artifacts/bridge-cli-skeleton` em um CLI funcional para `init`, `inventory`, `flatten`, `sync`, `import`, `doctor` e `launch`.
+- Transforma o antigo `artifacts/bridge-cli-skeleton` em um CLI funcional para `init`, `inventory`, `flatten`, `sync`, `import`, `doctor` e `launch`.
 - Corrige o flatten de `GEMINI.md` com imports aninhados, ciclos, imports ausentes, paths com espaços e code fences.
 - Adiciona inventário de GEMINI files, imports, MCPs, skills, agents, commands, hooks e extensões sem logar valores de secrets.
 - Integra Rulesync como motor auxiliar opcional, executado em staging temporário e promovido com proteção por hash.

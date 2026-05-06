@@ -8,17 +8,17 @@ Arquivo:
 ~/.config/opencode/opencode.jsonc
 ```
 
-Template recomendado neste pacote:
+O perfil global recomendado é gerado pelo CLI em:
 
 ```text
-artifacts/opencode/global-opencode.jsonc
+packages/ogb/src/setup-ux.ts
 ```
 
 Pontos importantes:
 
 - `question: allow` para perguntas estruturadas.
 - `todowrite: allow` para checklists.
-- `edit/bash/task: ask` no começo.
+- `YOLO` usa permissoes `allow`; o config global continua com bash mais conservador.
 - `autoupdate: notify` para evitar updates silenciosos.
 - `watcher.ignore` para evitar ruído.
 - Plugins: Gemini auth e quota.
@@ -31,10 +31,10 @@ Arquivo:
 project/opencode.jsonc
 ```
 
-Template:
+O template de projeto é gerado pelo CLI em:
 
 ```text
-artifacts/opencode/project-opencode.jsonc
+packages/ogb/src/project-config.ts
 ```
 
 O ponto crítico:
@@ -51,10 +51,10 @@ O ponto crítico:
 
 - `YOLO`: execução com mínima fricção em ambiente confiável, escolhido explicitamente pelo usuário.
 
-Templates em:
+O agente embutido fica em:
 
 ```text
-artifacts/opencode/agents/
+packages/ogb/src/built-ins.ts
 ```
 
 OpenCode também aceita agentes Markdown em:
@@ -78,10 +78,10 @@ O bridge canoniza outputs de conversores externos para esses caminhos.
 - `/agent-sync`
 - `/update-extensions`
 
-Templates em:
+Os comandos embutidos ficam em:
 
 ```text
-artifacts/opencode/commands/
+packages/ogb/src/built-ins.ts
 ```
 
 Skills devem preferir:
@@ -110,7 +110,7 @@ Depois:
 
 ## Modelo de permissões
 
-Começar conservador:
+Exemplo conservador para projetos que nao querem YOLO:
 
 ```jsonc
 {

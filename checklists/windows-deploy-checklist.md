@@ -21,7 +21,7 @@
 ## Install
 
 - [ ] Clone repo.
-- [ ] Run `artifacts\scripts\install-windows.ps1 -Project <project>`.
+- [ ] Run `scripts\install-windows.ps1 -Project <project>`.
 - [ ] Confirm `ogb.cmd --version` or use the printed full path.
 - [ ] Confirm `.opencode\plugins\ogb-startup-sync.js` exists.
 - [ ] Run `ogb doctor`.

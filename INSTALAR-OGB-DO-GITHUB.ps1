@@ -43,7 +43,7 @@ try {
   Expand-Archive -Path $ZipPath -DestinationPath $UnpackDir -Force
 
   $Installer = Get-ChildItem -Path $UnpackDir -Recurse -Filter install.ps1 |
-    Where-Object { Test-Path (Join-Path $_.DirectoryName "artifacts\scripts\install-windows.ps1") } |
+    Where-Object { Test-Path (Join-Path $_.DirectoryName "scripts\install-windows.ps1") } |
     Select-Object -First 1
 
   if (-not $Installer) {

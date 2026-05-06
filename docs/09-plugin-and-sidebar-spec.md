@@ -172,10 +172,10 @@ alias opencode="ogb launch"
 
 OpenCode carrega plugins locais no startup. Um plugin pode rodar `ogb sync` quando é inicializado.
 
-Artefato:
+Implementação:
 
 ```text
-artifacts/opencode/plugins/ogb-startup-sync.js
+packages/ogb/src/setup-opencode.ts
 ```
 
 Instalação futura pelo bridge:

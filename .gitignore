@@ -8,7 +8,7 @@
 .env
 .env.*
 .telemetry-defaults.json
-artifacts/bridge-cli-skeleton/telemetry.defaults.json
+packages/ogb/telemetry.defaults.json
 opencode.jsonc
 
 # Local OpenCode/Gemini projections. These contain generated paths and user data.

@@ -115,7 +115,8 @@ Subagentes podem investigar em paralelo.
 
 ### Solução
 
-- Permissão `task: ask` inicialmente.
+- Permissão `task: allow` no agente YOLO; subagentes projetados de extensoes
+  continuam conservadores.
 - Projetar subagentes vindos de Gemini Extensions com permissões conservadoras.
 - O bridge não cria mais comandos embutidos `explore`/`review`.
 

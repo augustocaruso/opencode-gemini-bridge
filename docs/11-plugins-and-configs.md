@@ -25,14 +25,19 @@ Configuracao ativa hoje, sem instalar nada novo:
   obvios;
 - global `~/.config/opencode/dcp.jsonc`: DCP ativo, notificação mínima em toast,
   compressão em modo `range`, deduplicação e purge de erros ativos;
-- global `~/.config/opencode/commands/`: comandos `/research` e `/dev-server`;
+- global `~/.config/opencode/commands/`: comandos `/research` e `/upgrade-ogb`;
+- global `~/.config/opencode/AGENTS.md`: preset OGB sobrescrito pelo
+  `setup-ux`/`reset`;
 - projeto `~/opencode.jsonc`: contexto OGB, agente primario `agent`, `build`
   desabilitado, MCPs `anki-mcp` e `gemini-md-export`, sem plugins de projeto
   duplicando os globais;
 - config resolvida por `opencode debug config`: plugins globais compativeis +
-  startup sync local `file://~/.opencode/plugins/ogb-startup-sync.js`;
-- TUI global `~/.config/opencode/tui.json`: mouse ligado, plugin vazio;
-- TUI de projeto `~/.opencode/tui.jsonc`: sidebar OGB local em
+  startup sync local `file://~/.config/opencode/plugins/ogb-startup-sync.js`;
+- TUI global `~/.config/opencode/tui.json`: mouse ligado e sidebar OGB local em
+  `./tui-plugins/ogb-sidebar.js`;
+- runtime TUI global em `~/.config/opencode/package.json`: `type: "module"`,
+  `@opentui/solid` e `solid-js`, para o plugin local resolver imports;
+- TUI de projeto `.opencode/tui.jsonc`: sidebar OGB local em
   `./tui-plugins/ogb-sidebar.js`;
 - runtime fallback gerado em `~/.config/opencode/plugins/fallback.json`, mas
   desabilitado no perfil padrao ate o plugin externo voltar a carregar limpo.
@@ -46,7 +51,7 @@ perguntar antes de editar ou rodar shell.
 
 `ogb setup-ux` replica esse estado em outra maquina sem copiar dados pessoais.
 Ele garante a instalacao/atualizacao do OpenCode, grava somente configuracoes,
-plugins compativeis, comandos globais, DCP, YOLO e as politicas de
+plugins compativeis, comandos globais, `AGENTS.md` global, DCP, YOLO e as politicas de
 fallback/subagente. O conteudo unico do Gemini CLI de cada pessoa continua local
 e entra no OpenCode pelo `ogb sync`.
 
@@ -84,8 +89,8 @@ Arquivos principais:
 
 - macOS/Linux: `~/.config/opencode/opencode.json`;
 - Windows: `%APPDATA%\opencode\opencode.json`;
-- global: `commands/research.md`, `commands/dev-server.md`,
-  `commands/upgrade-ogb.md`, `agents/YOLO.md`, `dcp.jsonc`,
+- global: `commands/research.md`, `commands/upgrade-ogb.md`,
+  `AGENTS.md`, `agents/YOLO.md`, `dcp.jsonc`,
   `plugins/fallback.json`;
 - projeto: `.opencode/ogb.config.jsonc`.
 
@@ -246,6 +251,11 @@ O OGB já instala sua própria TUI (`.opencode/tui-plugins/ogb-sidebar.js`) para
 `Quota`, `BRIDGE`, timer e quota/reset. Por padrão, a quota fica na TUI do OGB.
 Se `quotaUi.enabled` estiver ligado, a TUI do OGB mantém `BRIDGE` e deixa a
 quota para `@slkiser/opencode-quota`.
+
+No perfil global, o `setup-ux` também garante as dependências runtime da TUI em
+`~/.config/opencode/package.json`: `@opentui/solid` e `solid-js`. Sem esses
+pacotes, o `tui.json` aponta para o arquivo certo, mas a TUI não consegue
+carregar o plugin.
 
 ## Plugins úteis depois
 
@@ -544,7 +554,7 @@ Antes de promover qualquer plugin novo:
 Ver:
 
 ```text
-artifacts/opencode/global-opencode.jsonc
+packages/ogb/src/setup-ux.ts
 ```
 
 ## Princípio

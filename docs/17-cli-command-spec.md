@@ -68,7 +68,19 @@ Rulesync:
 
 O bridge roda Rulesync em staging temporário e promove outputs de forma segura por hash.
 
-Tambem projeta os comandos OpenCode embutidos:
+Fora do diretorio home, `ogb sync` gera a projeção de projeto em `.opencode/`.
+Dentro do home, ele sincroniza como global: `~/.gemini/GEMINI.md`,
+`~/.gemini/commands/`, `~/.gemini/agents/`, `~/.gemini/skills/` e recursos
+equivalentes de extensoes Gemini sao projetados para `~/.config/opencode/`.
+O `GEMINI.md` global e os `GEMINI.md` das extensoes Gemini passam antes por
+expansao de imports em
+`~/.config/opencode-gemini-bridge/generated/GEMINI.expanded.md`; o config
+global `~/.config/opencode/opencode.json` recebe esse caminho em
+`instructions`. MCPs globais compativeis entram no campo `mcp` do mesmo config.
+O `~/.config/opencode/AGENTS.md` e sobrescrito pelo preset OGB no `setup-ux` e
+no `reset`, mas nao e usado como fonte canonica do sync Gemini.
+
+Em projetos, tambem projeta os comandos OpenCode embutidos:
 
 ```text
 /bridge
@@ -239,7 +251,7 @@ Defaults privados:
 
 - `telemetry.defaults.example.json` fica versionado como molde;
 - `.telemetry-defaults.json` fica ignorado localmente;
-- `artifacts/bridge-cli-skeleton/telemetry.defaults.json` fica ignorado pelo
+- `packages/ogb/telemetry.defaults.json` fica ignorado pelo
   Git, mas entra no pacote npm/tarball quando existe;
 - runtime le `telemetry.defaults.json` perto do pacote instalado ou
   `OGB_TELEMETRY_DEFAULTS`;
@@ -273,7 +285,7 @@ e do zip de release.
 Worker:
 
 ```text
-examples/telemetry-email-worker/
+packages/ogb/telemetry-email-worker/
 ```
 
 O template Cloudflare Worker expoe `GET /health`,
@@ -346,6 +358,38 @@ GitHub Release pack
 O comando nao sincroniza nem copia conteudo unico do Gemini CLI de outra
 pessoa. Ele apenas atualiza o `ogb`, reinstala/reaplica settings e plugins do
 OpenCode e depois deixa o `ogb sync` projetar o conteudo Gemini local.
+
+### `ogb reset`
+
+Reseta a instalacao global OGB/OpenCode da maquina atual. E o comando simples
+para rodar depois de atualizar uma maquina que deve receber o perfil global
+limpo do OGB.
+
+```bash
+cd ~
+ogb reset
+ogb reset --dry-run
+```
+
+Contrato:
+
+- so roda quando o projeto resolvido e o diretorio home (`cd ~` ou `--project "$HOME"`);
+- mostra o plano e pede para digitar `RESET` antes de escrever;
+- limpa artefatos antigos de projeto criados no home, com backup;
+- recria o `opencode.json` global do perfil OGB, sem mesclar campos antigos;
+- garante `OPENCODE_ENABLE_EXA=1`;
+- reaplica comandos globais, agente YOLO, DCP, fallback e o plugin global OGB do OpenCode;
+- roda sync global para injetar `GEMINI.expanded.md` em `instructions` e MCPs globais em `mcp`;
+- roda doctor no final.
+
+Flags:
+
+```bash
+ogb reset --yes
+ogb reset --no-install-opencode
+ogb reset --no-plugins
+ogb reset --json
+```
 
 ### `ogb check-update`
 
@@ -436,7 +480,9 @@ inventory → flatten → sync → doctor → opencode [--agent <name>]
 .opencode/agents/YOLO.md
 ```
 
-Esse agente e o equivalente pratico do "YOLO mode" no fluxo OpenCode: `edit` e `bash` ficam em `allow` quando o agente ativo e `YOLO`. Nao tornar essas permissoes globais.
+Esse agente e o equivalente pratico do "YOLO mode" no fluxo OpenCode: as
+permissoes declaradas do agente ficam em `allow`, incluindo `edit`, `bash`,
+`task` e `external_directory`. Nao tornar essas permissoes globais.
 
 `setup-ux` grava `default_agent: "YOLO"` no config global do OpenCode. Isso vale
 fora de projetos OGB tambem, salvo quando o projeto aberto tiver um
@@ -462,6 +508,7 @@ Instala o perfil global de UX do OpenCode usado pelo OGB.
 ogb setup-ux
 ogb setup-ux --dry-run
 ogb setup-ux --force
+ogb setup-ux --reset-global
 ogb setup-ux --no-install-opencode
 ogb setup-ux --no-plugins
 ```
@@ -470,17 +517,46 @@ Deve:
 
 - instalar OpenCode quando `opencode` não estiver disponível;
 - gravar `~/.config/opencode/opencode.json` no macOS/Linux ou `%APPDATA%\opencode\opencode.json` no Windows;
+- garantir `OPENCODE_ENABLE_EXA=1` para o websearch nativo do OpenCode: no Mac via `~/.config/zsh/.zshrc`, no Windows como variável de ambiente de usuário;
 - instalar os plugins globais recomendados: auths, update notifier, auto-fallback, DCP, PTY e websearch citado;
-- gravar comandos globais `/research` e `/dev-server`;
+- gravar comando global `/research` e remover o comando aposentado `/dev-server`;
 - gravar comando global `/upgrade-ogb`;
+- sobrescrever `~/.config/opencode/AGENTS.md` com o preset OGB;
 - gravar config global de DCP e `plugins/fallback.json`;
+- garantir `~/.config/opencode/package.json` com `type: "module"` e as
+  dependências `@opentui/solid`/`solid-js` usadas pela TUI global;
 - instalar `YOLO.md` como agente global OpenCode;
 - definir o agente padrao global a partir de `openCode.defaultAgent` do perfil OGB;
 - gravar `.opencode/ogb.config.jsonc` no projeto com as regras de fallback/subagente do OGB;
 - não substituir `.opencode/ogb.config.jsonc` divergente sem `--force`.
 
+Com `--reset-global`, o `opencode.json` global e recriado a partir do perfil OGB
+em vez de mesclar campos antigos do usuario. O instalador usa esse modo quando
+roda no home com `--force`.
+
 Mental model: `setup-ux` replica a experiência OpenCode do OGB; `sync` recria
 os recursos derivados do Gemini CLI local de cada pessoa.
+
+### `ogb cleanup-home`
+
+Remove artefatos de projeto que versões antigas possam ter criado por engano no
+diretorio home.
+
+```bash
+ogb cleanup-home
+ogb cleanup-home --dry-run
+ogb cleanup-home --json
+```
+
+Deve:
+
+- fazer backup em `~/.config/opencode-gemini-bridge/backups/home-cleanup/`;
+- remover `~/opencode.jsonc` quando ele parecer config de projeto gerenciada
+  pelo OGB;
+- remover arquivos OGB conhecidos dentro de `~/.opencode`;
+- remover arquivos listados no antigo `.opencode/generated/ogb-sync-state.json`
+  quando a fonte for `ogb`;
+- preservar arquivos alheios em `~/.opencode`, como `bin/` ou notas manuais.
 
 ### `ogb setup-opencode`
 
@@ -624,6 +700,18 @@ sem sobrescrever arquivos manuais.
 --backup
 --force
 ```
+
+Quando `--project` aponta exatamente para o diretorio home (`~`), o CLI entra
+em modo home. `init` e `setup-opencode` pulam a criacao de arquivos locais de
+projeto para evitar `~/.opencode` e `~/opencode.jsonc`. `import` e `sync`
+tratam a home como fonte global: regras, comandos, agents e skills do Gemini
+passam por expansao/projecao para `~/.config/opencode/`. O estado gerado pelo OGB vai para
+`~/.config/opencode-gemini-bridge/generated/`; o perfil OpenCode global tambem
+continua em `~/.config/opencode/`.
+
+Os instaladores seguem a mesma regra: quando recebem `--project ~`, rodam
+`cleanup-home`, `setup-ux` e depois `import` global, mas nao instalam
+`setup-opencode` nem criam arquivos de projeto no home.
 
 ## Arquivos de estado
 

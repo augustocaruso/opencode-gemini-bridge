@@ -218,7 +218,7 @@ README, docs e comandos explicam exatamente o comportamento atual.
 Tarefas:
 
 - [x] atualizar `README.md`;
-- [x] atualizar `docs/08-mvp-roadmap.md`;
+- [x] atualizar e arquivar `docs/archive/08-mvp-roadmap.md`;
 - [x] atualizar `docs/09-plugin-and-sidebar-spec.md`;
 - [x] atualizar `docs/10-gemini-extension-compatibility.md`;
 - atualizar ADRs que ficaram obsoletas;
