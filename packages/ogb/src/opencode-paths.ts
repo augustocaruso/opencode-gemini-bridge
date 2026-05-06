@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { normalizePathInput } from "./paths.js";
 
 export interface OpenCodePathOptions {
   homeDir?: string;
@@ -8,7 +9,7 @@ export interface OpenCodePathOptions {
 }
 
 function resolvedHomeDir(homeDir: string | undefined): string {
-  return path.resolve(homeDir ?? os.homedir());
+  return path.resolve(normalizePathInput(homeDir ?? os.homedir()));
 }
 
 export function globalOpenCodeConfigDir(options: OpenCodePathOptions = {}): string {

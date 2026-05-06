@@ -109,6 +109,21 @@ test("syncToOpenCode treats home as global OpenCode sync", () => {
   assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "commands")), false);
 });
 
+test("syncToOpenCode treats an accidentally quoted home project path as global sync", () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));
+  fs.mkdirSync(path.join(homeDir, ".gemini", "extensions", "study-pack"), { recursive: true });
+  fs.writeFileSync(path.join(homeDir, ".gemini", "extensions", "study-pack", "GEMINI.md"), "Extension rules\n");
+
+  const report = syncToOpenCode({ projectRoot: `"${homeDir}"`, homeDir, rulesyncMode: "off", silent: true });
+  const globalConfigPath = path.join(homeDir, ".config", "opencode", "opencode.json");
+
+  assert.equal(report.projectRoot, path.resolve(homeDir));
+  assert.equal(report.generatedConfigPath, path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "GEMINI.expanded.md"));
+  assert.match(report.rulesync.skippedReason ?? "", /home/);
+  assert.equal(fs.existsSync(globalConfigPath), true);
+  assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "generated")), false);
+});
+
 test("syncToOpenCode builds global context from Gemini extensions and imports global MCPs", () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));
   const extensionDir = path.join(homeDir, ".gemini", "extensions", "gemini-md-export");

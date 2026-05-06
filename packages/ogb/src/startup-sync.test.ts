@@ -46,3 +46,18 @@ test("runStartupSync writes the global expanded context in home mode", () => {
   assert.equal(fs.existsSync(expandedPath), true);
   assert.match(fs.readFileSync(expandedPath, "utf8"), /Extension Context/);
 });
+
+test("runStartupSync treats a quoted home project path as global home mode", () => {
+  const homeDir = tempHome();
+  fs.mkdirSync(path.join(homeDir, ".gemini", "extensions", "study"), { recursive: true });
+  fs.writeFileSync(path.join(homeDir, ".gemini", "extensions", "study", "GEMINI.md"), "# Extension Context\n", "utf8");
+
+  const report = runStartupSync({ projectRoot: `"${homeDir}"`, homeDir });
+  const expandedPath = path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "GEMINI.expanded.md");
+
+  assert.equal(report.outcome, "pass");
+  assert.equal(report.homeMode, true);
+  assert.equal(report.projectRoot, path.resolve(homeDir));
+  assert.equal(fs.existsSync(expandedPath), true);
+  assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "generated")), false);
+});

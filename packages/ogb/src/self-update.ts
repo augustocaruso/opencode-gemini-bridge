@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { formatCommand } from "./extensions.js";
-import { resolveProjectPaths } from "./paths.js";
+import { normalizePathInput, resolveProjectPaths } from "./paths.js";
 import { OGB_VERSION } from "./types.js";
 
 const DEFAULT_REPO = "augustocaruso/opencode-gemini-bridge";
@@ -164,7 +164,7 @@ function psQuote(value: string): string {
 
 function bootstrapArgs(options: SelfUpdateOptions, repo: string, version: string, projectRoot: string): string[] {
   const args = ["--repo", repo, "--version", version, "--project", projectRoot];
-  if (options.prefix) args.push("--prefix", options.prefix);
+  if (options.prefix) args.push("--prefix", normalizePathInput(options.prefix));
   if (options.rulesync) args.push("--rulesync", options.rulesync);
   if (options.setup === false) args.push("--no-setup");
   if (options.ux === false) args.push("--no-ux");
@@ -175,7 +175,7 @@ function bootstrapArgs(options: SelfUpdateOptions, repo: string, version: string
 
 function windowsBootstrapArgs(options: SelfUpdateOptions, repo: string, version: string, projectRoot: string): string[] {
   const args = ["-Repo", psQuote(repo), "-Version", psQuote(version), "-Project", psQuote(projectRoot)];
-  if (options.prefix) args.push("-Prefix", psQuote(options.prefix));
+  if (options.prefix) args.push("-Prefix", psQuote(normalizePathInput(options.prefix)));
   if (options.rulesync) args.push("-Rulesync", psQuote(options.rulesync));
   if (options.setup === false) args.push("-NoSetup");
   if (options.ux === false) args.push("-NoUx");
@@ -187,7 +187,7 @@ function windowsBootstrapArgs(options: SelfUpdateOptions, repo: string, version:
 export function buildSelfUpdateCommand(options: SelfUpdateOptions = {}, platform: NodeJS.Platform = process.platform): string[] {
   const repo = normalizeRepo(options.repo);
   const version = normalizeVersion(options.version);
-  const projectRoot = path.resolve(options.projectRoot ?? process.cwd());
+  const projectRoot = path.resolve(normalizePathInput(options.projectRoot ?? process.cwd()));
 
   if (platform === "win32") {
     const bootstrapUrl = `https://raw.githubusercontent.com/${repo}/main/scripts/bootstrap-windows.ps1`;

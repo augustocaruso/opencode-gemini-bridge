@@ -31,13 +31,28 @@ export interface ProjectPaths {
   generatedOpenCodeConfigPath: string;
 }
 
+export function normalizePathInput(value: string): string {
+  let normalized = value.trim();
+  let changed = true;
+  while (changed && normalized.length >= 2) {
+    changed = false;
+    const first = normalized[0];
+    const last = normalized[normalized.length - 1];
+    if ((first === "\"" && last === "\"") || (first === "'" && last === "'")) {
+      normalized = normalized.slice(1, -1).trim();
+      changed = true;
+    }
+  }
+  return normalized;
+}
+
 export function isHomeProject(projectRoot = process.cwd(), homeDir = os.homedir()): boolean {
-  return path.resolve(projectRoot) === path.resolve(homeDir);
+  return path.resolve(normalizePathInput(projectRoot)) === path.resolve(normalizePathInput(homeDir));
 }
 
 export function resolveProjectPaths(projectRoot = process.cwd(), homeDir = os.homedir()): ProjectPaths {
-  const root = path.resolve(projectRoot);
-  const home = path.resolve(homeDir);
+  const root = path.resolve(normalizePathInput(projectRoot));
+  const home = path.resolve(normalizePathInput(homeDir));
   const homeMode = isHomeProject(root, home);
   const generatedDir = homeMode
     ? path.join(home, ".config", "opencode-gemini-bridge", "generated")
@@ -80,6 +95,8 @@ export function resolveProjectPaths(projectRoot = process.cwd(), homeDir = os.ho
 }
 
 export function defaultGeminiInput(projectRoot = process.cwd(), homeDir = os.homedir()): string {
+  projectRoot = path.resolve(normalizePathInput(projectRoot));
+  homeDir = path.resolve(normalizePathInput(homeDir));
   const projectGemini = path.join(projectRoot, "GEMINI.md");
   if (fs.existsSync(projectGemini)) return projectGemini;
 

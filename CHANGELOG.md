@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.52 - Windows quoted home path hotfix
+
+- Normaliza paths recebidos com aspas externas acidentais antes de resolver `--project`, `homeDir` e prefixos de instalacao.
+- Faz `sync`, `startup-sync`, `setup-ux`, `reset`, `doctor` e `dashboard` tratarem `"C:\Users\usuario"` como home/global, nao como projeto dentro do home.
+- Corrige o bootstrap/installer Windows para limpar `-Project` e `-Prefix` antes de chamar `GetFullPath` ou repassar argumentos.
+- Adiciona testes cobrindo home quoteado, startup sync global, reset global e validacao estatica dos scripts Windows.
+
 ## 0.0.51 - Startup sync sem depender do PATH do Windows
 
 - Faz `setup-ux` gravar `node` absoluto + `dist/cli.js` absoluto quando roda a versao empacotada, evitando depender do PATH herdado pelo processo do OpenCode no Windows.

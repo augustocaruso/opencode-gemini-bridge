@@ -52,6 +52,21 @@ test("buildSelfUpdateCommand uses PowerShell bootstrap on Windows", () => {
   assert.match(command.join(" "), /-NoOpenCode/);
 });
 
+test("buildSelfUpdateCommand strips accidental quotes from project and prefix paths", () => {
+  const projectRoot = path.join(os.tmpdir(), "ogb quoted project");
+  const prefix = path.join(os.tmpdir(), "ogb quoted prefix");
+  const command = buildSelfUpdateCommand({
+    projectRoot: `'"${projectRoot}"'`,
+    prefix: `"${prefix}"`,
+  }, "win32");
+  const script = command.join(" ");
+
+  assert.match(script, new RegExp(`-Project '${projectRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`));
+  assert.match(script, new RegExp(`-Prefix '${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'`));
+  assert.equal(script.includes("-Project '\""), false);
+  assert.equal(script.includes("-Prefix '\""), false);
+});
+
 test("runSelfUpdate dry-run does not execute the bootstrap", () => {
   const report = runSelfUpdate({ dryRun: true, projectRoot: "/tmp/ogb" });
 

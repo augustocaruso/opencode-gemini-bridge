@@ -8,7 +8,7 @@ import { resolveCommand } from "./command-resolution.js";
 import { GLOBAL_AGENTS_MD } from "./global-agents.js";
 import { normalizeRuntimeOptions, type OgbConfig } from "./ogb-config.js";
 import { globalOpenCodeConfigDir, legacyWindowsAppDataOpenCodeConfigDir } from "./opencode-paths.js";
-import { isHomeProject } from "./paths.js";
+import { isHomeProject, normalizePathInput } from "./paths.js";
 import { spawnCommandSync } from "./process.js";
 import { checkPluginSyntax, STARTUP_SYNC_PLUGIN_SOURCE, startupConfigSource } from "./setup-opencode.js";
 import { recoverStaleStartupStatus } from "./startup-status.js";
@@ -700,8 +700,8 @@ function startupCommandPlan(homeDir: string, options: Pick<SetupUxOptions, "plat
 }
 
 export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
-  const homeDir = options.homeDir || os.homedir();
-  const projectRoot = options.projectRoot ? path.resolve(options.projectRoot) : undefined;
+  const homeDir = path.resolve(normalizePathInput(options.homeDir || os.homedir()));
+  const projectRoot = options.projectRoot ? path.resolve(normalizePathInput(options.projectRoot)) : undefined;
   const projectIsHome = Boolean(projectRoot && isHomeProject(projectRoot, homeDir));
   const commandCwd = projectRoot ?? process.cwd();
   const root = options.configDir

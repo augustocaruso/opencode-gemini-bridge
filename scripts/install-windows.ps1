@@ -112,6 +112,24 @@ function Normalize-PathForCompare($PathValue) {
   }
 }
 
+function Normalize-PathArgument($Value) {
+  if ($null -eq $Value) {
+    return $Value
+  }
+  $Text = ([string]$Value).Trim()
+  $Changed = $true
+  while ($Changed -and $Text.Length -ge 2) {
+    $Changed = $false
+    $First = $Text.Substring(0, 1)
+    $Last = $Text.Substring($Text.Length - 1, 1)
+    if ((($First -eq '"') -and ($Last -eq '"')) -or (($First -eq "'") -and ($Last -eq "'"))) {
+      $Text = $Text.Substring(1, $Text.Length - 2).Trim()
+      $Changed = $true
+    }
+  }
+  return $Text
+}
+
 function Add-UserPath($Dir) {
   if (-not $Dir) {
     return
@@ -309,6 +327,8 @@ Require-Command "node" | Out-Null
 Require-Command "npm" | Out-Null
 $script:NpmCommand = Resolve-NpmCommand
 
+$Project = Normalize-PathArgument $Project
+$Prefix = Normalize-PathArgument $Prefix
 $Project = [System.IO.Path]::GetFullPath($Project)
 $HomePath = [System.IO.Path]::GetFullPath($HOME)
 $RunHomeSync = $false

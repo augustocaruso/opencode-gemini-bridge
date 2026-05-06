@@ -15,6 +15,27 @@ param(
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $false
 
+function Normalize-PathArgument($Value) {
+  if ($null -eq $Value) {
+    return $Value
+  }
+  $Text = ([string]$Value).Trim()
+  $Changed = $true
+  while ($Changed -and $Text.Length -ge 2) {
+    $Changed = $false
+    $First = $Text.Substring(0, 1)
+    $Last = $Text.Substring($Text.Length - 1, 1)
+    if ((($First -eq '"') -and ($Last -eq '"')) -or (($First -eq "'") -and ($Last -eq "'"))) {
+      $Text = $Text.Substring(1, $Text.Length - 2).Trim()
+      $Changed = $true
+    }
+  }
+  return $Text
+}
+
+$Project = Normalize-PathArgument $Project
+$Prefix = Normalize-PathArgument $Prefix
+
 $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("ogb-bootstrap-" + [System.Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force $TempDir | Out-Null
 

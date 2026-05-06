@@ -224,6 +224,28 @@ test("setupUx treats the home directory as global-only and skips project profile
   assert.equal(report.warnings.some((warning) => warning.includes("Diretorio home detectado")), false);
 });
 
+test("setupUx treats an accidentally quoted home path as global-only", () => {
+  const root = tempRoot();
+  const homeDir = path.join(root, "home");
+  const configDir = path.join(root, "config", "opencode");
+  fs.mkdirSync(homeDir, { recursive: true });
+
+  const report = setupUx({
+    homeDir,
+    configDir,
+    projectRoot: `"${homeDir}"`,
+    installOpenCode: false,
+    installPlugins: false,
+  });
+  const startupConfig = readJson(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-startup-sync.json"));
+
+  assert.equal(report.ogbConfigPath, undefined);
+  assert.equal(report.projectRoot, path.resolve(homeDir));
+  assert.deepEqual(startupConfig.baseArgs, ["--project", path.resolve(homeDir)]);
+  assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "ogb.config.jsonc")), false);
+  assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "generated")), false);
+});
+
 test("setupUx writes Windows global config under user .config, not AppData opencode", () => {
   const root = tempRoot();
   const homeDir = path.join(root, "home");

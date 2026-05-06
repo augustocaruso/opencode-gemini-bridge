@@ -40,6 +40,34 @@ test("runReset refuses to run outside the home project", async () => {
   );
 });
 
+test("runReset accepts an accidentally quoted home project path", async () => {
+  const root = tempRoot();
+  const homeDir = path.join(root, "home");
+  fs.mkdirSync(homeDir, { recursive: true });
+  writeFile(path.join(homeDir, ".gemini", "GEMINI.md"), "# Global Gemini\n");
+  writeFile(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-plugin-status.json"), JSON.stringify({
+    state: "fail",
+    nextRetryAfter: "2026-05-06T19:17:50.242Z",
+  }) + "\n");
+
+  const report = await runReset({
+    homeDir,
+    projectRoot: `"${homeDir}"`,
+    yes: true,
+    installOpenCode: false,
+    installPlugins: false,
+    installTuiDependencies: false,
+  });
+  const startupConfig = readJson(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-startup-sync.json"));
+
+  assert.equal(report.outcome, "pass");
+  assert.equal(report.homeDir, path.resolve(homeDir));
+  assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "generated")), false);
+  assert.deepEqual(startupConfig.baseArgs, ["--project", path.resolve(homeDir)]);
+  assert.deepEqual(startupConfig.syncArgs, ["startup-sync"]);
+  assert.equal(fs.existsSync(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-plugin-status.json")), false);
+});
+
 test("runReset cancellation leaves home project artifacts and global config unchanged", async () => {
   const root = tempRoot();
   const homeDir = path.join(root, "home");
