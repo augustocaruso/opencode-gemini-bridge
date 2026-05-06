@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.34 - Windows installer repair
+
+- Instala o CLI em uma pasta estável local e registra `ogb.cmd` apontando direto para `dist/cli.js`, evitando shim quebrado sem `node_modules`.
+- Remove instalações quebradas em `C:\Users\<user>\-Force` e shims antigos antes de registrar o novo comando.
+- Atualiza a validação estática do instalador Windows para cobrir o novo fluxo.
+
 ## 0.0.28 - global YOLO and updater command
 
 - Garante que `setup-ux` instale o comando global `/upgrade-ogb` dentro do OpenCode.

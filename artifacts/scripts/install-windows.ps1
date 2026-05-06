@@ -88,6 +88,25 @@ function Repair-BrokenForceInstall {
   }
 }
 
+function Install-StableCli($SourceDir, $InstallDir) {
+  Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force $InstallDir | Out-Null
+
+  Copy-Item -Path (Join-Path $SourceDir "package.json") -Destination $InstallDir -Force
+  Copy-Item -Path (Join-Path $SourceDir "package-lock.json") -Destination $InstallDir -Force
+  if (Test-Path (Join-Path $SourceDir "LICENSE")) {
+    Copy-Item -Path (Join-Path $SourceDir "LICENSE") -Destination $InstallDir -Force
+  }
+  Copy-Item -Path (Join-Path $SourceDir "dist") -Destination (Join-Path $InstallDir "dist") -Recurse -Force
+
+  npm --prefix $InstallDir install --omit=dev
+  $CliTarget = Join-Path $InstallDir "dist\cli.js"
+  if (-not (Test-Path $CliTarget)) {
+    throw "Expected built CLI at $CliTarget, but it was not found."
+  }
+  return $CliTarget
+}
+
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ArtifactsDir = Split-Path -Parent $ScriptDir
 $CliDir = Join-Path $ArtifactsDir "bridge-cli-skeleton"
@@ -110,31 +129,19 @@ Write-Host "Building ogb CLI..."
 npm --prefix $CliDir install
 npm --prefix $CliDir run build
 
-Write-Host "Installing ogb into $Prefix..."
-npm install --prefix $Prefix -g $CliDir
+Write-Host "Installing ogb into a stable local folder..."
+$CliInstallDir = Join-Path (Join-Path $HOME ".ai\opencode-pack") "opencode-gemini-bridge-cli"
+$CliTarget = Install-StableCli $CliDir $CliInstallDir
+
+Write-Host "Registering ogb command in $Prefix..."
+Remove-Item -Force (Join-Path $Prefix "ogb") -ErrorAction SilentlyContinue
+Remove-Item -Force (Join-Path $Prefix "ogb.cmd") -ErrorAction SilentlyContinue
+Remove-Item -Force (Join-Path $Prefix "ogb.ps1") -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force (Join-Path $Prefix "node_modules\opencode-gemini-bridge") -ErrorAction SilentlyContinue
 
 $OgbBin = Join-Path $Prefix "ogb.cmd"
-if (-not (Test-Path $OgbBin)) {
-  $OgbBin = Join-Path (Join-Path $Prefix "bin") "ogb.cmd"
-}
-if (-not (Test-Path $OgbBin)) {
-  Write-Host "ogb command shim was not created; retrying npm install with --force..."
-  npm install --prefix $Prefix -g $CliDir --force
-  $OgbBin = Join-Path $Prefix "ogb.cmd"
-  if (-not (Test-Path $OgbBin)) {
-    $OgbBin = Join-Path (Join-Path $Prefix "bin") "ogb.cmd"
-  }
-}
-if (-not (Test-Path $OgbBin)) {
-  $GlobalRoot = (& npm --prefix $Prefix root -g)
-  $CliTarget = Join-Path $GlobalRoot "opencode-gemini-bridge\dist\cli.js"
-  if (Test-Path $CliTarget) {
-    $PrefixBin = Join-Path $Prefix "bin"
-    New-Item -ItemType Directory -Force $PrefixBin | Out-Null
-    $OgbBin = Join-Path $PrefixBin "ogb.cmd"
-    "@ECHO off`r`nnode `"$CliTarget`" %*`r`n" | Set-Content -Path $OgbBin -Encoding ASCII
-  }
-}
+"@ECHO off`r`nnode `"$CliTarget`" %*`r`n" | Set-Content -Path $OgbBin -Encoding ASCII
+
 if (-not (Test-Path $OgbBin)) {
   throw "Expected ogb.cmd under $Prefix, but it was not found."
 }
