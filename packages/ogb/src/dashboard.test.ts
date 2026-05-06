@@ -267,3 +267,64 @@ test("runDashboard surfaces first validation and security failure details", () =
   assert.match(markdown, /Validation: FAIL - validation falhou: Global OpenCode config/);
   assert.match(markdown, /Security: FAIL - security falhou: YOLO guardrails/);
 });
+
+test("runDashboard does not fail home/global dashboard from stale project-mode reports", () => {
+  const homeDir = tempProject();
+  const paths = resolveProjectPaths(homeDir, homeDir);
+
+  writeJson(paths.doctorPath, {
+    version: OGB_VERSION,
+    projectRoot: homeDir,
+    warnings: [],
+    errors: [],
+    counts: {},
+    generated: {
+      expandedGeminiVersion: OGB_VERSION,
+      generatedConfigVersion: "global config",
+    },
+    startupSync: {
+      globalPlugin: true,
+      globalConfig: true,
+      lastState: "pass",
+    },
+  });
+  writeJson(paths.validationPath, {
+    version: "0.0.53",
+    projectRoot: homeDir,
+    outcome: "fail",
+    checks: [
+      { name: "Generated config marker", status: "fail", message: "Missing ogb generated config marker." },
+    ],
+  });
+  writeJson(paths.securityPath, {
+    version: "0.0.53",
+    projectRoot: homeDir,
+    outcome: "fail",
+    findings: [
+      { name: "YOLO guardrails", status: "fail", message: "Missing .opencode/agents/YOLO.md." },
+    ],
+  });
+  writeJson(paths.updateStatusPath, {
+    version: 1,
+    status: "error",
+    currentVersion: "0.0.53",
+    checkedAt: "2026-05-06T19:50:00.000Z",
+    restartRequired: false,
+    message: "OGB auto-update failed.",
+  });
+
+  const report = runDashboard({ projectRoot: homeDir, homeDir, refresh: false, silent: true });
+  const markdown = fs.readFileSync(paths.dashboardMarkdownPath, "utf8");
+
+  assert.equal(report.outcome, "warn");
+  assert.equal(report.reports.validation.status, "warn");
+  assert.equal(report.reports.security.status, "warn");
+  assert.equal(report.update.status, "unknown");
+  assert.deepEqual(report.errors, []);
+  assert.equal(report.warnings.some((warning) => warning.includes("Auto-update do OGB falhou")), false);
+  assert.match(markdown, /Validation: WARN - validation foi gerado pelo ogb 0\.0\.53/);
+  assert.match(markdown, /Security: WARN - security foi gerado pelo ogb 0\.0\.53/);
+  assert.match(markdown, /OGB update: UNKNOWN/);
+  assert.doesNotMatch(markdown, /Generated config marker: Missing ogb generated config marker/);
+  assert.doesNotMatch(markdown, /Missing \.opencode\/agents\/YOLO\.md/);
+});

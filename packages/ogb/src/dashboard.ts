@@ -155,6 +155,10 @@ export interface ReportSummary {
   message: string;
 }
 
+interface ReportSummaryContext {
+  homeMode?: boolean;
+}
+
 function emptyCounts(): StatusCounts {
   return { ok: 0, warning: 0, error: 0, needs_review: 0 };
 }
@@ -194,7 +198,42 @@ function firstFailedReportDetail(kind: "validation" | "security", report: Record
   return name || message;
 }
 
-function reportSummary(kind: "doctor" | "validation" | "security", report: Record<string, any> | undefined): ReportSummary {
+function staleReportMessage(kind: "validation" | "security", report: Record<string, any>, context: ReportSummaryContext): string | undefined {
+  const version = typeof report.version === "string" ? report.version : undefined;
+  if (version && version !== OGB_VERSION) {
+    return `${kind} foi gerado pelo ogb ${version}; rode \`ogb ${kind === "validation" ? "validate" : "security-check"}\` para atualizar.`;
+  }
+
+  if (context.homeMode && kind === "validation") {
+    const checks = Array.isArray(report.checks) ? report.checks : [];
+    const hasProjectConfigMarkerFailure = checks.some((check: any) =>
+      check?.status === "fail"
+      && check?.name === "Generated config marker"
+      && typeof check?.message === "string"
+      && /generated config marker/i.test(check.message)
+    );
+    if (hasProjectConfigMarkerFailure) {
+      return "validation antigo ainda esta procurando config de projeto dentro da home; rode `ogb validate` para atualizar.";
+    }
+  }
+
+  if (context.homeMode && kind === "security") {
+    const findings = Array.isArray(report.findings) ? report.findings : [];
+    const hasProjectYoloFailure = findings.some((finding: any) =>
+      finding?.status === "fail"
+      && finding?.name === "YOLO guardrails"
+      && typeof finding?.message === "string"
+      && finding.message.includes(".opencode/agents/YOLO.md")
+    );
+    if (hasProjectYoloFailure) {
+      return "security antigo ainda esta procurando `.opencode/agents/YOLO.md` na home; rode `ogb security-check` para atualizar.";
+    }
+  }
+
+  return undefined;
+}
+
+function reportSummary(kind: "doctor" | "validation" | "security", report: Record<string, any> | undefined, context: ReportSummaryContext = {}): ReportSummary {
   if (!report) {
     return {
       exists: false,
@@ -210,6 +249,9 @@ function reportSummary(kind: "doctor" | "validation" | "security", report: Recor
     if (warnings > 0) return { exists: true, status: "warn", message: `${warnings} aviso(s) no doctor.` };
     return { exists: true, status: "pass", message: "Doctor limpo." };
   }
+
+  const stale = staleReportMessage(kind, report, context);
+  if (stale) return { exists: true, status: "warn", message: stale };
 
   if (report.outcome === "fail") {
     const detail = kind === "validation" || kind === "security" ? firstFailedReportDetail(kind, report) : undefined;
@@ -259,6 +301,17 @@ function startupFailureMessage(pluginStatus: Record<string, any> | undefined): s
     ?? compactLine(pluginStatus?.stdoutTail);
   if (detail) parts.push(detail);
   return parts.length > 0 ? `Startup sync falhou com ${parts.join(": ")}.` : "Startup sync falhou.";
+}
+
+function staleUpdateErrorVersion(updateStatus: Record<string, any> | undefined): string | undefined {
+  if (updateStatus?.status !== "error") return undefined;
+  const currentVersion = typeof updateStatus.currentVersion === "string"
+    ? updateStatus.currentVersion
+    : typeof updateStatus.check?.currentVersion === "string"
+      ? updateStatus.check.currentVersion
+      : undefined;
+  if (!currentVersion || currentVersion === OGB_VERSION) return undefined;
+  return currentVersion;
 }
 
 function publicTelemetryStatus(status: TelemetryStatus): DashboardReport["telemetry"] {
@@ -395,14 +448,15 @@ export function runDashboard(options: DashboardOptions = {}): DashboardReport {
   const updateStatus = readJson(paths.updateStatusPath);
   const telemetry = publicTelemetryStatus(telemetryStatus({ homeDir: paths.homeDir }));
   const doctorSummary = reportSummary("doctor", doctor);
-  const validationSummary = reportSummary("validation", validation);
-  const securitySummary = reportSummary("security", security);
+  const validationSummary = reportSummary("validation", validation, { homeMode: paths.homeMode });
+  const securitySummary = reportSummary("security", security, { homeMode: paths.homeMode });
   const pluginState = typeof doctor?.startupSync?.lastState === "string"
     ? doctor.startupSync.lastState
     : typeof pluginStatus?.state === "string"
       ? pluginStatus.state
       : "unknown";
   const pluginStatusLevel = pluginStateStatus(pluginState);
+  const staleUpdateVersion = staleUpdateErrorVersion(updateStatus);
 
   if (Array.isArray(doctor?.warnings)) warnings.push(...doctor.warnings.map(String));
   if (Array.isArray(doctor?.errors)) errors.push(...doctor.errors.map(String));
@@ -416,7 +470,7 @@ export function runDashboard(options: DashboardOptions = {}): DashboardReport {
     if (!warnings.includes(staleWarning)) warnings.push(staleWarning);
   }
   if (updateStatus?.restartRequired === true) warnings.push("OGB foi atualizado automaticamente; reinicie o OpenCode para carregar plugin, comandos e sidebar novos.");
-  if (updateStatus?.status === "error" && typeof updateStatus.message === "string") warnings.push(`Auto-update do OGB falhou: ${updateStatus.message}`);
+  if (updateStatus?.status === "error" && !staleUpdateVersion && typeof updateStatus.message === "string") warnings.push(`Auto-update do OGB falhou: ${updateStatus.message}`);
 
   const counts = doctor?.counts ?? {};
   const startupSync = doctor?.startupSync ?? {};
@@ -480,7 +534,9 @@ export function runDashboard(options: DashboardOptions = {}): DashboardReport {
     },
     update: {
       exists: Boolean(updateStatus),
-      status: updateStatus?.status === "current"
+      status: staleUpdateVersion
+        ? "unknown"
+        : updateStatus?.status === "current"
         || updateStatus?.status === "available"
         || updateStatus?.status === "updated"
         || updateStatus?.status === "error"
@@ -493,8 +549,10 @@ export function runDashboard(options: DashboardOptions = {}): DashboardReport {
       releaseUrl: typeof updateStatus?.releaseUrl === "string" ? updateStatus.releaseUrl : undefined,
       checkedAt: typeof updateStatus?.checkedAt === "string" ? updateStatus.checkedAt : undefined,
       finishedAt: typeof updateStatus?.finishedAt === "string" ? updateStatus.finishedAt : undefined,
-      restartRequired: updateStatus?.restartRequired === true,
-      message: typeof updateStatus?.message === "string" ? updateStatus.message : "Update status ainda nao foi gerado.",
+      restartRequired: !staleUpdateVersion && updateStatus?.restartRequired === true,
+      message: staleUpdateVersion
+        ? `Ignorando erro antigo de update do ogb ${staleUpdateVersion}; versao atual e ${OGB_VERSION}.`
+        : typeof updateStatus?.message === "string" ? updateStatus.message : "Update status ainda nao foi gerado.",
     },
     limits: {
       exists: Boolean(limits),

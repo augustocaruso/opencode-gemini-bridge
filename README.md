@@ -115,7 +115,7 @@ Update depois que o `ogb` ja esta instalado:
 ```bash
 ogb --project "$PWD" self-update
 ogb --project "$PWD" self-update --dry-run
-ogb --project "$PWD" self-update --release v0.0.53
+ogb --project "$PWD" self-update --release v0.0.54
 ogb --project "$PWD" check-update
 ogb --project "$PWD" auto-update
 ```

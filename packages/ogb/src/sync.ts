@@ -12,7 +12,16 @@ import {
 } from "./extension-projection.js";
 import { externalOpenCodePlugins, externalTuiPlugins, projectExternalIntegrations } from "./external-integrations.js";
 import { buildInventory } from "./inventory.js";
-import { defaultOpenCodeAgent, readOgbConfig } from "./ogb-config.js";
+import {
+  defaultOpenCodeAgent,
+  readOgbConfig,
+  resolveAgentFallback,
+  runtimeOptionsForProvider,
+  type ModelFallbackEntry,
+  type ModelRuntimeOptions,
+  type ResolvedAgentFallback,
+} from "./ogb-config.js";
+import { createModelRoutingContext, writeModelRoutingReport, type ModelRoutingDecision } from "./model-routing.js";
 import { defaultGeminiInput, resolveProjectPaths } from "./paths.js";
 import { ensureProjectConfig } from "./project-config.js";
 import { projectRulesyncProjection, type RulesyncMode, type RulesyncProjectionResult } from "./rulesync.js";
@@ -247,6 +256,7 @@ interface GlobalExtensionAgentMapItem {
   projected: boolean;
   reason?: string;
   status?: "projected" | "conflict";
+  modelFallback?: ResolvedAgentFallback;
 }
 
 function fileExists(filePath: string): boolean {
@@ -490,6 +500,52 @@ function parseMarkdownAgent(text: string, fallbackDescription: string): { descri
   };
 }
 
+const PROVIDER_RUNTIME_KEYS = [
+  "variant",
+  "reasoningEffort",
+  "temperature",
+  "top_p",
+  "maxTokens",
+  "textVerbosity",
+  "thinking",
+] as const;
+
+function runtimeOptionObject(options: ModelRuntimeOptions, output: { includeVariant: boolean }): Record<string, unknown> {
+  const providerOptions = runtimeOptionsForProvider(options);
+  const out: Record<string, unknown> = {};
+  for (const key of PROVIDER_RUNTIME_KEYS) {
+    if (key === "variant" && !output.includeVariant) continue;
+    const value = providerOptions[key];
+    if (value !== undefined) out[key] = value;
+  }
+  return out;
+}
+
+function runtimeOptionYaml(options: ModelRuntimeOptions, indent: string, output: { includeVariant: boolean }): string[] {
+  return Object.entries(runtimeOptionObject(options, output))
+    .map(([key, value]) => `${indent}${key}: ${typeof value === "number" ? value : JSON.stringify(value)}`);
+}
+
+function hasRuntimeOptions(options: ModelRuntimeOptions, output: { includeVariant: boolean }): boolean {
+  return Object.keys(runtimeOptionObject(options, output)).length > 0;
+}
+
+function fallbackEntryYaml(entry: ModelFallbackEntry): string[] {
+  if (typeof entry === "string") return [`  - ${JSON.stringify(entry)}`];
+  return [
+    "  - model: " + JSON.stringify(entry.model),
+    ...runtimeOptionYaml(entry, "    ", { includeVariant: false }),
+  ];
+}
+
+function fallbackHasRoutingSurface(fallback: ResolvedAgentFallback): boolean {
+  return fallback.source !== "none"
+    || Boolean(fallback.importedModel)
+    || Boolean(fallback.model)
+    || fallback.fallbackModels.length > 0
+    || hasRuntimeOptions(fallback, { includeVariant: true });
+}
+
 function globalAgentMarkdown(options: {
   description: string;
   body: string;
@@ -501,14 +557,23 @@ function globalAgentMarkdown(options: {
   model?: string;
   temperature?: number;
   maxSteps?: number;
+  fallback?: ResolvedAgentFallback;
+  routing?: ModelRoutingDecision;
 }): string {
+  const activeRuntime = options.routing?.selected ?? options.fallback;
+  const model = activeRuntime?.model ?? options.fallback?.model ?? options.model;
   const lines: string[] = [
     "---",
     `description: ${JSON.stringify(options.description)}`,
     "mode: subagent",
   ];
-  if (options.model) lines.push(`model: ${JSON.stringify(options.model)}`);
-  if (options.temperature !== undefined) lines.push(`temperature: ${options.temperature}`);
+  if (model) lines.push(`model: ${JSON.stringify(model)}`);
+  if (activeRuntime) lines.push(...runtimeOptionYaml(activeRuntime, "", { includeVariant: false }));
+  if (options.fallback?.fallbackModels.length) {
+    lines.push("fallback_models:");
+    for (const entry of options.fallback.fallbackModels) lines.push(...fallbackEntryYaml(entry));
+  }
+  if (options.temperature !== undefined && activeRuntime?.temperature === undefined) lines.push(`temperature: ${options.temperature}`);
   if (options.maxSteps !== undefined) lines.push(`maxSteps: ${options.maxSteps}`);
   lines.push(
     "permission:",
@@ -644,6 +709,7 @@ function extensionMapEntry(options: {
             projected: projected.projected,
             reason: projected.reason,
             status: projected.status,
+            modelFallback: projected.modelFallback,
           }
         : {
             name: path.basename(filePath, ".md"),
@@ -670,6 +736,7 @@ function writeGlobalExtensionMap(options: {
   agents: GlobalExtensionAgentMapItem[];
   projectedCommands: string[];
   projectedAgents: string[];
+  modelFallbacks: GeminiExtensionProjectionMap["modelFallbacks"];
   warnings: string[];
   dryRun?: boolean;
 }): { promoted?: string } {
@@ -690,7 +757,7 @@ function writeGlobalExtensionMap(options: {
     })),
     projectedCommands: options.projectedCommands,
     projectedAgents: options.projectedAgents,
-    modelFallbacks: [],
+    modelFallbacks: options.modelFallbacks,
     removedCommands: [],
     removedAgents: [],
     warnings: options.warnings,
@@ -1055,6 +1122,9 @@ function projectGlobalGeminiExtensionAgents(options: {
   homeDir: string;
   globalRoot: string;
   state: ReturnType<typeof emptySyncState>;
+  config: ReturnType<typeof readOgbConfig>;
+  routing: ReturnType<typeof createModelRoutingContext>;
+  modelFallbacks: GeminiExtensionProjectionMap["modelFallbacks"];
   usedAgentRelPaths?: Set<string>;
   dryRun?: boolean;
   force?: boolean;
@@ -1079,6 +1149,25 @@ function projectGlobalGeminiExtensionAgents(options: {
       const relPath = uniqueGlobalAgentRelPath(agentRelFromSource(agentsRoot, sourcePath), usedAgentRelPaths, extensionName);
       const sourceRelPath = toPosix(path.relative(extensionDir, sourcePath));
       const parsed = parseMarkdownAgent(fs.readFileSync(sourcePath, "utf8"), `Gemini extension agent from ${extensionName}`);
+      const agentName = globalAgentNameFromRelPath(relPath);
+      const fallback = resolveAgentFallback({
+        config: options.config,
+        extensionName,
+        agentName,
+        importedModel: parsed.model,
+      });
+      const hasRoutingSurface = fallbackHasRoutingSurface(fallback);
+      const routingDecision = hasRoutingSurface ? options.routing.decide(fallback) : undefined;
+      if (fallback.source !== "none" && (fallback.fallbackModels.length > 0 || fallback.model || hasRuntimeOptions(fallback, { includeVariant: true }))) {
+        options.modelFallbacks.push({
+          agent: agentName,
+          extension: extensionName,
+          model: fallback.model,
+          ...runtimeOptionObject(fallback, { includeVariant: true }),
+          fallback_models: fallback.fallbackModels,
+          source: fallback.source,
+        });
+      }
       const write = writeManagedGlobalText({
         state: options.state,
         globalRoot: options.globalRoot,
@@ -1094,6 +1183,8 @@ function projectGlobalGeminiExtensionAgents(options: {
           model: parsed.model,
           temperature: parsed.temperature,
           maxSteps: parsed.maxSteps,
+          fallback: hasRoutingSurface ? fallback : undefined,
+          routing: routingDecision,
         }),
         label: "Global extension agent",
         dryRun: options.dryRun,
@@ -1103,12 +1194,13 @@ function projectGlobalGeminiExtensionAgents(options: {
       if (write.warning) warnings.push(write.warning);
       mapAgents.push({
         extensionName,
-        name: globalAgentNameFromRelPath(relPath),
+        name: agentName,
         source: sourceRelPath,
         target: write.promoted ?? globalOpenCodeRelPath(relPath),
         projected: !write.warning,
         reason: write.warning,
         status: write.warning ? "conflict" : "projected",
+        modelFallback: hasRoutingSurface ? fallback : undefined,
       });
     }
   }
@@ -1354,10 +1446,18 @@ function projectBuiltInFiles(options: {
 
 function syncGlobalOpenCode(paths: ReturnType<typeof resolveProjectPaths>, options: SyncOptions): SyncReport {
   const globalRoot = globalOpenCodeConfigDir({ homeDir: paths.homeDir });
+  const ogbConfig = readOgbConfig(paths.projectRoot, paths.homeDir);
+  const routing = createModelRoutingContext({
+    projectRoot: paths.projectRoot,
+    limitsPath: paths.limitsPath,
+    enabled: ogbConfig.modelFallbacks?.routing?.enabled,
+    thresholdPercent: ogbConfig.modelFallbacks?.routing?.thresholdPercent,
+  });
   const state = readSyncState(paths.projectRoot, paths.homeDir) ?? emptySyncState(OGB_VERSION);
   const warnings: string[] = [];
   const usedCommandRelPaths = new Set<string>();
   const usedAgentRelPaths = new Set<string>();
+  const modelFallbacks: GeminiExtensionProjectionMap["modelFallbacks"] = [];
 
   const projectedContext = projectGlobalGeminiContext({
     homeDir: paths.homeDir,
@@ -1418,6 +1518,9 @@ function syncGlobalOpenCode(paths: ReturnType<typeof resolveProjectPaths>, optio
     homeDir: paths.homeDir,
     globalRoot,
     state,
+    config: ogbConfig,
+    routing,
+    modelFallbacks,
     usedAgentRelPaths,
     dryRun: options.dryRun,
     force: options.force,
@@ -1441,6 +1544,7 @@ function syncGlobalOpenCode(paths: ReturnType<typeof resolveProjectPaths>, optio
     agents: projectedExtensionAgents.mapAgents,
     projectedCommands: projectedExtensionCommands.promoted,
     projectedAgents: projectedExtensionAgents.promoted,
+    modelFallbacks,
     warnings: extensionProjectionWarnings,
     dryRun: options.dryRun,
   });
@@ -1455,6 +1559,12 @@ function syncGlobalOpenCode(paths: ReturnType<typeof resolveProjectPaths>, optio
   };
 
   if (!options.dryRun) {
+    writeModelRoutingReport(paths.modelRoutingPath, routing.report);
+    upsertManagedFile(state, {
+      path: ".config/opencode-gemini-bridge/generated/ogb-model-routing.json",
+      sha256: sha256File(paths.modelRoutingPath),
+      source: "ogb",
+    });
     state.lastRulesync = {
       status: rulesync.status,
       command: rulesync.command,
@@ -1493,6 +1603,7 @@ function syncGlobalOpenCode(paths: ReturnType<typeof resolveProjectPaths>, optio
     if (projectedExtensionCommands.promoted.length > 0) console.log(`${action} ${projectedExtensionCommands.promoted.length} global Gemini extension command(s)`);
     if (projectedAgents.promoted.length > 0) console.log(`${action} ${projectedAgents.promoted.length} global Gemini agent(s)`);
     if (projectedExtensionAgents.promoted.length > 0) console.log(`${action} ${projectedExtensionAgents.promoted.length} global Gemini extension agent(s)`);
+    if (modelFallbacks.length > 0) console.log(`${action} ${modelFallbacks.length} global Gemini extension model fallback(s)`);
     if (projectedSkills.promoted.length > 0) console.log(`${action} ${projectedSkills.promoted.length} global Gemini skill(s)`);
     if (projectedExtensionMap.promoted) console.log(`${options.dryRun ? "Would generate" : "Generated"} global Gemini extension map at ${projectedExtensionMap.promoted}`);
     if (!projectedConfig.promoted && report.projectedCommands.length === 0 && report.projectedAgents.length === 0 && report.projectedExtensionAgents.length === 0 && report.projectedSkills.length === 0) {

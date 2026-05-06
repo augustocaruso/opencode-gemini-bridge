@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.54 - Dashboard ignora relatorios obsoletos
+
+- Faz o dashboard tratar `ogb-validation.json` e `ogb-security.json` de versoes antigas como aviso para regenerar, nao como FAIL atual.
+- No modo home/global, detecta relatorios antigos que ainda procuram `.opencode/generated/opencode.generated.json` ou `.opencode/agents/YOLO.md` dentro da home e evita falso vermelho.
+- Ignora erro antigo de auto-update quando o status foi gravado por uma versao anterior do OGB, para o painel nao manter `OGB update: ERROR` depois de update bem-sucedido.
+- Reproduz o perfil pessoal de `modelFallbacks` no modo home/global, gravando `~/.config/opencode-gemini-bridge/ogb.config.jsonc` e aplicando `model`/`fallback_models` aos agentes globais vindos das extensoes Gemini.
+
 ## 0.0.53 - Dashboard global sem falso FAIL
 
 - Gera `ogb-extension-map.json` tambem no modo home/global, em `~/.config/opencode-gemini-bridge/generated`, para extensoes Gemini virarem inventario de revisao em vez de warnings genericos permanentes.

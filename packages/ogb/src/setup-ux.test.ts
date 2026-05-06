@@ -202,7 +202,7 @@ test("setupUx installs missing global TUI runtime dependencies", () => {
   assert.equal(fs.existsSync(configDir), false);
 });
 
-test("setupUx treats the home directory as global-only and skips project profile", () => {
+test("setupUx treats the home directory as global-only and writes the global OGB profile", () => {
   const root = tempRoot();
   const homeDir = path.join(root, "home");
   const configDir = path.join(root, "config", "opencode");
@@ -216,7 +216,12 @@ test("setupUx treats the home directory as global-only and skips project profile
     installPlugins: false,
   });
 
-  assert.equal(report.ogbConfigPath, undefined);
+  const globalProfilePath = path.join(homeDir, ".config", "opencode-gemini-bridge", "ogb.config.jsonc");
+  const globalProfile = parseJsonc(fs.readFileSync(globalProfilePath, "utf8"));
+
+  assert.equal(report.ogbConfigPath, globalProfilePath);
+  assert.equal(globalProfile.openCode.defaultAgent, "YOLO");
+  assert.equal(globalProfile.modelFallbacks.agents["med-chat-triager"].model.id, "google/gemini-3-flash-preview");
   assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "ogb.config.jsonc")), false);
   assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "plugins", "ogb-startup-sync.js")), false);
   assert.equal(fs.existsSync(path.join(configDir, "opencode.json")), true);
@@ -239,7 +244,7 @@ test("setupUx treats an accidentally quoted home path as global-only", () => {
   });
   const startupConfig = readJson(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-startup-sync.json"));
 
-  assert.equal(report.ogbConfigPath, undefined);
+  assert.equal(report.ogbConfigPath, path.join(homeDir, ".config", "opencode-gemini-bridge", "ogb.config.jsonc"));
   assert.equal(report.projectRoot, path.resolve(homeDir));
   assert.deepEqual(startupConfig.baseArgs, ["--project", path.resolve(homeDir)]);
   assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "ogb.config.jsonc")), false);

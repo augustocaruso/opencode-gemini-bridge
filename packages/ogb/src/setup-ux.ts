@@ -719,7 +719,11 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
   const globalStartupPluginPath = path.join(root, "plugins", "ogb-startup-sync.js");
   const globalStartupConfigPath = path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-startup-sync.json");
   const globalGeneratedDir = path.dirname(globalStartupConfigPath);
-  const ogbConfigPath = projectRoot && !projectIsHome ? path.join(projectRoot, ".opencode", "ogb.config.jsonc") : undefined;
+  const ogbConfigPath = projectRoot
+    ? projectIsHome
+      ? path.join(homeDir, ".config", "opencode-gemini-bridge", "ogb.config.jsonc")
+      : path.join(projectRoot, ".opencode", "ogb.config.jsonc")
+    : undefined;
   const writes: SetupUxWrite[] = [];
   const commands: SetupUxCommand[] = [];
   const warnings: string[] = [];
