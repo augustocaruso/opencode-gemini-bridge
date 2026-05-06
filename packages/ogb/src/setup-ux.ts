@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse as parseJsonc } from "jsonc-parser";
 import { BUILT_IN_AGENTS, BUILT_IN_COMMANDS } from "./built-ins.js";
 import { resolveCommand } from "./command-resolution.js";
@@ -665,6 +665,40 @@ function installOpenCodeCommand(): string[] {
     : ["sh", "-c", "curl -fsSL https://opencode.ai/install | bash"];
 }
 
+function currentCliPath(): string | undefined {
+  const modulePath = fileURLToPath(import.meta.url);
+  const packagedCliPath = path.join(path.dirname(modulePath), "cli.js");
+  if (fs.existsSync(packagedCliPath)) return packagedCliPath;
+
+  const argvScript = process.argv[1] ? path.resolve(process.argv[1]) : "";
+  if (argvScript && fs.existsSync(argvScript) && /^cli\.[jt]s$/.test(path.basename(argvScript))) {
+    return argvScript;
+  }
+  return undefined;
+}
+
+function startupCommandPlan(homeDir: string, options: Pick<SetupUxOptions, "platform" | "env">): { command: string; baseArgs: string[] } {
+  const cliPath = currentCliPath();
+  if (cliPath) {
+    return {
+      command: process.execPath,
+      baseArgs: [cliPath, "--project", homeDir],
+    };
+  }
+
+  const crossPlatformResolution = options.platform !== undefined && options.platform !== process.platform;
+  return {
+    command: resolveCommand("ogb", {
+      homeDir,
+      platform: options.platform,
+      env: options.env,
+      includeLookup: crossPlatformResolution ? false : undefined,
+      includeNpmPrefix: crossPlatformResolution ? false : undefined,
+    }) ?? "ogb",
+    baseArgs: ["--project", homeDir],
+  };
+}
+
 export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
   const homeDir = options.homeDir || os.homedir();
   const projectRoot = options.projectRoot ? path.resolve(options.projectRoot) : undefined;
@@ -718,6 +752,7 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
   }
 
   const existingOpenCode = resolveCommand("opencode", { homeDir });
+  const startupCommand = startupCommandPlan(homeDir, options);
   if (options.installOpenCode === false) {
     if (!existingOpenCode) {
       warnings.push("OpenCode is not installed. Re-run with --install-opencode or install OpenCode first.");
@@ -768,8 +803,8 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
   writes.push(writeText({
     filePath: globalStartupConfigPath,
     text: startupConfigSource({
-      command: "ogb",
-      baseArgs: ["--project", homeDir],
+      command: startupCommand.command,
+      baseArgs: startupCommand.baseArgs,
       syncArgs: ["startup-sync"],
     }),
     dryRun: options.dryRun,

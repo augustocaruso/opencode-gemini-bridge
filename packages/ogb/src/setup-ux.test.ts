@@ -118,12 +118,40 @@ test("setupUx writes global OpenCode UX profile and project fallback profile", (
   const globalTuiConfig = readJson(path.join(configDir, "tui.json"));
   assert.deepEqual(globalTuiConfig.plugin, [TUI_SIDEBAR_PLUGIN_SPEC]);
   const startupConfig = readJson(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-startup-sync.json"));
-  assert.equal(startupConfig.command, "ogb");
+  assert.equal(typeof startupConfig.command, "string");
   assert.deepEqual(startupConfig.baseArgs, ["--project", homeDir]);
   assert.deepEqual(startupConfig.syncArgs, ["startup-sync"]);
   assert.equal(startupConfig.autoUpdate, false);
   assert.deepEqual(startupConfig.updateArgs, ["check-update", "--no-write"]);
   assert.equal(startupConfig.failureBackoffMs, 10 * 60_000);
+});
+
+test("setupUx writes an absolute Windows ogb shim path for startup sync", () => {
+  const root = tempRoot();
+  const homeDir = path.join(root, "home");
+  const appData = path.join(homeDir, "AppData", "Roaming");
+  const configDir = path.join(homeDir, ".config", "opencode");
+  const projectRoot = path.join(root, "project");
+  const npmDir = path.join(appData, "npm");
+  const ogbShim = path.join(npmDir, "ogb.cmd");
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.mkdirSync(npmDir, { recursive: true });
+  fs.writeFileSync(ogbShim, "@echo off\n", "utf8");
+
+  setupUx({
+    homeDir,
+    configDir,
+    projectRoot,
+    platform: "win32",
+    env: { APPDATA: appData, Path: "" },
+    installOpenCode: false,
+    installPlugins: false,
+  });
+
+  const startupConfig = readJson(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-startup-sync.json"));
+  assert.equal(startupConfig.command, ogbShim);
+  assert.deepEqual(startupConfig.baseArgs, ["--project", homeDir]);
+  assert.deepEqual(startupConfig.syncArgs, ["startup-sync"]);
 });
 
 test("setupUx removes the retired global dev-server command and overwrites global AGENTS.md", () => {

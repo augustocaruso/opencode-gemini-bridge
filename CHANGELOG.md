@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.51 - Startup sync sem depender do PATH do Windows
+
+- Faz `setup-ux` gravar `node` absoluto + `dist/cli.js` absoluto quando roda a versao empacotada, evitando depender do PATH herdado pelo processo do OpenCode no Windows.
+- Quando o CLI empacotado nao esta disponivel, faz fallback para o caminho resolvido de `ogb.cmd` em vez de `command: "ogb"`.
+- Adiciona teste simulando Windows/AppData para garantir que `ogb-startup-sync.json` aponta para `ogb.cmd` absoluto.
+
 ## 0.0.50 - Startup sync global sem spam
 
 - Troca o plugin de startup para usar `ogb startup-sync`, um caminho dedicado que trata avisos de hooks/extensoes como avisos e so falha em erro real de projecao.
