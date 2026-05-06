@@ -1,4 +1,4 @@
-export const OGB_VERSION = "0.0.36";
+export const OGB_VERSION = "0.0.37";
 
 export type ResourceStatus = "ok" | "warning" | "error" | "needs_review";
 export type ResourceScope = "project" | "global";

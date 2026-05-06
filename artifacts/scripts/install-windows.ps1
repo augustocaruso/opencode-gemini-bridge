@@ -16,6 +16,17 @@ function Require-Command($Name) {
   }
 }
 
+function Invoke-NativeCommand($Command, [string[]]$Arguments) {
+  $Output = & $Command @Arguments 2>&1
+  $ExitCode = $LASTEXITCODE
+  if ($Output) {
+    $Output | ForEach-Object { Write-Host $_ }
+  }
+  if ($ExitCode -ne 0) {
+    throw "$Command $($Arguments -join ' ') failed with exit code $ExitCode."
+  }
+}
+
 function Test-WritableDir($Dir) {
   if (-not $Dir) {
     return $false
@@ -113,6 +124,46 @@ function Repair-BrokenForceInstall {
   }
 }
 
+function Remove-BrokenOgbShim($Dir) {
+  if (-not $Dir) {
+    return
+  }
+  foreach ($Name in @("ogb", "ogb.cmd", "ogb.ps1")) {
+    $Shim = Join-Path $Dir $Name
+    if (-not (Test-Path $Shim)) {
+      continue
+    }
+    $Content = ""
+    try {
+      $Content = Get-Content -Raw -Path $Shim -ErrorAction Stop
+    } catch {
+      $Content = ""
+    }
+    if ($Content -match "opencode-gemini-bridge-cli" -or $Content -match "\.ai\\opencode-pack" -or $Content -match "added \d+ packages") {
+      Remove-Item -Force $Shim -ErrorAction SilentlyContinue
+      Write-Host "Removed broken ogb shim: $Shim"
+    }
+  }
+}
+
+function Repair-BrokenOgbShims($Prefix) {
+  $Dirs = @()
+  $Dirs += $Prefix
+  $Dirs += (Resolve-AppDataNpmPrefix)
+  $Dirs += $HOME
+  try {
+    $NpmPrefix = (& npm prefix -g 2>$null)
+    if ($NpmPrefix) {
+      $Dirs += $NpmPrefix.Trim()
+    }
+  } catch {
+    # ignore npm prefix lookup failures; the installer will use its resolved prefix.
+  }
+  foreach ($Dir in ($Dirs | Where-Object { $_ } | Select-Object -Unique)) {
+    Remove-BrokenOgbShim $Dir
+  }
+}
+
 function Install-StableCli($SourceDir, $InstallDir) {
   Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force $InstallDir | Out-Null
@@ -124,8 +175,11 @@ function Install-StableCli($SourceDir, $InstallDir) {
   }
   Copy-Item -Path (Join-Path $SourceDir "dist") -Destination (Join-Path $InstallDir "dist") -Recurse -Force
 
-  npm --prefix $InstallDir install --omit=dev
+  Invoke-NativeCommand "npm" @("--prefix", $InstallDir, "install", "--omit=dev")
   $CliTarget = Join-Path $InstallDir "dist\cli.js"
+  if ($CliTarget -match "\r|\n|added \d+ packages|audited \d+ packages") {
+    throw "Resolved CLI target was contaminated by command output: $CliTarget"
+  }
   if (-not (Test-Path $CliTarget)) {
     throw "Expected built CLI at $CliTarget, but it was not found."
   }
@@ -146,6 +200,7 @@ if ((-not $Prefix) -or $Prefix.Trim().StartsWith("-")) {
 }
 
 Repair-BrokenForceInstall
+Repair-BrokenOgbShims $Prefix
 
 New-Item -ItemType Directory -Force (Join-Path $HOME ".config\opencode") | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $HOME ".agents\skills") | Out-Null
@@ -153,12 +208,23 @@ New-Item -ItemType Directory -Force (Join-Path $HOME ".ai\opencode-pack") | Out-
 New-Item -ItemType Directory -Force $Prefix | Out-Null
 
 Write-Host "Building ogb CLI..."
-npm --prefix $CliDir install
-npm --prefix $CliDir run build
+Invoke-NativeCommand "npm" @("--prefix", $CliDir, "install")
+Invoke-NativeCommand "npm" @("--prefix", $CliDir, "run", "build")
 
 Write-Host "Installing ogb into a stable local folder..."
 $CliInstallDir = Join-Path (Join-Path $HOME ".ai\opencode-pack") "opencode-gemini-bridge-cli"
 $CliTarget = Install-StableCli $CliDir $CliInstallDir
+$CliTargetValues = @($CliTarget)
+if ($CliTargetValues.Count -ne 1) {
+  throw "Install-StableCli returned $($CliTargetValues.Count) values instead of exactly one CLI path."
+}
+$CliTarget = [string]$CliTargetValues[0]
+if ($CliTarget -match "\r|\n|added \d+ packages|audited \d+ packages") {
+  throw "Install-StableCli returned a contaminated CLI path: $CliTarget"
+}
+if (-not (Test-Path $CliTarget)) {
+  throw "Install-StableCli returned a missing CLI path: $CliTarget"
+}
 
 Write-Host "Registering ogb command in $Prefix..."
 Remove-Item -Force (Join-Path $Prefix "ogb") -ErrorAction SilentlyContinue
@@ -173,8 +239,17 @@ if (-not (Test-Path $OgbBin)) {
   throw "Expected ogb.cmd under $Prefix, but it was not found."
 }
 
-$InstalledVersion = (& $OgbBin --version)
-Write-Host "Verified ogb $($InstalledVersion.Trim()) at $OgbBin"
+$InstalledVersionOutput = & $OgbBin --version 2>&1
+$InstalledVersionExit = $LASTEXITCODE
+if ($InstalledVersionExit -ne 0) {
+  $Message = if ($InstalledVersionOutput) { ($InstalledVersionOutput | Out-String).Trim() } else { "no output" }
+  throw "Installed ogb verification failed with exit code ${InstalledVersionExit}: $Message"
+}
+$InstalledVersion = if ($InstalledVersionOutput) { ($InstalledVersionOutput | Out-String).Trim() } else { "" }
+if (-not $InstalledVersion) {
+  throw "Installed ogb verification returned no version output."
+}
+Write-Host "Verified ogb $InstalledVersion at $OgbBin"
 
 $OgbBinDir = Split-Path -Parent $OgbBin
 Add-UserPath $OgbBinDir

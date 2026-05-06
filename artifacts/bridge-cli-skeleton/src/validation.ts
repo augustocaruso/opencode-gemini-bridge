@@ -236,13 +236,16 @@ function validateWindowsInstaller(projectRoot: string, checks: ValidationCheck[]
   const required = [
     "Require-Command \"node\"",
     "Require-Command \"npm\"",
+    "Invoke-NativeCommand",
     "Test-WritableDir",
     "Resolve-AppDataNpmPrefix",
     "Resolve-DefaultPrefix",
     "npm prefix -g",
-    "npm --prefix $CliDir install",
+    "Invoke-NativeCommand \"npm\" @(\"--prefix\", $CliDir, \"install\")",
     "opencode-gemini-bridge-cli",
-    "npm --prefix $InstallDir install --omit=dev",
+    "Invoke-NativeCommand \"npm\" @(\"--prefix\", $InstallDir, \"install\", \"--omit=dev\")",
+    "Install-StableCli returned $($CliTargetValues.Count) values",
+    "Installed ogb verification returned no version output.",
     "node `\"$CliTarget`\" %*",
     "ogb.cmd",
     "import",
@@ -257,10 +260,18 @@ function validateWindowsInstaller(projectRoot: string, checks: ValidationCheck[]
     "ogb command:",
   ];
   const missing = required.filter((needle) => !text.includes(needle));
+  const forbidden = [
+    "npm --prefix $InstallDir install --omit=dev",
+    "$InstalledVersion.Trim()",
+  ].filter((needle) => text.includes(needle));
   checks.push({
     name: "Windows installer static check",
-    status: missing.length ? "fail" : "pass",
-    message: missing.length ? `Missing expected installer token(s): ${missing.join(", ")}.` : "PowerShell installer has build, install, setup, doctor, validate, security-check and dashboard steps.",
+    status: missing.length || forbidden.length ? "fail" : "pass",
+    message: missing.length
+      ? `Missing expected installer token(s): ${missing.join(", ")}.`
+      : forbidden.length
+        ? `Forbidden unsafe installer token(s): ${forbidden.join(", ")}.`
+        : "PowerShell installer has safe native command capture, build, install, setup, doctor, validate, security-check and dashboard steps.",
   });
 }
 
