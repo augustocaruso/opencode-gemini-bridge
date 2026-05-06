@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.46 - Windows self-update bootstrap fix
+
+- Faz o instalador Windows chamar `npm.cmd` explicitamente, evitando que warnings do `npm.ps1` no PowerShell sejam tratados como erro fatal.
+- Desliga a promocao de erro nativo do PowerShell 7 durante bootstrap/install, mantendo a falha real pelo exit code.
+- Para de apagar `~/ogb.cmd` enquanto ele pode estar executando; shims antigos no home agora sao reparados para apontar ao CLI estavel.
+
 ## 0.0.45 - global profile reset and TUI hardening
 
 - Move o pacote CLI de `artifacts/bridge-cli-skeleton` para `packages/ogb`.

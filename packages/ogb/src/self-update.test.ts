@@ -43,7 +43,8 @@ test("buildSelfUpdateCommand uses PowerShell bootstrap on Windows", () => {
   }, "win32");
 
   assert.equal(command[0], "powershell.exe");
-  assert.match(command.join(" "), /bootstrap-windows\.ps1/);
+  assert.match(command.join(" "), /scripts\/bootstrap-windows\.ps1/);
+  assert.match(command.join(" "), /PSNativeCommandUseErrorActionPreference = \$false/);
   assert.match(command.join(" "), /-Repo 'acme\/bridge'/);
   assert.match(command.join(" "), /-Version 'v9\.9\.9'/);
   assert.match(command.join(" "), /-NoSetup/);

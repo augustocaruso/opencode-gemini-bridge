@@ -194,6 +194,7 @@ export function buildSelfUpdateCommand(options: SelfUpdateOptions = {}, platform
     const args = windowsBootstrapArgs(options, repo, version, projectRoot).join(" ");
     const script = [
       "$ErrorActionPreference = 'Stop'",
+      "$PSNativeCommandUseErrorActionPreference = $false",
       "$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ('ogb-bootstrap-' + [System.Guid]::NewGuid().ToString('N') + '.ps1')",
       `Invoke-WebRequest -Uri ${psQuote(bootstrapUrl)} -OutFile $tmp`,
       `try { & $tmp ${args} } finally { Remove-Item -Force $tmp -ErrorAction SilentlyContinue }`,

@@ -1,4 +1,5 @@
 $ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $false
 
 # Legacy self-update entrypoint. Older installed OGB versions fetch this path
 # from main; keep it as a tiny bridge to the reorganized script location.

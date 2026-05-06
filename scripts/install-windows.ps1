@@ -9,11 +9,25 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $false
+$script:NpmCommand = $null
 
 function Require-Command($Name) {
-  if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
+  $Command = Get-Command $Name -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $Command) {
     throw "$Name is required before installing ogb."
   }
+  return $Command.Source
+}
+
+function Resolve-NpmCommand {
+  foreach ($Name in @("npm.cmd", "npm.exe", "npm")) {
+    $Command = Get-Command $Name -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($Command) {
+      return $Command.Source
+    }
+  }
+  throw "npm is required before installing ogb."
 }
 
 function Invoke-NativeCommand($Command, [string[]]$Arguments) {
@@ -67,7 +81,7 @@ function Resolve-DefaultPrefix {
 
   $NpmPrefix = ""
   try {
-    $NpmPrefix = (& npm prefix -g 2>$null)
+    $NpmPrefix = (& $script:NpmCommand prefix -g 2>$null)
   } catch {
     $NpmPrefix = ""
   }
@@ -161,6 +175,10 @@ function Remove-BrokenOgbShim($Dir) {
       $Content = ""
     }
     if ($Content -match "opencode-gemini-bridge-cli" -or $Content -match "\.ai\\opencode-pack" -or $Content -match "added \d+ packages") {
+      if ($Name -eq "ogb.cmd") {
+        Write-Host "Found old ogb shim; it will be repaired after the new CLI is built: $Shim"
+        continue
+      }
       Remove-Item -Force $Shim -ErrorAction SilentlyContinue
       Write-Host "Removed broken ogb shim: $Shim"
     }
@@ -169,12 +187,14 @@ function Remove-BrokenOgbShim($Dir) {
 
 function Repair-BrokenOgbShims($Prefix) {
   $Dirs = @()
-  $Dirs += $Prefix
+  $HomePath = Normalize-PathForCompare $HOME
+  if ($Prefix -and ((Normalize-PathForCompare $Prefix) -ne $HomePath)) {
+    $Dirs += $Prefix
+  }
   $Dirs += (Resolve-AppDataNpmPrefix)
-  $Dirs += $HOME
   try {
-    $NpmPrefix = (& npm prefix -g 2>$null)
-    if ($NpmPrefix) {
+    $NpmPrefix = (& $script:NpmCommand prefix -g 2>$null)
+    if ($NpmPrefix -and ((Normalize-PathForCompare $NpmPrefix.Trim()) -ne $HomePath)) {
       $Dirs += $NpmPrefix.Trim()
     }
   } catch {
@@ -182,6 +202,34 @@ function Repair-BrokenOgbShims($Prefix) {
   }
   foreach ($Dir in ($Dirs | Where-Object { $_ } | Select-Object -Unique)) {
     Remove-BrokenOgbShim $Dir
+  }
+}
+
+function Write-OgbCmdShim($ShimPath, $CliTarget) {
+  "@ECHO off`r`nnode `"$CliTarget`" %*`r`n" | Set-Content -Path $ShimPath -Encoding ASCII
+}
+
+function Repair-HomeOgbShim($CliTarget) {
+  foreach ($Name in @("ogb", "ogb.cmd", "ogb.ps1")) {
+    $Shim = Join-Path $HOME $Name
+    if (-not (Test-Path $Shim)) {
+      continue
+    }
+    $Content = ""
+    try {
+      $Content = Get-Content -Raw -Path $Shim -ErrorAction Stop
+    } catch {
+      $Content = ""
+    }
+    if ($Content -match "opencode-gemini-bridge-cli" -or $Content -match "\.ai\\opencode-pack" -or $Content -match "added \d+ packages") {
+      if ($Name -eq "ogb.cmd") {
+        Write-OgbCmdShim $Shim $CliTarget
+        Write-Host "Repaired old home ogb shim: $Shim"
+      } else {
+        Remove-Item -Force $Shim -ErrorAction SilentlyContinue
+        Write-Host "Removed broken home ogb shim: $Shim"
+      }
+    }
   }
 }
 
@@ -205,7 +253,7 @@ function Install-StableCli($SourceDir, $InstallDir) {
   }
   Copy-Item -Path (Join-Path $SourceDir "dist") -Destination (Join-Path $InstallDir "dist") -Recurse -Force
 
-  Invoke-NativeCommand "npm" @("--prefix", $InstallDir, "install", "--omit=dev")
+  Invoke-NativeCommand $script:NpmCommand @("--prefix", $InstallDir, "install", "--omit=dev")
   $ExpectedCliTarget = Join-Path $InstallDir "dist\cli.js"
   if (-not (Test-Path $ExpectedCliTarget)) {
     throw "Expected built CLI at $ExpectedCliTarget, but it was not found."
@@ -245,8 +293,9 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Split-Path -Parent $ScriptDir
 $CliDir = Join-Path (Join-Path $RepoRoot "packages") "ogb"
 
-Require-Command "node"
-Require-Command "npm"
+Require-Command "node" | Out-Null
+Require-Command "npm" | Out-Null
+$script:NpmCommand = Resolve-NpmCommand
 
 $Project = [System.IO.Path]::GetFullPath($Project)
 $HomePath = [System.IO.Path]::GetFullPath($HOME)
@@ -273,8 +322,8 @@ New-Item -ItemType Directory -Force (Join-Path $HOME ".ai\opencode-pack") | Out-
 New-Item -ItemType Directory -Force $Prefix | Out-Null
 
 Write-Host "Building ogb CLI..."
-Invoke-NativeCommand "npm" @("--prefix", $CliDir, "install")
-Invoke-NativeCommand "npm" @("--prefix", $CliDir, "run", "build")
+Invoke-NativeCommand $script:NpmCommand @("--prefix", $CliDir, "install")
+Invoke-NativeCommand $script:NpmCommand @("--prefix", $CliDir, "run", "build")
 
 Write-Host "Installing ogb into a stable local folder..."
 $CliInstallDir = Join-Path (Join-Path $HOME ".ai\opencode-pack") "opencode-gemini-bridge-cli"
@@ -287,14 +336,14 @@ Write-Host "CliTarget: $CliTarget"
 
 Write-Host "Registering ogb command in $Prefix..."
 Remove-Item -Force (Join-Path $Prefix "ogb") -ErrorAction SilentlyContinue
-Remove-Item -Force (Join-Path $Prefix "ogb.cmd") -ErrorAction SilentlyContinue
 Remove-Item -Force (Join-Path $Prefix "ogb.ps1") -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force (Join-Path $Prefix "node_modules\opencode-gemini-bridge") -ErrorAction SilentlyContinue
 
 $OgbBin = Join-Path $Prefix "ogb.cmd"
-"@ECHO off`r`nnode `"$CliTarget`" %*`r`n" | Set-Content -Path $OgbBin -Encoding ASCII
+Write-OgbCmdShim $OgbBin $CliTarget
 
 Test-CleanOgbShim $OgbBin $CliTarget
+Repair-HomeOgbShim $CliTarget
 Write-Host "OgbBin: $OgbBin"
 
 $InstalledVersionOutput = & $OgbBin --version 2>&1
