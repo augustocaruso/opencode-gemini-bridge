@@ -209,7 +209,6 @@ export function createModelRoutingContext(options: ModelRoutingOptions): {
   const thresholdPercent = options.thresholdPercent ?? DEFAULT_ROUTING_THRESHOLD_PERCENT;
   const limits = readLimitsReport(options.limitsPath);
   const warnings: string[] = [];
-  if (!limits) warnings.push(`Usage limits cache missing: ${path.relative(options.projectRoot, options.limitsPath)}`);
 
   const usage = usageByProvider(limits);
   const report: ModelRoutingReport = {

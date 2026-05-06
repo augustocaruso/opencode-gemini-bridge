@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -7,6 +6,7 @@ import { BUILT_IN_AGENTS, BUILT_IN_COMMANDS } from "./built-ins.js";
 import { resolveCommand } from "./command-resolution.js";
 import { normalizeRuntimeOptions, type OgbConfig } from "./ogb-config.js";
 import { globalOpenCodeConfigDir, legacyWindowsAppDataOpenCodeConfigDir } from "./opencode-paths.js";
+import { spawnCommandSync } from "./process.js";
 import { OGB_VERSION } from "./types.js";
 
 export const OGB_UX_SAFE_PLUGINS = [
@@ -504,11 +504,10 @@ function writeText(options: {
 
 function runCommand(command: string[], dryRun?: boolean, cwd?: string): SetupUxCommand {
   if (dryRun) return { command, status: "preview", message: `Would run ${command.join(" ")}` };
-  const result = spawnSync(command[0], command.slice(1), {
+  const result = spawnCommandSync(command[0], command.slice(1), {
     cwd,
     encoding: "utf8",
     stdio: "pipe",
-    shell: process.platform === "win32",
     env: {
       ...process.env,
       NO_COLOR: process.env.NO_COLOR ?? "1",
@@ -572,11 +571,10 @@ function runAuthProbe(opencodeCommand: string, provider: "openai" | "google", dr
   ];
   if (dryRun) return { command, status: "preview", message: `Would probe ${provider} auth methods` };
 
-  const result = spawnSync(command[0], command.slice(1), {
+  const result = spawnCommandSync(command[0], command.slice(1), {
     cwd,
     encoding: "utf8",
     stdio: "pipe",
-    shell: process.platform === "win32",
     env: {
       ...process.env,
       NO_COLOR: process.env.NO_COLOR ?? "1",

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { resolveCommand } from "./command-resolution.js";
+import { commandForPlatform } from "./process.js";
 
 function tempRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ogb-command-"));
@@ -43,4 +44,13 @@ test("resolveCommand searches the Windows AppData npm directory", () => {
     }),
     shim,
   );
+});
+
+test("commandForPlatform runs Windows commands through cmd without shell true", () => {
+  const command = commandForPlatform("C:\\Users\\leona\\AppData\\Roaming\\npm\\opencode.cmd", ["models"], "win32");
+
+  assert.match(command.command, /cmd\.exe$/i);
+  assert.deepEqual(command.args.slice(0, 4), ["/d", "/v:off", "/s", "/c"]);
+  assert.match(command.args[4], /opencode\.cmd/);
+  assert.match(command.args[4], /"models"/);
 });

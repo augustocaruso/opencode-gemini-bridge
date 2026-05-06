@@ -183,6 +183,15 @@ function Install-StableCli($SourceDir, $InstallDir) {
   if (Test-Path (Join-Path $SourceDir "LICENSE")) {
     Copy-Item -Path (Join-Path $SourceDir "LICENSE") -Destination $InstallDir -Force
   }
+  foreach ($TelemetryDefaults in @("telemetry.defaults.json", "telemetry.defaults.example.json")) {
+    $TelemetryDefaultsPath = Join-Path $SourceDir $TelemetryDefaults
+    if (Test-Path $TelemetryDefaultsPath) {
+      Copy-Item -Path $TelemetryDefaultsPath -Destination $InstallDir -Force
+    }
+  }
+  if (Test-Path (Join-Path $SourceDir "telemetry-email-worker")) {
+    Copy-Item -Path (Join-Path $SourceDir "telemetry-email-worker") -Destination (Join-Path $InstallDir "telemetry-email-worker") -Recurse -Force
+  }
   Copy-Item -Path (Join-Path $SourceDir "dist") -Destination (Join-Path $InstallDir "dist") -Recurse -Force
 
   Invoke-NativeCommand "npm" @("--prefix", $InstallDir, "install", "--omit=dev")

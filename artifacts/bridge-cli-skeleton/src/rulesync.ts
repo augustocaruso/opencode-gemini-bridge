@@ -1,10 +1,10 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { sha256File } from "./file-hash.js";
 import { resolveProjectPaths, toPosixRelative } from "./paths.js";
+import { spawnCommandSync } from "./process.js";
 import { emptySyncState, managedHashFor, readSyncState, upsertManagedFile, writeSyncState, type SyncState } from "./sync-state.js";
 import { OGB_VERSION } from "./types.js";
 
@@ -75,7 +75,7 @@ export function resolveRulesyncCommand(cwd = process.cwd()): RulesyncCommand | u
     // Fall through to PATH lookup.
   }
 
-  const check = spawnSync("rulesync", ["--version"], { cwd, encoding: "utf8" });
+  const check = spawnCommandSync("rulesync", ["--version"], { cwd, encoding: "utf8" });
   if (check.error || check.status !== 0) return undefined;
   return {
     command: "rulesync",
@@ -203,7 +203,7 @@ function promoteFromStage(projectRoot: string, stageRoot: string, files: string[
 }
 
 function runRulesync(command: RulesyncCommand, args: string[], cwd: string) {
-  return spawnSync(command.command, [...command.argsPrefix, ...args], {
+  return spawnCommandSync(command.command, [...command.argsPrefix, ...args], {
     cwd,
     encoding: "utf8",
     env: {

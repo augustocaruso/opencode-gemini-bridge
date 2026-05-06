@@ -157,6 +157,36 @@ Explique em linguagem simples:
 `,
   },
   {
+    name: "telemetry",
+    content: `---
+description: Mostra e envia telemetria local do OpenCode Gemini Bridge
+subtask: false
+---
+
+Execute ogb telemetry status --project "$PWD" para ver se a telemetria local/remota esta ativa.
+
+Se o mantenedor pedir para configurar recebimento por email, use:
+
+ogb telemetry setup-email --project "$PWD"
+
+Peça apenas o que faltar: email destino, remetente verificado no Resend e Resend API key. Nao imprima a API key. Se o Wrangler nao estiver logado, oriente npm exec --yes wrangler login e repita.
+
+Se o usuario quiser revisar antes de enviar, execute:
+
+ogb telemetry preview --since 7d --project "$PWD"
+
+Se o usuario pedir envio manual, execute:
+
+ogb telemetry send --since 7d --project "$PWD"
+
+Se o usuario quiser desligar, execute:
+
+ogb telemetry disable --project "$PWD"
+
+Nunca mostre, peça para colar em chat, nem grave token de telemetria em arquivos do projeto. Para habilitar, use apenas endpoint/token fornecidos explicitamente pelo mantenedor ou por defaults privados empacotados.
+`,
+  },
+  {
     name: "agent-sync",
     content: `---
 description: Planeja adocao segura do agent-rules-sync

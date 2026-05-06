@@ -87,6 +87,18 @@ function uniqueRootEntries<T extends [unknown, string]>(entries: T[]): T[] {
   return out;
 }
 
+function uniqueResourceRoots<T extends [ResourceSource, ResourceScope, string]>(entries: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const entry of entries) {
+    const resolved = path.resolve(entry[2]);
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    out.push(entry);
+  }
+  return out;
+}
+
 function expandGeminiExtensionValue(value: string, extensionDir: string): string {
   return value
     .replaceAll("${extensionPath}", extensionDir)
@@ -173,7 +185,7 @@ function markDuplicateNames<T extends { name: string; path: string; source?: Res
 }
 
 function collectSkills(projectRoot: string, homeDir: string): SkillInfo[] {
-  const roots: Array<[ResourceSource, ResourceScope, string]> = [
+  const roots = uniqueResourceRoots<Array<[ResourceSource, ResourceScope, string]>[number]>([
     ["gemini", "project", geminiRoot(projectRoot, homeDir, "project", "skills")],
     ["opencode", "project", path.join(projectRoot, ".opencode", "skills")],
     ["opencode", "project", path.join(projectRoot, ".opencode", "skill")],
@@ -182,7 +194,7 @@ function collectSkills(projectRoot: string, homeDir: string): SkillInfo[] {
     ["opencode", "global", path.join(homeDir, ".config", "opencode", "skills")],
     ["opencode", "global", path.join(homeDir, ".config", "opencode", "skill")],
     ["opencode", "global", path.join(homeDir, ".agents", "skills")],
-  ];
+  ]);
 
   return markDuplicateNames(roots.flatMap(([source, scope, root]) => listDirs(root).map((skillDir) => {
     const skillFile = path.join(skillDir, "SKILL.md");
@@ -198,14 +210,14 @@ function collectSkills(projectRoot: string, homeDir: string): SkillInfo[] {
 }
 
 function collectAgents(projectRoot: string, homeDir: string): AgentInfo[] {
-  const roots: Array<[ResourceSource, ResourceScope, string]> = [
+  const roots = uniqueResourceRoots<Array<[ResourceSource, ResourceScope, string]>[number]>([
     ["gemini", "project", geminiRoot(projectRoot, homeDir, "project", "agents")],
     ["opencode", "project", path.join(projectRoot, ".opencode", "agents")],
     ["opencode", "project", path.join(projectRoot, ".opencode", "agent")],
     ["gemini", "global", geminiRoot(projectRoot, homeDir, "global", "agents")],
     ["opencode", "global", path.join(homeDir, ".config", "opencode", "agents")],
     ["opencode", "global", path.join(homeDir, ".config", "opencode", "agent")],
-  ];
+  ]);
 
   return markDuplicateNames(roots.flatMap(([source, scope, root]) => listFilesWithExtensions(root, [".md"]).map((filePath) => ({
     name: path.basename(filePath, ".md"),
@@ -218,14 +230,14 @@ function collectAgents(projectRoot: string, homeDir: string): AgentInfo[] {
 }
 
 function collectCommands(projectRoot: string, homeDir: string): CommandInfo[] {
-  const roots: Array<[ResourceSource, ResourceScope, string]> = [
+  const roots = uniqueResourceRoots<Array<[ResourceSource, ResourceScope, string]>[number]>([
     ["gemini", "project", geminiRoot(projectRoot, homeDir, "project", "commands")],
     ["opencode", "project", path.join(projectRoot, ".opencode", "commands")],
     ["opencode", "project", path.join(projectRoot, ".opencode", "command")],
     ["gemini", "global", geminiRoot(projectRoot, homeDir, "global", "commands")],
     ["opencode", "global", path.join(homeDir, ".config", "opencode", "commands")],
     ["opencode", "global", path.join(homeDir, ".config", "opencode", "command")],
-  ];
+  ]);
 
   return markDuplicateNames(roots.flatMap(([source, scope, root]) => listFilesWithExtensions(root, [".md", ".toml"], true).map((filePath) => ({
     name: toPosix(path.relative(root, filePath)).slice(0, -path.extname(filePath).length),

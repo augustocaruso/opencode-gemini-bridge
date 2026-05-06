@@ -92,8 +92,31 @@ Casos:
 - Consolida doctor, validation, security e plugin status.
 - Escreve `.opencode/generated/ogb-dashboard.json`.
 - Escreve `.opencode/generated/ogb-dashboard.md`.
+- Escreve `.opencode/generated/ogb-telemetry-status.json` sem token.
 - Mostra `PASS`, `WARN` ou `FAIL` em linguagem simples.
 - Nao chama modelo.
+
+### Telemetria
+
+Casos:
+
+- Desativada por padrao.
+- Defaults privados validos autoativam.
+- `disable` bloqueia defaults futuros.
+- Token nao aparece em `status`, `preview`, dashboard ou logs.
+- Redator remove emails, tokens, auth headers e query strings.
+- Envelope respeita limite de bytes e trunca sem quebrar schema.
+- Outbox preserva envelope quando endpoint falha.
+- Envio para servidor/fetch local usa Bearer e marca runs como enviados.
+- CLI cobre `telemetry setup-email/enable/status/preview/send/disable`.
+- Comandos criticos geram run record local sem alterar stdout/stderr/exit code.
+- `setup-email` nao imprime token/Resend key, prepara Worker local, grava
+  recibo privado, grava defaults privados para builds e ativa localmente quando
+  solicitado.
+- Pacote privado com `telemetry.defaults.json` autoativa telemetria remota em
+  instalacao nova; `disable` do usuario bloqueia reativacao futura.
+- Worker `health`, auth, schema invalido, envelope OGB, email imediato sem KV,
+  digest vazio, digest agendado e falha de Resend mantendo buffer para retry.
 
 ## Testes de integração no Mac
 

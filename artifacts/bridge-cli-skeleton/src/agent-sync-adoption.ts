@@ -1,7 +1,7 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { resolveProjectPaths } from "./paths.js";
+import { spawnCommandSync } from "./process.js";
 import { OGB_VERSION } from "./types.js";
 
 export interface AgentSyncAdoptionOptions {
@@ -33,7 +33,7 @@ export interface AgentSyncAdoptionReport {
 }
 
 function commandVersion(command: string): string | undefined {
-  const result = spawnSync(command, ["--version"], { encoding: "utf8" });
+  const result = spawnCommandSync(command, ["--version"], { encoding: "utf8" });
   if (result.error || result.status !== 0) return undefined;
   return (result.stdout || result.stderr).trim() || undefined;
 }

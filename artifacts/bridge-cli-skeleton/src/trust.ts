@@ -3,7 +3,7 @@ import path from "node:path";
 import { parse as parseJsonc } from "jsonc-parser";
 import { sha256File } from "./file-hash.js";
 import { resolveProjectPaths } from "./paths.js";
-import { OGB_VERSION } from "./types.js";
+import { OGB_VERSION, type HookInfo } from "./types.js";
 
 export interface TrustOptions {
   projectRoot?: string;
@@ -25,6 +25,7 @@ export interface TrustedResource {
 
 export interface OgbTrustFile {
   version: string;
+  hooks?: Record<string, TrustedResource>;
   extensions: Record<string, {
     hooks?: Record<string, TrustedResource>;
     scripts?: Record<string, TrustedResource>;
@@ -76,13 +77,18 @@ export function readTrustFile(projectRoot?: string, homeDir?: string): OgbTrustF
   if (!parsed || typeof parsed !== "object") return { version: OGB_VERSION, extensions: {} };
   return {
     version: typeof parsed.version === "string" ? parsed.version : OGB_VERSION,
+    hooks: parsed.hooks && typeof parsed.hooks === "object" && !Array.isArray(parsed.hooks) ? parsed.hooks : undefined,
     extensions: parsed.extensions && typeof parsed.extensions === "object" && !Array.isArray(parsed.extensions) ? parsed.extensions : {},
   };
 }
 
-function writeTrustFile(filePath: string, value: OgbTrustFile): void {
+export function writeTrustFile(filePath: string, value: OgbTrustFile): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+export function hookTrustKey(hook: Pick<HookInfo, "source" | "name">): string {
+  return `${path.resolve(hook.source)}#${hook.name}`;
 }
 
 function findExtension(map: any, name: string): any | undefined {

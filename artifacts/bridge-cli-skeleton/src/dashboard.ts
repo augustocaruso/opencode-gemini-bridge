@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { runDoctor } from "./doctor.js";
 import { resolveProjectPaths } from "./paths.js";
+import { telemetryStatus, type TelemetryStatus } from "./telemetry.js";
 import { OGB_VERSION, type StatusCounts } from "./types.js";
 
 export interface DashboardOptions {
@@ -58,6 +59,18 @@ export interface DashboardReport {
     lastDurationMs?: number;
     lastExitCode?: number | null;
   };
+  update: {
+    exists: boolean;
+    status: "current" | "available" | "updated" | "error" | "unknown" | "missing";
+    currentVersion?: string;
+    latestVersion?: string;
+    latestTag?: string;
+    releaseUrl?: string;
+    checkedAt?: string;
+    finishedAt?: string;
+    restartRequired: boolean;
+    message: string;
+  };
   limits: {
     exists: boolean;
     status: "ok" | "partial" | "unavailable" | "error" | "missing";
@@ -67,6 +80,20 @@ export interface DashboardReport {
     anthropicClaude: string;
     geminiCodeAssist: string;
     generatedAt?: string;
+  };
+  telemetry: {
+    schema: TelemetryStatus["schema"];
+    enabled: boolean;
+    ready: boolean;
+    disabledByEnv: boolean;
+    endpointUrl: string;
+    payloadLevel: string;
+    source: string;
+    outboxCount: number;
+    runCount: number;
+    sentRunCount: number;
+    configPath: string;
+    defaultsPath: string;
   };
   extensionCompatibility: {
     mapExists: boolean;
@@ -111,6 +138,8 @@ export interface DashboardReport {
     validation: string;
     security: string;
     pluginStatus: string;
+    updateStatus: string;
+    telemetryStatus: string;
   };
 }
 
@@ -193,10 +222,30 @@ function firstLines(items: string[], max = 6): string[] {
   return [...items.slice(0, max), `...mais ${items.length - max}`];
 }
 
+function publicTelemetryStatus(status: TelemetryStatus): DashboardReport["telemetry"] {
+  return {
+    schema: status.schema,
+    enabled: status.enabled,
+    ready: status.ready,
+    disabledByEnv: status.disabledByEnv,
+    endpointUrl: status.endpointUrl,
+    payloadLevel: status.payloadLevel,
+    source: status.source,
+    outboxCount: status.outboxCount,
+    runCount: status.runCount,
+    sentRunCount: status.sentRunCount,
+    configPath: status.configPath,
+    defaultsPath: status.defaultsPath,
+  };
+}
+
 function buildNextSteps(report: DashboardReport): string[] {
   const steps: string[] = [];
   const startupStale = report.startupSync.lastState === "stale";
 
+  if (report.update.restartRequired) {
+    steps.push("Reinicie o OpenCode para carregar a versao nova do OGB, incluindo plugin, comandos e sidebar.");
+  }
   if (!report.startupSync.installed) {
     steps.push("Rode `ogb setup-opencode --force` para instalar o plugin local do OpenCode.");
   } else if (report.startupSync.lastState === "unknown") {
@@ -235,6 +284,14 @@ export function formatDashboard(report: DashboardReport): string {
   const modelRouting = report.extensionCompatibility.modelRoutingReport
     ? `OGB ${report.extensionCompatibility.modelRoutingEnabled ? "active" : "disabled"}, ${report.extensionCompatibility.modelRoutingDecisions} decision(s)${report.extensionCompatibility.modelRoutingRouted > 0 ? `, ${report.extensionCompatibility.modelRoutingRouted} routed` : ""}${report.extensionCompatibility.modelRoutingSkipped > 0 ? `, ${report.extensionCompatibility.modelRoutingSkipped} skipped` : ""}`
     : "missing - run `ogb sync`";
+  const update = report.update.exists
+    ? `${statusLabel(report.update.status)}${report.update.latestTag ? ` ${report.update.latestTag}` : ""}${report.update.restartRequired ? " - restart OpenCode" : ""}`
+    : "MISSING - checked on next startup";
+  const telemetry = report.telemetry.ready
+    ? `READY - ${report.telemetry.payloadLevel}, outbox ${report.telemetry.outboxCount}, sent runs ${report.telemetry.sentRunCount}`
+    : report.telemetry.enabled
+      ? `ENABLED but not ready - outbox ${report.telemetry.outboxCount}`
+      : `DISABLED${report.telemetry.outboxCount > 0 ? ` - outbox ${report.telemetry.outboxCount}` : ""}`;
 
   const lines = [
     "OpenCode Gemini Bridge Dashboard",
@@ -251,6 +308,8 @@ export function formatDashboard(report: DashboardReport): string {
     `- Extension risk surface: ${report.extensionCompatibility.hooks} hook(s), ${report.extensionCompatibility.scripts} script(s) mapped for review only`,
     `- Rulesync: ${report.rulesync.available ? `available${report.rulesync.version ? ` ${report.rulesync.version}` : ""}` : "unavailable"}${report.rulesync.lastStatus ? `, last ${report.rulesync.lastStatus}` : ""}`,
     `- Startup sync: ${startup}`,
+    `- OGB update: ${update}`,
+    `- Telemetry: ${telemetry}`,
     `- Usage limits: ${report.limits.exists ? `${statusLabel(report.limits.status)} - ${report.limits.providers} provider(s), OpenUsage ${report.limits.openusage}, OpenAI ${report.limits.openaiChatGPT}, Claude ${report.limits.anthropicClaude}, Gemini ${report.limits.geminiCodeAssist}` : "MISSING - run `ogb limits` or `/bridge`"}`,
     "",
     "Checks:",
@@ -294,6 +353,8 @@ export function runDashboard(options: DashboardOptions = {}): DashboardReport {
   const security = readJson(paths.securityPath);
   const limits = readJson(paths.limitsPath);
   const pluginStatus = readJson(paths.pluginStatusPath);
+  const updateStatus = readJson(paths.updateStatusPath);
+  const telemetry = publicTelemetryStatus(telemetryStatus({ homeDir: paths.homeDir }));
   const doctorSummary = reportSummary("doctor", doctor);
   const validationSummary = reportSummary("validation", validation);
   const securitySummary = reportSummary("security", security);
@@ -315,6 +376,8 @@ export function runDashboard(options: DashboardOptions = {}): DashboardReport {
     const staleWarning = "OpenCode startup sync ficou preso em running, mas o processo nao existe mais. Reinicie o OpenCode para carregar o plugin novo.";
     if (!warnings.includes(staleWarning)) warnings.push(staleWarning);
   }
+  if (updateStatus?.restartRequired === true) warnings.push("OGB foi atualizado automaticamente; reinicie o OpenCode para carregar plugin, comandos e sidebar novos.");
+  if (updateStatus?.status === "error" && typeof updateStatus.message === "string") warnings.push(`Auto-update do OGB falhou: ${updateStatus.message}`);
 
   const counts = doctor?.counts ?? {};
   const startupSync = doctor?.startupSync ?? {};
@@ -368,6 +431,24 @@ export function runDashboard(options: DashboardOptions = {}): DashboardReport {
       lastDurationMs: typeof pluginStatus?.durationMs === "number" ? pluginStatus.durationMs : undefined,
       lastExitCode: typeof pluginStatus?.exitCode === "number" || pluginStatus?.exitCode === null ? pluginStatus.exitCode : undefined,
     },
+    update: {
+      exists: Boolean(updateStatus),
+      status: updateStatus?.status === "current"
+        || updateStatus?.status === "available"
+        || updateStatus?.status === "updated"
+        || updateStatus?.status === "error"
+        || updateStatus?.status === "unknown"
+        ? updateStatus.status
+        : "missing",
+      currentVersion: typeof updateStatus?.currentVersion === "string" ? updateStatus.currentVersion : undefined,
+      latestVersion: typeof updateStatus?.latestVersion === "string" ? updateStatus.latestVersion : undefined,
+      latestTag: typeof updateStatus?.latestTag === "string" ? updateStatus.latestTag : undefined,
+      releaseUrl: typeof updateStatus?.releaseUrl === "string" ? updateStatus.releaseUrl : undefined,
+      checkedAt: typeof updateStatus?.checkedAt === "string" ? updateStatus.checkedAt : undefined,
+      finishedAt: typeof updateStatus?.finishedAt === "string" ? updateStatus.finishedAt : undefined,
+      restartRequired: updateStatus?.restartRequired === true,
+      message: typeof updateStatus?.message === "string" ? updateStatus.message : "Update status ainda nao foi gerado.",
+    },
     limits: {
       exists: Boolean(limits),
       status: limits?.status === "ok" || limits?.status === "partial" || limits?.status === "unavailable" || limits?.status === "error" ? limits.status : "missing",
@@ -378,6 +459,7 @@ export function runDashboard(options: DashboardOptions = {}): DashboardReport {
       geminiCodeAssist: typeof limits?.sources?.geminiCodeAssist?.status === "string" ? limits.sources.geminiCodeAssist.status : "missing",
       generatedAt: typeof limits?.generatedAt === "string" ? limits.generatedAt : undefined,
     },
+    telemetry,
     extensionCompatibility: {
       mapExists: Boolean(extensionCompatibility.mapExists),
       extensions: Number(extensionCompatibility.extensions ?? 0),
@@ -420,6 +502,8 @@ export function runDashboard(options: DashboardOptions = {}): DashboardReport {
       validation: paths.validationPath,
       security: paths.securityPath,
       pluginStatus: paths.pluginStatusPath,
+      updateStatus: paths.updateStatusPath,
+      telemetryStatus: paths.telemetryStatusPath,
     },
   };
 
@@ -438,6 +522,7 @@ export function runDashboard(options: DashboardOptions = {}): DashboardReport {
 
   const markdown = formatDashboard(report);
   fs.mkdirSync(path.dirname(paths.dashboardPath), { recursive: true });
+  fs.writeFileSync(paths.telemetryStatusPath, `${JSON.stringify(report.telemetry, null, 2)}\n`, "utf8");
   fs.writeFileSync(paths.dashboardPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
   fs.writeFileSync(paths.dashboardMarkdownPath, markdown, "utf8");
 

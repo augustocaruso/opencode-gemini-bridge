@@ -81,6 +81,12 @@ test("buildInventory collects Gemini files, imports, skills, agents, commands, h
 test("buildInventory does not duplicate home resources when projectRoot is homeDir", () => {
   const homeDir = tempDir("ogb-inventory-home-project-");
   fs.mkdirSync(path.join(homeDir, ".gemini"), { recursive: true });
+  fs.mkdirSync(path.join(homeDir, ".gemini", "skills", "gemini-importer"), { recursive: true });
+  fs.mkdirSync(path.join(homeDir, ".gemini", "agents"), { recursive: true });
+  fs.mkdirSync(path.join(homeDir, ".gemini", "commands"), { recursive: true });
+  fs.writeFileSync(path.join(homeDir, ".gemini", "skills", "gemini-importer", "SKILL.md"), "---\nname: gemini-importer\n---\n", "utf8");
+  fs.writeFileSync(path.join(homeDir, ".gemini", "agents", "helper.md"), "Helper agent\n", "utf8");
+  fs.writeFileSync(path.join(homeDir, ".gemini", "commands", "review.md"), "Review command\n", "utf8");
   fs.writeFileSync(path.join(homeDir, ".gemini", "settings.json"), JSON.stringify({
     mcpServers: {
       local: {
@@ -104,6 +110,9 @@ test("buildInventory does not duplicate home resources when projectRoot is homeD
 
   const inv = buildInventory({ projectRoot: homeDir, homeDir });
 
+  assert.deepEqual(inv.skills.map((skill) => skill.name), ["gemini-importer"]);
+  assert.deepEqual(inv.agents.map((agent) => agent.name), ["helper"]);
+  assert.deepEqual(inv.commands.map((command) => command.name), ["review"]);
   assert.deepEqual(inv.mcps.map((mcp) => mcp.name).sort(), ["gemini-md-export", "local"]);
   assert.deepEqual(inv.extensions.map((extension) => extension.name), ["gemini-md-export"]);
 });

@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +6,7 @@ import { BUILT_IN_AGENTS, BUILT_IN_COMMANDS, REMOVED_BUILT_IN_AGENT_NAMES } from
 import { resolveCommand } from "./command-resolution.js";
 import { runDoctor } from "./doctor.js";
 import { resolveProjectPaths } from "./paths.js";
+import { spawnCommandSync } from "./process.js";
 import { OGB_VERSION } from "./types.js";
 
 export interface ValidationOptions {
@@ -16,6 +16,7 @@ export interface ValidationOptions {
   strict?: boolean;
   windows?: boolean;
   opencodeRun?: boolean;
+  silent?: boolean;
 }
 
 export interface ValidationCheck {
@@ -33,11 +34,10 @@ export interface ValidationReport {
 }
 
 function run(command: string, args: string[], cwd: string, timeout = 30000, extraEnv: Record<string, string> = {}) {
-  return spawnSync(command, args, {
+  return spawnCommandSync(command, args, {
     cwd,
     encoding: "utf8",
     timeout,
-    shell: process.platform === "win32",
     env: {
       ...process.env,
       NO_COLOR: process.env.NO_COLOR ?? "1",
@@ -350,7 +350,9 @@ export function runValidation(options: ValidationOptions = {}): ValidationReport
   fs.mkdirSync(path.dirname(paths.validationPath), { recursive: true });
   fs.writeFileSync(paths.validationPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 
-  if (options.json) {
+  if (options.silent) {
+    // Report is written to disk for callers such as ogb pass.
+  } else if (options.json) {
     console.log(JSON.stringify(report, null, 2));
   } else {
     console.log("OpenCode Gemini Bridge Validation");

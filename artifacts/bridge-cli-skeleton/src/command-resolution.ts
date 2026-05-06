@@ -1,7 +1,7 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnCommandSync } from "./process.js";
 
 export interface CommandResolutionOptions {
   homeDir?: string;
@@ -42,10 +42,9 @@ function commandVariants(command: string, platform: NodeJS.Platform): string[] {
 
 function lookupCandidates(command: string, platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string[] {
   const lookup = platform === "win32" ? "where" : "which";
-  const result = spawnSync(lookup, [command], {
+  const result = spawnCommandSync(lookup, [command], {
     encoding: "utf8",
     env: { ...process.env, ...env },
-    shell: platform === "win32",
   });
   if (result.error || result.status !== 0) return [];
   const lines = String(result.stdout || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
@@ -53,10 +52,9 @@ function lookupCandidates(command: string, platform: NodeJS.Platform, env: NodeJ
 }
 
 function npmPrefixCandidates(command: string, platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string[] {
-  const result = spawnSync("npm", ["prefix", "-g"], {
+  const result = spawnCommandSync("npm", ["prefix", "-g"], {
     encoding: "utf8",
     env: { ...process.env, ...env },
-    shell: platform === "win32",
   });
   const prefix = !result.error && result.status === 0 ? String(result.stdout || "").trim() : "";
   if (!prefix) return [];

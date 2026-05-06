@@ -22,6 +22,17 @@ jobs:
       - name: Install
         working-directory: artifacts/bridge-cli-skeleton
         run: npm ci
+      - name: Restore private telemetry defaults
+        env:
+          OGB_TELEMETRY_DEFAULTS_JSON: ${{ secrets.OGB_TELEMETRY_DEFAULTS_JSON }}
+        run: |
+          if [ -z "${OGB_TELEMETRY_DEFAULTS_JSON:-}" ]; then
+            echo "No private telemetry defaults configured."
+            exit 0
+          fi
+          umask 077
+          printf '%s\n' "$OGB_TELEMETRY_DEFAULTS_JSON" > artifacts/bridge-cli-skeleton/telemetry.defaults.json
+          node -e "const fs=require('node:fs'); const p='artifacts/bridge-cli-skeleton/telemetry.defaults.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); if (j.schema !== 'opencode-gemini-bridge.telemetry-defaults.v1' || j.enabled !== true || !j.endpoint_url || !j.auth_token) throw new Error('invalid OGB telemetry defaults secret');"
       - name: Build
         working-directory: artifacts/bridge-cli-skeleton
         run: npm run build

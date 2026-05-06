@@ -16,6 +16,9 @@ export interface ProjectPaths {
   modelRoutingPath: string;
   dashboardPath: string;
   dashboardMarkdownPath: string;
+  telemetryStatusPath: string;
+  passPath: string;
+  updateStatusPath: string;
   limitsPath: string;
   quotaPath: string;
   ogbConfigPath: string;
@@ -45,6 +48,9 @@ export function resolveProjectPaths(projectRoot = process.cwd(), homeDir = os.ho
     modelRoutingPath: path.join(generatedDir, "ogb-model-routing.json"),
     dashboardPath: path.join(generatedDir, "ogb-dashboard.json"),
     dashboardMarkdownPath: path.join(generatedDir, "ogb-dashboard.md"),
+    telemetryStatusPath: path.join(generatedDir, "ogb-telemetry-status.json"),
+    passPath: path.join(generatedDir, "ogb-pass.json"),
+    updateStatusPath: path.join(generatedDir, "ogb-update-status.json"),
     limitsPath: path.join(generatedDir, "ogb-limits.json"),
     quotaPath: path.join(generatedDir, "ogb-quota.json"),
     ogbConfigPath: path.join(root, ".opencode", "ogb.config.jsonc"),

@@ -11,6 +11,7 @@ export interface SecurityOptions {
   homeDir?: string;
   json?: boolean;
   strict?: boolean;
+  silent?: boolean;
 }
 
 export interface SecurityFinding {
@@ -321,7 +322,9 @@ export function runSecurityCheck(options: SecurityOptions = {}): SecurityReport 
   fs.mkdirSync(path.dirname(paths.securityPath), { recursive: true });
   fs.writeFileSync(paths.securityPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 
-  if (options.json) {
+  if (options.silent) {
+    // Report is written to disk for callers such as ogb pass.
+  } else if (options.json) {
     console.log(JSON.stringify(report, null, 2));
   } else {
     console.log("OpenCode Gemini Bridge Security Check");

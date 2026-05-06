@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { parse as parseJsonc } from "jsonc-parser";
@@ -6,13 +5,16 @@ import { BUILT_IN_AGENTS, BUILT_IN_COMMANDS } from "./built-ins.js";
 import { commandExists, resolveCommand } from "./command-resolution.js";
 import { buildInventory } from "./inventory.js";
 import { AUTO_FALLBACK_PLUGIN, resolveFallbackConfigPath } from "./external-integrations.js";
+import { sha256File } from "./file-hash.js";
 import { readOgbConfig } from "./ogb-config.js";
 import { globalOpenCodeConfigFiles } from "./opencode-paths.js";
 import { configReferencesExpandedGemini, projectConfigPath } from "./project-config.js";
 import { resolveProjectPaths } from "./paths.js";
+import { spawnCommandSync } from "./process.js";
 import { resolveRulesyncCommand } from "./rulesync.js";
 import { recoverStaleStartupStatus } from "./startup-status.js";
 import { readSyncState } from "./sync-state.js";
+import { hookTrustKey, readTrustFile } from "./trust.js";
 import { OGB_VERSION, type Inventory, type ResourceStatus, type StatusCounts } from "./types.js";
 
 export interface DoctorOptions {
@@ -123,16 +125,39 @@ function statusCounts<T extends { status: ResourceStatus }>(items: T[]): StatusC
   }, { ok: 0, warning: 0, error: 0, needs_review: 0 });
 }
 
-function collectWarnings(inv: Inventory): string[] {
-  const warnings: string[] = [];
+function hookIsTrusted(hook: Inventory["hooks"][number], projectRoot: string, homeDir: string): boolean {
+  const trust = readTrustFile(projectRoot, homeDir);
+  const record = trust.hooks?.[hookTrustKey(hook)];
+  if (!record || !fs.existsSync(hook.source)) return false;
+  return sha256File(hook.source) === record.sha256;
+}
 
-  for (const item of inv.imports) if (item.status !== "ok") warnings.push(`Import warning: ${item.raw} in ${item.source} - ${item.message}`);
-  for (const skill of inv.skills) if (skill.status !== "ok") warnings.push(`Skill warning: ${skill.name} - ${skill.message}`);
-  for (const mcp of inv.mcps) if (mcp.status !== "ok") warnings.push(`MCP warning: ${mcp.name} - ${mcp.message}`);
-  for (const agent of inv.agents) if (agent.status === "needs_review") warnings.push(`Agent needs review: ${agent.name}`);
-  for (const command of inv.commands) if (command.status === "needs_review") warnings.push(`Command needs review: ${command.name}`);
-  for (const hook of inv.hooks) warnings.push(`Hook needs review: ${hook.name} - ${hook.message}`);
-  for (const extension of inv.extensions) warnings.push(`Extension needs review: ${extension.name} - ${extension.message}`);
+function collectWarnings(inv: Inventory, projectRoot: string, homeDir: string): string[] {
+  const warnings: string[] = [];
+  const seen = new Set<string>();
+  const pushWarning = (warning: string) => {
+    if (seen.has(warning)) return;
+    seen.add(warning);
+    warnings.push(warning);
+  };
+  const pushDuplicateSkillWarnings = () => {
+    const duplicateSkills = inv.skills.filter((skill) => skill.status !== "ok" && /duplicate name/i.test(skill.message ?? ""));
+    const byName = new Map<string, typeof duplicateSkills>();
+    for (const skill of duplicateSkills) byName.set(skill.name, [...(byName.get(skill.name) ?? []), skill]);
+    for (const [name, skills] of byName) {
+      pushWarning(`Skill warning: ${name} - Duplicate name (${skills.map((skill) => skill.path).join("; ")})`);
+    }
+    return new Set(duplicateSkills.map((skill) => skill.path));
+  };
+  const duplicateSkillPaths = pushDuplicateSkillWarnings();
+
+  for (const item of inv.imports) if (item.status !== "ok") pushWarning(`Import warning: ${item.raw} in ${item.source} - ${item.message}`);
+  for (const skill of inv.skills) if (skill.status !== "ok" && !duplicateSkillPaths.has(skill.path)) pushWarning(`Skill warning: ${skill.name} - ${skill.message}`);
+  for (const mcp of inv.mcps) if (mcp.status !== "ok") pushWarning(`MCP warning: ${mcp.name} - ${mcp.message}`);
+  for (const agent of inv.agents) if (agent.status === "needs_review") pushWarning(`Agent needs review: ${agent.name}`);
+  for (const command of inv.commands) if (command.status === "needs_review") pushWarning(`Command needs review: ${command.name}`);
+  for (const hook of inv.hooks) if (!hookIsTrusted(hook, projectRoot, homeDir)) pushWarning(`Hook needs review: ${hook.name} - ${hook.message}`);
+  for (const extension of inv.extensions) pushWarning(`Extension needs review: ${extension.name} - ${extension.message}`);
 
   return warnings;
 }
@@ -247,11 +272,10 @@ function resolveOpenCodeModels(projectRoot: string, homeDir: string, modelRoutin
     };
   }
 
-  const result = spawnSync(command, ["models"], {
+  const result = spawnCommandSync(command, ["models"], {
     cwd: projectRoot,
     encoding: "utf8",
     timeout: 30_000,
-    shell: process.platform === "win32",
     env: { ...process.env, NO_COLOR: process.env.NO_COLOR ?? "1", OGB_STARTUP_SYNC: "0" },
   });
   if (result.error || result.status !== 0) {
@@ -301,7 +325,7 @@ export function runDoctor(options: DoctorOptions = {}): DoctorReport {
   const opencodeConfig = projectConfigPath(paths.projectRoot);
   const rulesyncCommand = resolveRulesyncCommand(paths.projectRoot);
   const state = readSyncState(paths.projectRoot);
-  let warnings = collectWarnings(inv);
+  let warnings = collectWarnings(inv, paths.projectRoot, paths.homeDir);
   const errors: string[] = [];
   const generatedConfig = readJsonc(paths.generatedOpenCodeConfigPath);
   const extensionMap = readJsonc(paths.extensionMapPath);

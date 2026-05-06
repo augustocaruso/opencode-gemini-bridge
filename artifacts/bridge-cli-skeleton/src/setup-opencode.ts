@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +9,7 @@ import { sha256Text } from "./file-hash.js";
 import { defaultOpenCodeAgent, readOgbConfig } from "./ogb-config.js";
 import { resolveProjectPaths, toPosixRelative } from "./paths.js";
 import { ensureProjectConfig, type ProjectConfigResult } from "./project-config.js";
+import { spawnCommandSync } from "./process.js";
 import { recoverStaleStartupStatus } from "./startup-status.js";
 import { emptySyncState, managedHashFor, readSyncState, upsertManagedFile, writeSyncState } from "./sync-state.js";
 import { ensureTuiSidebar } from "./tui-sidebar.js";
@@ -24,8 +24,10 @@ import path from "node:path";
 
 const DEFAULT_ARGS = ["sync"];
 const DASHBOARD_ARGS = ["dashboard", "--write-only"];
-const DEFAULT_LOCK_TTL_MS = 60_000;
+const UPDATE_ARGS = ["auto-update"];
+const DEFAULT_LOCK_TTL_MS = 10 * 60_000;
 const STATUS_FILE = path.join(".opencode", "generated", "ogb-plugin-status.json");
+const UPDATE_STATUS_FILE = path.join(".opencode", "generated", "ogb-update-status.json");
 const DASHBOARD_FILE = path.join(".opencode", "generated", "ogb-dashboard.md");
 const BRIDGE_COMMANDS = new Set([
   "bridge",
@@ -34,14 +36,15 @@ const BRIDGE_COMMANDS = new Set([
   "resources",
   "validate",
   "security-check",
+  "telemetry",
   "agent-sync",
   "status",
   "update-extensions",
   "upgrade-ogb",
 ]);
 
-function splitArgs(raw) {
-  if (!raw || !raw.trim()) return DEFAULT_ARGS;
+function splitArgs(raw, fallback = DEFAULT_ARGS) {
+  if (!raw || !raw.trim()) return fallback;
   return raw.trim().split(/\s+/);
 }
 
@@ -92,12 +95,34 @@ function commandPlan(cwd) {
   };
 }
 
+function autoUpdatePlan(cwd, syncPlan) {
+  const config = readConfig(cwd);
+  const enabled = process.env.OGB_AUTO_UPDATE !== "0" && config.autoUpdate !== false;
+  const verbs = new Set(["sync", "import", "doctor", "dashboard", "auto-update", "check-update"]);
+  const verbIndex = syncPlan.args.findIndex((arg) => verbs.has(String(arg)));
+  const baseArgs = verbIndex >= 0 ? syncPlan.args.slice(0, verbIndex) : [];
+  const updateArgs = process.env.OGB_AUTO_UPDATE_ARGS
+    ? splitArgs(process.env.OGB_AUTO_UPDATE_ARGS, UPDATE_ARGS)
+    : Array.isArray(config.updateArgs)
+      ? config.updateArgs.map(String)
+      : UPDATE_ARGS;
+  return {
+    command: syncPlan.command,
+    args: [...baseArgs, ...updateArgs],
+    enabled,
+  };
+}
+
 function tail(text) {
   return String(text || "").slice(-4000);
 }
 
 function statusPath(cwd) {
   return path.join(cwd, STATUS_FILE);
+}
+
+function updateStatusPath(cwd) {
+  return path.join(cwd, UPDATE_STATUS_FILE);
 }
 
 function writeStatus(cwd, status) {
@@ -107,6 +132,24 @@ function writeStatus(cwd, status) {
     fs.writeFileSync(filePath, JSON.stringify({ version: 1, ...status }, null, 2) + "\n", "utf8");
   } catch {
     // Best effort; OpenCode logs still get the failure details.
+  }
+}
+
+function readUpdateStatus(cwd) {
+  try {
+    return JSON.parse(fs.readFileSync(updateStatusPath(cwd), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeUpdateStatus(cwd, status) {
+  try {
+    const filePath = updateStatusPath(cwd);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify({ version: 1, ...status }, null, 2) + "\n", "utf8");
+  } catch {
+    // Best effort; the main plugin status still captures the failure.
   }
 }
 
@@ -152,15 +195,31 @@ function dashboardPlanFrom(syncPlan) {
   };
 }
 
-function runProcess({ cwd, plan }) {
+function telemetryPlanFrom(syncPlan) {
+  const verbs = new Set(["sync", "import", "doctor", "dashboard", "auto-update", "check-update", "telemetry"]);
+  const verbIndex = syncPlan.args.findIndex((arg) => verbs.has(String(arg)));
+  const baseArgs = verbIndex >= 0 ? syncPlan.args.slice(0, verbIndex) : [];
+  return {
+    command: syncPlan.command,
+    args: [...baseArgs, "telemetry", "record"],
+  };
+}
+
+function runProcess({ cwd, plan, input }) {
   return new Promise((resolve) => {
     let settled = false;
     const startedAt = Date.now();
     const child = spawn(plan.command, plan.args, {
       cwd,
       env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
+    try {
+      if (input !== undefined) child.stdin.end(input);
+      else child.stdin.end();
+    } catch {
+      // The child may fail before stdin is ready; the error handler captures it.
+    }
 
     let stdout = "";
     let stderr = "";
@@ -249,6 +308,119 @@ async function updateDashboard({ cwd, client, syncPlan }) {
   return result;
 }
 
+async function recordTelemetry({ cwd, client, syncPlan, reason, result, update, dashboard, status }) {
+  const plan = telemetryPlanFrom(syncPlan);
+  const payload = {
+    reason,
+    state: status.state,
+    durationMs: status.durationMs,
+    exitCode: status.exitCode,
+    updateStatus: update.status,
+    updateRestartRequired: update.restartRequired === true,
+    dashboardExitCode: dashboard.exitCode,
+    dashboardError: dashboard.error,
+    stdoutTail: status.stdoutTail,
+    stderrTail: status.stderrTail,
+    error: status.error,
+  };
+  const args = [
+    ...plan.args,
+    "--workflow", "startup-plugin",
+    "--phase", reason,
+    "--status", result.ok ? "completed" : "failed",
+    "--outcome", result.ok ? "pass" : "fail",
+    "--exit-code", String(result.exitCode ?? (result.ok ? 0 : 1)),
+    "--duration-ms", String(result.durationMs ?? 0),
+    "--source", "plugin",
+    "--command", [syncPlan.command, ...syncPlan.args].join(" "),
+    "--payload", "-",
+  ];
+  const telemetry = await runProcess({ cwd, plan: { command: plan.command, args }, input: JSON.stringify(payload) + "\n" });
+
+  await log(client, {
+    service: "ogb-startup-sync",
+    level: telemetry.ok ? "info" : "warn",
+    message: telemetry.ok ? "ogb telemetry recorded" : "ogb telemetry record failed",
+    extra: {
+      cwd,
+      command: plan.command,
+      args,
+      exitCode: telemetry.exitCode,
+      error: telemetry.error,
+      stdout: tail(telemetry.stdout),
+      stderr: tail(telemetry.stderr),
+    },
+  });
+}
+
+async function runAutoUpdate({ cwd, client, syncPlan, reason }) {
+  const plan = autoUpdatePlan(cwd, syncPlan);
+  if (!plan.enabled) return { skipped: true, status: "disabled" };
+
+  await log(client, {
+    service: "ogb-startup-sync",
+    level: "info",
+    message: "Checking OGB auto-update (" + reason + ")",
+    extra: { cwd, command: plan.command, args: plan.args },
+  });
+
+  const result = await runProcess({ cwd, plan });
+  const status = readUpdateStatus(cwd);
+  const updated = result.ok && status.status === "updated" && status.restartRequired === true;
+  const failed = !result.ok || status.status === "error";
+
+  await log(client, {
+    service: "ogb-startup-sync",
+    level: failed ? "warn" : "info",
+    message: updated ? "OGB auto-update applied; restart OpenCode" : failed ? "OGB auto-update failed" : "OGB auto-update check completed",
+    extra: {
+      cwd,
+      command: plan.command,
+      args: plan.args,
+      exitCode: result.exitCode,
+      error: result.error || status.message,
+      stdout: tail(result.stdout),
+      stderr: tail(result.stderr),
+      status,
+    },
+  });
+
+  if (updated) {
+    await showToast(client, cwd, {
+      title: "OGB ATUALIZADO",
+      message: "Reinicie o OpenCode para carregar plugin e comandos novos.",
+      variant: "warning",
+      duration: 9000,
+    });
+  } else if (failed) {
+    writeUpdateStatus(cwd, {
+      status: "error",
+      checkedAt: new Date().toISOString(),
+      restartRequired: false,
+      message: result.error || status.message || "OGB auto-update failed.",
+      command: plan.command,
+      args: plan.args,
+      exitCode: result.exitCode,
+      stdoutTail: tail(result.stdout),
+      stderrTail: tail(result.stderr),
+    });
+    await showToast(client, cwd, {
+      title: "OGB UPDATE FALHOU",
+      message: "Use /upgrade-ogb quando quiser tentar manualmente.",
+      variant: "error",
+      duration: 6500,
+    });
+  }
+
+  return {
+    skipped: false,
+    status: status.status || (result.ok ? "current" : "error"),
+    restartRequired: updated,
+    exitCode: result.exitCode,
+    error: result.error,
+  };
+}
+
 async function runCommand({ cwd, client, reason }) {
   const plan = commandPlan(cwd);
   const startedAt = new Date().toISOString();
@@ -269,6 +441,7 @@ async function runCommand({ cwd, client, reason }) {
     duration: 2500,
   });
 
+  const update = await runAutoUpdate({ cwd, client, syncPlan: plan, reason });
   const result = await runProcess({ cwd, plan });
   const finishedAt = new Date().toISOString();
   const baseStatus = {
@@ -284,6 +457,8 @@ async function runCommand({ cwd, client, reason }) {
     stdoutTail: tail(result.stdout),
     stderrTail: tail(result.stderr),
     error: result.error,
+    updateStatus: update.status,
+    updateRestartRequired: update.restartRequired === true,
     dashboardPath: path.join(cwd, DASHBOARD_FILE),
   };
   writeStatus(cwd, baseStatus);
@@ -303,7 +478,16 @@ async function runCommand({ cwd, client, reason }) {
     extra: status,
   });
 
-  if (result.ok) {
+  await recordTelemetry({ cwd, client, syncPlan: plan, reason, result, update, dashboard, status });
+
+  if (result.ok && update.restartRequired === true) {
+    await showToast(client, cwd, {
+      title: "REINICIE OPENCODE",
+      message: "O OGB foi atualizado e a sessao atual ainda usa partes antigas.",
+      variant: "warning",
+      duration: 9000,
+    });
+  } else if (result.ok) {
     await showToast(client, cwd, {
       title: "OGB SYNC OK",
       message: "Bridge atualizado. Use /bridge para ver o painel.",
@@ -470,10 +654,12 @@ function startupConfigSource(plan: SetupCommandPlan): string {
   return `${JSON.stringify({
     version: 1,
     enabled: true,
+    autoUpdate: true,
     command: plan.command,
     baseArgs: plan.baseArgs,
     syncArgs: plan.syncArgs,
-    lockTtlMs: 60_000,
+    updateArgs: ["auto-update"],
+    lockTtlMs: 10 * 60_000,
   }, null, 2)}\n`;
 }
 
@@ -536,7 +722,7 @@ function writeManagedText(options: {
 }
 
 function checkCommand(plan: SetupCommandPlan): SetupOpenCodeReport["commandCheck"] {
-  const result = spawnSync(plan.command, [...plan.baseArgs, "--version"], {
+  const result = spawnCommandSync(plan.command, [...plan.baseArgs, "--version"], {
     encoding: "utf8",
     timeout: 10_000,
   });
@@ -575,7 +761,7 @@ function checkPluginSyntax(pluginPath?: string): SetupOpenCodeReport["pluginChec
     fs.writeFileSync(target, STARTUP_SYNC_PLUGIN_SOURCE, "utf8");
   }
 
-  const result = spawnSync(process.execPath, ["--check", target], {
+  const result = spawnCommandSync(process.execPath, ["--check", target], {
     encoding: "utf8",
     timeout: 10_000,
   });

@@ -1,6 +1,6 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { spawnCommandSync } from "./process.js";
 
 export interface ExtensionInstallOptions {
   source: string;
@@ -143,7 +143,7 @@ export function buildUpdateExtensionsArgs(options: ExtensionUpdateOptions = {}):
 }
 
 function runGemini(geminiBin: string, args: string[], cwd = process.cwd()): boolean {
-  const result = spawnSync(geminiBin, args, {
+  const result = spawnCommandSync(geminiBin, args, {
     cwd,
     stdio: "inherit",
     env: process.env,

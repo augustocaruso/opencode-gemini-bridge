@@ -77,9 +77,11 @@ Tambem projeta os comandos OpenCode embutidos:
 /resources
 /validate
 /security-check
+/telemetry
 /agent-sync
 /status
 /update-extensions
+/upgrade-ogb
 ```
 
 Tambem projeta comandos `.toml` de Gemini Extensions instaladas como comandos
@@ -140,7 +142,31 @@ Ele consolida:
 - `ogb validate`, quando ja tiver rodado;
 - `ogb security-check`, quando ja tiver rodado;
 - ultimo startup sync do plugin;
+- status local de telemetria;
 - contagem de MCPs, skills, agentes, comandos e extensoes.
+
+Tambem escreve:
+
+```text
+.opencode/generated/ogb-telemetry-status.json
+```
+
+Esse arquivo nunca inclui o token remoto.
+
+### `ogb pass`
+
+Roda o caminho verde completo e escreve `.opencode/generated/ogb-pass.json`.
+
+```bash
+ogb pass
+ogb pass --accept-hooks
+ogb pass --force
+ogb pass --json
+```
+
+O comando executa setup local, sync, doctor, validation, security-check e
+dashboard. `--accept-hooks` registra por hash os hooks Gemini revisados; se o
+arquivo mudar, o doctor volta a pedir revisão.
 
 ### `ogb limits`
 
@@ -160,6 +186,95 @@ Fontes:
 - `gemini_quota`/cache Gemini para Gemini Code Assist.
 
 Nunca reaproveita quota de um provider para outro.
+
+### `ogb telemetry`
+
+Gerencia telemetria local-first do OGB. A telemetria sempre e fail-open: nunca
+muda exit code, stdout ou stderr real de um comando.
+
+```bash
+ogb telemetry status
+ogb telemetry setup-email
+ogb telemetry enable --endpoint https://worker.example/v1/telemetry/workflow-runs --token "$TOKEN"
+ogb telemetry enable --endpoint https://worker.example/v1/telemetry/workflow-runs --token "$TOKEN" --payload-level full_logs
+ogb telemetry disable
+ogb telemetry preview --since 7d
+ogb telemetry send --since 7d
+ogb telemetry record --workflow startup-plugin --status completed --payload -
+```
+
+Arquivos locais:
+
+```text
+~/.config/opencode-gemini-bridge/telemetry/config.json
+~/.config/opencode-gemini-bridge/telemetry/runs/*.json
+~/.config/opencode-gemini-bridge/telemetry/outbox/*.json
+~/.config/opencode-gemini-bridge/telemetry/telemetry-sent.json
+```
+
+Schemas:
+
+```text
+opencode-gemini-bridge.workflow-run-record.v1
+opencode-gemini-bridge.workflow-telemetry-envelope.v1
+opencode-gemini-bridge.telemetry-status.v1
+```
+
+Privacidade:
+
+- default `payload_level` e `diagnostic_redacted`;
+- `full_logs` continua redigido, mas inclui mais contexto diagnostico;
+- tokens, auth headers, cookies, emails, query strings e strings longas sao redigidos;
+- conteudo de `GEMINI.md`, `.env`, OAuth/auth configs, prompts completos e arquivos
+  do projeto nao deve ser enviado;
+- caminhos viram rotulos curtos e hashes quando entram em payload resumido.
+
+Defaults privados:
+
+- `telemetry.defaults.example.json` fica versionado como molde;
+- `.telemetry-defaults.json` fica ignorado localmente;
+- `artifacts/bridge-cli-skeleton/telemetry.defaults.json` fica ignorado pelo
+  Git, mas entra no pacote npm/tarball quando existe;
+- runtime le `telemetry.defaults.json` perto do pacote instalado ou
+  `OGB_TELEMETRY_DEFAULTS`;
+- defaults so podem conter `enabled`, `endpoint_url`, `auth_token`,
+  `payload_level`, `max_envelope_bytes`;
+- depois de `ogb telemetry disable`, defaults nao reativam a instalacao.
+
+Setup email:
+
+```bash
+ogb telemetry setup-email \
+  --to-email mantenedor@example.com \
+  --from-email telemetry@example.com \
+  --activate-local
+```
+
+O comando prepara o Worker local em
+`~/.config/opencode-gemini-bridge/telemetry-email-worker/`, usa o Wrangler
+autenticado da maquina para criar KV opcional, gravar secrets e fazer deploy,
+envia um email de teste via Resend e grava
+`~/.config/opencode-gemini-bridge/telemetry-receiver.json`. Por padrao tambem
+grava `telemetry.defaults.json` no pacote para builds privados. Esse defaults
+autoativa telemetria remota nas instalacoes dos usuarios, sem expor a chave do
+Resend; usuarios ainda podem rodar `ogb telemetry disable`.
+
+Em releases montadas pelo GitHub Actions, o secret
+`OGB_TELEMETRY_DEFAULTS_JSON` deve conter o JSON inteiro de
+`telemetry.defaults.json`; o workflow restaura esse arquivo antes do `npm pack`
+e do zip de release.
+
+Worker:
+
+```text
+examples/telemetry-email-worker/
+```
+
+O template Cloudflare Worker expoe `GET /health`,
+`POST /v1/telemetry/workflow-runs` e
+`POST /v1/telemetry/digest/send`, exige Bearer token e usa Resend/KV quando
+configurados. Com KV, ele agrega digest a cada 15 minutos via cron; sem KV,
+envia um email imediato por envelope.
 
 ### `ogb bidirectional-sync`
 
@@ -225,6 +340,32 @@ GitHub Release pack
 O comando nao sincroniza nem copia conteudo unico do Gemini CLI de outra
 pessoa. Ele apenas atualiza o `ogb`, reinstala/reaplica settings e plugins do
 OpenCode e depois deixa o `ogb sync` projetar o conteudo Gemini local.
+
+### `ogb check-update`
+
+Consulta a ultima GitHub Release do OGB e grava
+`.opencode/generated/ogb-update-status.json`.
+
+```bash
+ogb --project "$PWD" check-update
+ogb --project "$PWD" check-update --json
+```
+
+### `ogb auto-update`
+
+Compara a versao instalada com a ultima release e, se houver versao nova, roda
+o mesmo bootstrap do `self-update`. Por padrao nao instala nem atualiza o
+proprio OpenCode quando chamado automaticamente pelo plugin.
+
+```bash
+ogb --project "$PWD" auto-update
+ogb --project "$PWD" auto-update --dry-run
+ogb --project "$PWD" auto-update --install-opencode
+```
+
+Quando aplica update, grava `restartRequired: true` em
+`.opencode/generated/ogb-update-status.json`; o plugin e a sidebar usam isso
+para avisar que o OpenCode deve ser reiniciado.
 
 ### `ogb security-check`
 
@@ -351,13 +492,15 @@ Deve:
 - criar `opencode.jsonc` se estiver ausente;
 - copiar `.opencode/plugins/ogb-startup-sync.js`;
 - gravar `.opencode/generated/ogb-startup-sync.json`;
+- habilitar `ogb auto-update` antes do sync de startup;
 - validar `node --check` do plugin;
 - validar que o comando configurado consegue responder `--version`;
 - registrar os arquivos no sync state;
 - não sobrescrever plugin/config editados manualmente sem `--force`.
 - gravar status do plugin em `.opencode/generated/ogb-plugin-status.json`;
+- gravar status de update em `.opencode/generated/ogb-update-status.json`;
 - atualizar `.opencode/generated/ogb-dashboard.md` depois do startup sync;
-- mostrar toast de sucesso/falha quando a TUI do OpenCode estiver pronta.
+- mostrar toast de sucesso/falha/update aplicado quando a TUI do OpenCode estiver pronta.
 
 O sync também instala a TUI:
 

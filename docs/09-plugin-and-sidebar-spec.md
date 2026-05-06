@@ -187,10 +187,15 @@ Instalação futura pelo bridge:
 Comportamento:
 
 - roda `ogb sync` por padrão;
+- antes do sync, roda `ogb auto-update` por padrao;
+- se uma release nova for aplicada, grava status e avisa para reiniciar o OpenCode;
 - usa lock curto para evitar disparos duplicados;
 - registra resultado via log do OpenCode;
 - grava `.opencode/generated/ogb-plugin-status.json`;
+- grava `.opencode/generated/ogb-update-status.json`;
 - roda `ogb dashboard --write-only` depois do sync;
+- chama `ogb telemetry record` com um resumo redigido de startup, auto-update,
+  sync e dashboard;
 - tenta mostrar toast na TUI quando o OpenCode permite;
 - lê `.opencode/generated/ogb-startup-sync.json` para saber qual comando chamar;
 - não roda `gemini extensions update --all`;
@@ -215,8 +220,10 @@ Configuração por env:
 
 ```bash
 OGB_STARTUP_SYNC=0                  # desliga
+OGB_AUTO_UPDATE=0                   # desliga apenas auto-update do OGB
 OGB_BIN=/caminho/para/ogb           # binário alternativo
 OGB_STARTUP_SYNC_ARGS="sync --features extensions,context,skills"
+OGB_AUTO_UPDATE_ARGS="auto-update --dry-run"
 OGB_SYNC_ON_SESSION_CREATED=1       # também roda em nova sessão
 ```
 
@@ -244,6 +251,23 @@ segurança, startup sync e extensões em uma resposta curta.
 
 O comando não deve varrer a home do usuário nem editar arquivos.
 
+### `/telemetry`
+
+Executa `ogb telemetry status --project "$PWD"` por padrao.
+
+Quando o usuario pedir:
+
+- setup email para mantenedor: `ogb telemetry setup-email --project "$PWD"`;
+- preview: `ogb telemetry preview --since 7d --project "$PWD"`;
+- envio manual: `ogb telemetry send --since 7d --project "$PWD"`;
+- desligar: `ogb telemetry disable --project "$PWD"`.
+
+O comando nao deve exibir token. Habilitacao remota so deve usar endpoint/token
+fornecidos explicitamente ou defaults privados empacotados pelo mantenedor.
+Quando orientar `setup-email`, pedir apenas email de destino, remetente
+verificado do Resend e API key do Resend; se o Wrangler nao estiver logado,
+orientar `npm exec --yes wrangler login`.
+
 ### `/resources`
 
 Lista recursos detectados:
@@ -264,6 +288,7 @@ Chama `ogb sync` ou orienta o usuário.
 - API de sidebar pode mudar.
 - Plugins podem não conseguir injetar UI persistente.
 - Excesso de status pode poluir a experiência.
+- Telemetria remota nunca deve impedir startup sync, dashboard ou comandos OGB.
 
 ## Solução robusta
 

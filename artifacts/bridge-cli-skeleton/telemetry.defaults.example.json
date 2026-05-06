@@ -1,0 +1,8 @@
+{
+  "schema": "opencode-gemini-bridge.telemetry-defaults.v1",
+  "enabled": false,
+  "endpoint_url": "https://example-worker.example.workers.dev/v1/telemetry/workflow-runs",
+  "auth_token": "replace-with-private-worker-token",
+  "payload_level": "diagnostic_redacted",
+  "max_envelope_bytes": 262144
+}

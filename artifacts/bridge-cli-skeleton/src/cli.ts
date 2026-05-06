@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import fs from "node:fs";
 import { Command } from "commander";
 import { runAgentSyncAdoption } from "./agent-sync-adoption.js";
 import { runBidirectionalSync } from "./bidirectional-sync.js";
@@ -12,14 +12,18 @@ import { buildInventory, writeInventory } from "./inventory.js";
 import { formatLimits, refreshLimits } from "./limits.js";
 import { buildOpenCodeLaunchArgs } from "./launch.js";
 import { readOgbConfig } from "./ogb-config.js";
+import { runPass } from "./pass.js";
 import { defaultGeminiInput, resolveProjectPaths } from "./paths.js";
+import { spawnCommand } from "./process.js";
 import { ensureProjectConfig } from "./project-config.js";
 import { rulesyncDefaultFeatures, type RulesyncMode } from "./rulesync.js";
 import { printSetupReport, setupOpenCode } from "./setup-opencode.js";
 import { printSetupUxReport, setupUx } from "./setup-ux.js";
 import { runSecurityCheck } from "./security.js";
-import { printSelfUpdateReport, runSelfUpdate } from "./self-update.js";
+import { checkOgbUpdate, printAutoUpdateReport, printSelfUpdateReport, printUpdateCheckReport, runAutoUpdate, runSelfUpdate } from "./self-update.js";
 import { syncToOpenCode } from "./sync.js";
+import { formatTelemetryEmailSetupResult, setupTelemetryEmailReceiver, TelemetrySetupError } from "./telemetry-email-setup.js";
+import { disableTelemetry, enableTelemetry, previewTelemetryEnvelope, printTelemetrySendResult, printTelemetryStatus, recordWorkflowRun, safeRecordWorkflowRun, sendTelemetry, telemetryStatus, TELEMETRY_PAYLOAD_LEVELS, type TelemetryPayloadLevel } from "./telemetry.js";
 import { runTrustExtension, runTrustReview } from "./trust.js";
 import { OGB_VERSION } from "./types.js";
 import { runValidation } from "./validation.js";
@@ -94,6 +98,83 @@ function printExtensionReport(report: { status: string; command: string[]; inspe
   for (const warning of report.inspection?.warnings ?? []) console.log(`Warning: ${warning}`);
 }
 
+function telemetryPayloadLevel(value: string | undefined): TelemetryPayloadLevel {
+  if (!value) return "diagnostic_redacted";
+  if ((TELEMETRY_PAYLOAD_LEVELS as readonly string[]).includes(value)) return value as TelemetryPayloadLevel;
+  throw new Error(`Invalid payload level: ${value}. Use diagnostic_redacted or full_logs.`);
+}
+
+function payloadOutcome(payload: unknown, exitCode: number, error?: unknown): string {
+  if (error || exitCode > 1) return "fail";
+  if (exitCode === 1) return "warn";
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const raw = (payload as any).outcome ?? (payload as any).status ?? (payload as any).state;
+    if (raw === "fail" || raw === "error" || raw === "blocked") return "fail";
+    if (raw === "warn" || raw === "warning" || raw === "partial") return "warn";
+  }
+  return "pass";
+}
+
+function payloadStatus(payload: unknown, exitCode: number, error?: unknown): string {
+  const outcome = payloadOutcome(payload, exitCode, error);
+  if (outcome === "fail") return "failed";
+  if (outcome === "warn") return "completed_with_warnings";
+  return "completed";
+}
+
+async function withWorkflowTelemetry<T>(workflow: string, action: () => T | Promise<T>): Promise<T> {
+  const startedAt = Date.now();
+  const { project } = commonProjectOptions();
+  const paths = resolveProjectPaths(project);
+  let payload: unknown;
+  let thrown: unknown;
+  try {
+    payload = await action();
+    return payload as T;
+  } catch (error) {
+    thrown = error;
+    payload = { error: error instanceof Error ? error.message : String(error) };
+    throw error;
+  } finally {
+    const previousExitCode = process.exitCode;
+    const exitCode = Number(process.exitCode ?? (thrown ? 1 : 0));
+    await safeRecordWorkflowRun({
+      workflow,
+      phase: "cli",
+      status: payloadStatus(payload, exitCode, thrown),
+      outcome: payloadOutcome(payload, exitCode, thrown),
+      exitCode,
+      durationMs: Date.now() - startedAt,
+      command: `ogb ${workflow}`,
+      source: "cli",
+      projectRoot: paths.projectRoot,
+      homeDir: paths.homeDir,
+      payload,
+      rawPayload: payload,
+    }, { homeDir: paths.homeDir });
+    process.exitCode = previousExitCode;
+  }
+}
+
+async function readStdinText(): Promise<string> {
+  if (process.stdin.isTTY) return "";
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function readTelemetryPayload(raw: string | undefined): Promise<unknown> {
+  if (!raw) return {};
+  let text = raw;
+  if (raw === "-") text = await readStdinText();
+  else if (fs.existsSync(raw) && fs.statSync(raw).isFile()) text = fs.readFileSync(raw, "utf8");
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { message: text };
+  }
+}
+
 program
   .name("ogb")
   .description("OpenCode Gemini Bridge")
@@ -158,22 +239,26 @@ program.command("sync")
   .option("--rulesync <mode>", "Rulesync mode: auto, off, require", "auto")
   .option("--no-rulesync", "Disable Rulesync")
   .option("--features <list>", `Rulesync feature list (${rulesyncDefaultFeatures().join(",")})`)
-  .action((opts) => {
-    const { project } = commonProjectOptions();
-    if (opts.bidirectional) {
-      const bidirectional = runBidirectionalSync({
+  .action(async (opts) => {
+    await withWorkflowTelemetry("sync", () => {
+      const { project } = commonProjectOptions();
+      let bidirectional: ReturnType<typeof runBidirectionalSync> | undefined;
+      if (opts.bidirectional) {
+        bidirectional = runBidirectionalSync({
+          projectRoot: project,
+          dryRun: opts.dryRun,
+          force: opts.force,
+        });
+        if (bidirectional.warnings.length > 0) process.exitCode = 1;
+      }
+      const sync = syncToOpenCode({
         projectRoot: project,
         dryRun: opts.dryRun,
         force: opts.force,
+        rulesyncMode: normalizeRulesyncMode(opts.rulesync),
+        rulesyncFeatures: splitFeatures(opts.features),
       });
-      if (bidirectional.warnings.length > 0) process.exitCode = 1;
-    }
-    syncToOpenCode({
-      projectRoot: project,
-      dryRun: opts.dryRun,
-      force: opts.force,
-      rulesyncMode: normalizeRulesyncMode(opts.rulesync),
-      rulesyncFeatures: splitFeatures(opts.features),
+      return { bidirectional, sync };
     });
   });
 
@@ -206,9 +291,40 @@ program.command("doctor")
   .description("Validate bridge state")
   .option("--json", "Print JSON report")
   .option("--strict", "Exit non-zero when warnings exist")
-  .action((opts) => {
-    const { project } = commonProjectOptions();
-    runDoctor({ projectRoot: project, json: opts.json, strict: opts.strict });
+  .action(async (opts) => {
+    await withWorkflowTelemetry("doctor", () => {
+      const { project } = commonProjectOptions();
+      return runDoctor({ projectRoot: project, json: opts.json, strict: opts.strict });
+    });
+  });
+
+program.command("pass")
+  .description("Run the full bridge green-path: setup, sync, doctor, validation, security, dashboard")
+  .option("--json", "Print JSON report")
+  .option("--dry-run", "Preview pass actions without writing trust changes")
+  .option("--force", "Overwrite files previously changed outside ogb management")
+  .option("--accept-hooks", "Record current Gemini hooks as reviewed by hash")
+  .option("--no-setup", "Skip setup-opencode")
+  .option("--no-sync", "Skip sync")
+  .option("--no-validation", "Skip validate")
+  .option("--no-security", "Skip security-check")
+  .option("--no-dashboard", "Skip dashboard")
+  .action(async (opts) => {
+    await withWorkflowTelemetry("pass", () => {
+      const { project } = commonProjectOptions();
+      return runPass({
+        projectRoot: project,
+        json: opts.json,
+        dryRun: opts.dryRun,
+        force: opts.force,
+        acceptHooks: opts.acceptHooks,
+        skipSetup: opts.setup === false,
+        skipSync: opts.sync === false,
+        skipValidation: opts.validation === false,
+        skipSecurity: opts.security === false,
+        skipDashboard: opts.dashboard === false,
+      });
+    });
   });
 
 program.command("dashboard")
@@ -219,16 +335,18 @@ program.command("dashboard")
   .option("--write-only", "Write dashboard JSON/Markdown without printing")
   .option("--strict", "Exit non-zero when dashboard is not clean")
   .action(async (opts) => {
-    const { project } = commonProjectOptions();
-    if (opts.refresh !== false) {
-      await refreshLimits({ projectRoot: project });
-    }
-    runDashboard({
-      projectRoot: project,
-      json: opts.json,
-      refresh: opts.refresh,
-      writeOnly: opts.writeOnly,
-      strict: opts.strict,
+    await withWorkflowTelemetry("dashboard", async () => {
+      const { project } = commonProjectOptions();
+      if (opts.refresh !== false) {
+        await refreshLimits({ projectRoot: project });
+      }
+      return runDashboard({
+        projectRoot: project,
+        json: opts.json,
+        refresh: opts.refresh,
+        writeOnly: opts.writeOnly,
+        strict: opts.strict,
+      });
     });
   });
 
@@ -253,20 +371,166 @@ program.command("limits")
     if (opts.strict && report.providers.length === 0) process.exitCode = report.status === "error" ? 2 : 1;
   });
 
+const telemetry = program.command("telemetry")
+  .description("Manage local-first OGB workflow telemetry");
+
+telemetry.command("setup-email")
+  .description("Configure Cloudflare Worker + Resend email telemetry using Wrangler")
+  .option("--to-email <email>", "Email that receives telemetry reports")
+  .option("--from-email <email>", "Verified Resend sender")
+  .option("--resend-api-key <key>", "Resend API key; omit to type it securely")
+  .option("--ingest-token <token>", "Shared ingest token; omit to generate one")
+  .option("--worker-name <name>", "Cloudflare Worker name", "ogb-telemetry-email-worker")
+  .option("--payload-level <level>", "diagnostic_redacted or full_logs", "diagnostic_redacted")
+  .option("--activate-local", "Enable telemetry for this local install after deploy")
+  .option("--no-distribution-defaults", "Do not write telemetry.defaults.json for private builds")
+  .option("--skip-test-email", "Do not send a test email after deploy")
+  .option("--dry-run", "Prepare local Worker files and show intended endpoint without calling Wrangler")
+  .option("--json", "Print JSON result")
+  .action(async (opts) => {
+    const { project } = commonProjectOptions();
+    const paths = resolveProjectPaths(project);
+    try {
+      const result = await setupTelemetryEmailReceiver({
+        homeDir: paths.homeDir,
+        toEmail: opts.toEmail,
+        fromEmail: opts.fromEmail,
+        resendApiKey: opts.resendApiKey,
+        ingestToken: opts.ingestToken,
+        workerName: opts.workerName,
+        payloadLevel: telemetryPayloadLevel(opts.payloadLevel),
+        activateLocal: opts.activateLocal,
+        noDistributionDefaults: opts.distributionDefaults === false,
+        skipTestEmail: opts.skipTestEmail,
+        dryRun: opts.dryRun,
+      });
+      if (opts.json) console.log(JSON.stringify(result, null, 2));
+      else console.log(formatTelemetryEmailSetupResult(result).trimEnd());
+    } catch (error) {
+      const nextAction = error instanceof TelemetrySetupError ? error.nextAction : "Run `npm exec --yes wrangler login` and try again.";
+      if (opts.json) console.log(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error), nextAction }, null, 2));
+      else {
+        console.error(`Telemetry setup failed: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(`Next action: ${nextAction}`);
+      }
+      process.exitCode = 2;
+    }
+  });
+
+telemetry.command("status")
+  .description("Show telemetry status without exposing the auth token")
+  .option("--json", "Print JSON status")
+  .action((opts) => {
+    const { project } = commonProjectOptions();
+    const paths = resolveProjectPaths(project);
+    printTelemetryStatus(telemetryStatus({ homeDir: paths.homeDir }), opts.json);
+  });
+
+telemetry.command("enable")
+  .description("Enable remote telemetry using an explicit endpoint and bearer token")
+  .requiredOption("--endpoint <url>", "Telemetry endpoint URL")
+  .requiredOption("--token <token>", "Bearer token")
+  .option("--payload-level <level>", "diagnostic_redacted or full_logs", "diagnostic_redacted")
+  .option("--json", "Print JSON status")
+  .action((opts) => {
+    const { project } = commonProjectOptions();
+    const paths = resolveProjectPaths(project);
+    const status = enableTelemetry({
+      homeDir: paths.homeDir,
+      endpointUrl: opts.endpoint,
+      authToken: opts.token,
+      payloadLevel: telemetryPayloadLevel(opts.payloadLevel),
+    });
+    printTelemetryStatus(status, opts.json);
+  });
+
+telemetry.command("disable")
+  .description("Disable telemetry and keep distribution defaults from re-enabling this install")
+  .option("--json", "Print JSON status")
+  .action((opts) => {
+    const { project } = commonProjectOptions();
+    const paths = resolveProjectPaths(project);
+    printTelemetryStatus(disableTelemetry({ homeDir: paths.homeDir }), opts.json);
+  });
+
+telemetry.command("preview")
+  .description("Preview the redacted envelope that would be sent")
+  .option("--since <duration>", "Include records since duration or date", "7d")
+  .option("--limit <n>", "Maximum run records", (value) => Number.parseInt(value, 10))
+  .action((opts) => {
+    const { project } = commonProjectOptions();
+    const paths = resolveProjectPaths(project);
+    const envelope = previewTelemetryEnvelope({ homeDir: paths.homeDir, since: opts.since, limit: opts.limit });
+    console.log(JSON.stringify(envelope, null, 2));
+  });
+
+telemetry.command("send")
+  .description("Send queued and unsent telemetry records, keeping failures in the outbox")
+  .option("--since <duration>", "Include records since duration or date", "7d")
+  .option("--limit <n>", "Maximum run records", (value) => Number.parseInt(value, 10))
+  .option("--json", "Print JSON result")
+  .action(async (opts) => {
+    const { project } = commonProjectOptions();
+    const paths = resolveProjectPaths(project);
+    const result = await sendTelemetry({ homeDir: paths.homeDir, since: opts.since, limit: opts.limit });
+    printTelemetrySendResult(result, opts.json);
+    if (!result.ok && result.reason !== "telemetry_not_enabled") process.exitCode = 1;
+  });
+
+telemetry.command("record")
+  .description("Internal best-effort workflow telemetry recorder")
+  .requiredOption("--workflow <name>", "Workflow name")
+  .option("--phase <phase>", "Workflow phase", "manual")
+  .option("--status <status>", "Workflow status")
+  .option("--outcome <outcome>", "Workflow outcome")
+  .option("--exit-code <n>", "Workflow exit code", (value) => Number.parseInt(value, 10), 0)
+  .option("--duration-ms <n>", "Workflow duration in milliseconds", (value) => Number.parseInt(value, 10), 0)
+  .option("--command <command>", "Command summary")
+  .option("--source <source>", "cli, plugin, agent, or test", "plugin")
+  .option("--payload <json-or-path-or-stdin>", "Payload JSON, path, or '-' for stdin")
+  .option("--no-send", "Only write the local run record")
+  .option("--json", "Print JSON record")
+  .action(async (opts) => {
+    const { project } = commonProjectOptions();
+    const paths = resolveProjectPaths(project);
+    const payload = await readTelemetryPayload(opts.payload);
+    const input = {
+      workflow: opts.workflow,
+      phase: opts.phase,
+      status: opts.status,
+      outcome: opts.outcome,
+      exitCode: Number(opts.exitCode ?? 0),
+      durationMs: Number(opts.durationMs ?? 0),
+      command: opts.command,
+      source: opts.source,
+      projectRoot: paths.projectRoot,
+      homeDir: paths.homeDir,
+      payload,
+      rawPayload: payload,
+    };
+    const record = opts.send === false
+      ? recordWorkflowRun(input, { homeDir: paths.homeDir })
+      : await safeRecordWorkflowRun(input, { homeDir: paths.homeDir });
+    if (opts.json) console.log(JSON.stringify(record, null, 2));
+    else if (record) console.log(`Recorded telemetry run ${record.runId}`);
+  });
+
 program.command("validate")
   .description("Run end-to-end bridge validation without calling a model by default")
   .option("--json", "Print JSON report")
   .option("--strict", "Exit non-zero on warnings or failures")
   .option("--windows", "Also run static Windows installer checks")
   .option("--opencode-run", "Run a real OpenCode model call; may use tokens/cost")
-  .action((opts) => {
-    const { project } = commonProjectOptions();
-    runValidation({
-      projectRoot: project,
-      json: opts.json,
-      strict: opts.strict,
-      windows: opts.windows,
-      opencodeRun: opts.opencodeRun,
+  .action(async (opts) => {
+    await withWorkflowTelemetry("validate", () => {
+      const { project } = commonProjectOptions();
+      return runValidation({
+        projectRoot: project,
+        json: opts.json,
+        strict: opts.strict,
+        windows: opts.windows,
+        opencodeRun: opts.opencodeRun,
+      });
     });
   });
 
@@ -274,9 +538,11 @@ program.command("security-check")
   .description("Scan bridge-generated setup for obvious security risks")
   .option("--json", "Print JSON report")
   .option("--strict", "Exit non-zero on warnings or failures")
-  .action((opts) => {
-    const { project } = commonProjectOptions();
-    runSecurityCheck({ projectRoot: project, json: opts.json, strict: opts.strict });
+  .action(async (opts) => {
+    await withWorkflowTelemetry("security-check", () => {
+      const { project } = commonProjectOptions();
+      return runSecurityCheck({ projectRoot: project, json: opts.json, strict: opts.strict });
+    });
   });
 
 program.command("trust-extension")
@@ -341,7 +607,7 @@ program.command("launch")
     }
     runDoctor({ projectRoot: paths.projectRoot, strict: opts.doctor === "strict" });
     const args = buildOpenCodeLaunchArgs({ agent: opts.agent, yolo: opts.yolo });
-    const child = spawn("opencode", args, { cwd: paths.projectRoot, stdio: "inherit", shell: process.platform === "win32" });
+    const child = spawnCommand("opencode", args, { cwd: paths.projectRoot, stdio: "inherit" });
     child.on("exit", (code) => process.exit(code ?? 0));
   });
 
@@ -356,22 +622,25 @@ program.command("setup-opencode")
   .option("--base-args <list>", "Comma-separated args placed before sync, useful for node + cli.js")
   .option("--sync-args <list>", "Comma-separated startup sync args", "sync")
   .option("--json", "Print JSON report")
-  .action((opts) => {
-    const { project } = commonProjectOptions();
-    const report = setupOpenCode({
-      projectRoot: project,
-      dryRun: opts.dryRun,
-      force: opts.force,
-      skipDoctor: opts.skipDoctor,
-      skipCommandCheck: opts.skipCommandCheck,
-      command: opts.command,
-      baseArgs: splitFeatures(opts.baseArgs),
-      syncArgs: splitFeatures(opts.syncArgs) ?? ["sync"],
+  .action(async (opts) => {
+    await withWorkflowTelemetry("setup-opencode", () => {
+      const { project } = commonProjectOptions();
+      const report = setupOpenCode({
+        projectRoot: project,
+        dryRun: opts.dryRun,
+        force: opts.force,
+        skipDoctor: opts.skipDoctor,
+        skipCommandCheck: opts.skipCommandCheck,
+        command: opts.command,
+        baseArgs: splitFeatures(opts.baseArgs),
+        syncArgs: splitFeatures(opts.syncArgs) ?? ["sync"],
+      });
+      printSetupReport(report, opts.json);
+      if (report.plugin.status === "conflict" || report.startupConfig.status === "conflict") process.exitCode = 2;
+      else if (!report.commandCheck.ok || !report.pluginCheck.ok) process.exitCode = 1;
+      else if (opts.strict && report.warnings.length > 0) process.exitCode = 1;
+      return report;
     });
-    printSetupReport(report, opts.json);
-    if (report.plugin.status === "conflict" || report.startupConfig.status === "conflict") process.exitCode = 2;
-    else if (!report.commandCheck.ok || !report.pluginCheck.ok) process.exitCode = 1;
-    else if (opts.strict && report.warnings.length > 0) process.exitCode = 1;
   });
 
 program.command("setup-ux")
@@ -426,6 +695,56 @@ program.command("self-update")
     });
     printSelfUpdateReport(report, opts.json);
     if (report.status === "error") process.exitCode = 2;
+  });
+
+program.command("check-update")
+  .description("Check GitHub Releases for a newer OGB version")
+  .option("--repo <owner/repo>", "GitHub repo that publishes OGB releases", "augustocaruso/opencode-gemini-bridge")
+  .option("--no-write", "Do not write .opencode/generated/ogb-update-status.json")
+  .option("--json", "Print JSON report")
+  .action(async (opts) => {
+    const { project } = commonProjectOptions();
+    const report = await checkOgbUpdate({
+      repo: opts.repo,
+      projectRoot: project,
+      write: opts.write,
+    });
+    printUpdateCheckReport(report, opts.json);
+    if (report.status === "unknown") process.exitCode = 1;
+  });
+
+program.command("auto-update")
+  .description("Update OGB automatically when a newer GitHub release exists")
+  .option("--repo <owner/repo>", "GitHub repo that publishes OGB releases", "augustocaruso/opencode-gemini-bridge")
+  .option("--prefix <path>", "Install prefix passed to the installer")
+  .option("--rulesync <mode>", "Rulesync mode passed to first-run setup", "auto")
+  .option("--no-setup", "Update ogb/profile only; skip import/setup/doctor validation")
+  .option("--no-ux", "Do not reapply the global OpenCode UX profile")
+  .option("--install-opencode", "Allow auto-update to install OpenCode when it is missing", false)
+  .option("--force", "Pass force to the bootstrap installer")
+  .option("--dry-run", "Check and print the bootstrap command without running it")
+  .option("--no-write", "Do not write .opencode/generated/ogb-update-status.json")
+  .option("--json", "Print JSON report")
+  .action(async (opts) => {
+    await withWorkflowTelemetry("auto-update", async () => {
+      const { project } = commonProjectOptions();
+      const report = await runAutoUpdate({
+        repo: opts.repo,
+        projectRoot: project,
+        prefix: opts.prefix,
+        rulesync: opts.rulesync,
+        setup: opts.setup,
+        ux: opts.ux,
+        installOpenCode: opts.installOpencode,
+        force: opts.force,
+        dryRun: opts.dryRun,
+        write: opts.write,
+      });
+      printAutoUpdateReport(report, opts.json);
+      if (report.status === "error") process.exitCode = 2;
+      else if (report.status === "unknown") process.exitCode = 1;
+      return report;
+    });
   });
 
 program.command("install-extension")

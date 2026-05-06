@@ -69,6 +69,8 @@ test("ensureTuiSidebar installs a TUI plugin and tui config entry", () => {
   assert.match(plugin, /BRIDGE/);
   assert.match(plugin, /ogb-ui\.json/);
   assert.match(plugin, /externalQuotaPanel/);
+  assert.match(plugin, /ogb-telemetry-status\.json/);
+  assert.match(plugin, /telemetry ready/);
   assert.match(plugin, /GEMINI\.md files/);
   assert.match(plugin, /MCP servers/);
   assert.doesNotMatch(plugin, /ext\s+cmd/);

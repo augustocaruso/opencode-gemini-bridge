@@ -90,17 +90,24 @@ Update depois que o `ogb` ja esta instalado:
 ogb --project "$PWD" self-update
 ogb --project "$PWD" self-update --dry-run
 ogb --project "$PWD" self-update --release v0.0.33
+ogb --project "$PWD" check-update
+ogb --project "$PWD" auto-update
 ```
 
 O `self-update` baixa a release escolhida, roda o bootstrap oficial e reaplica
 o perfil OGB/OpenCode. Ele nao copia secrets, sessoes ou conteudo unico do
 Gemini CLI da pessoa; esse conteudo continua sendo lido localmente pelo sync.
+O `auto-update` compara a versao local com a ultima GitHub Release, aplica a
+release nova quando existir e grava `.opencode/generated/ogb-update-status.json`;
+por padrao ele nao tenta instalar/atualizar o proprio OpenCode enquanto o
+OpenCode ja esta aberto.
 
 Dia a dia:
 
 ```bash
 ogb sync
 ogb doctor
+ogb pass
 ogb dashboard
 opencode
 opencode --agent YOLO
@@ -108,6 +115,12 @@ ogb launch --yolo
 ```
 
 O Rulesync entra como auxiliar opcional no `ogb import` e no `ogb sync`: o bridge roda a conversão em staging temporário, promove apenas arquivos seguros/gerenciados e mantém `GEMINI.md` como fonte de verdade.
+
+Use `ogb pass` quando quiser o caminho verde completo: ele roda setup local,
+sync, doctor, validação, segurança e dashboard, e grava
+`.opencode/generated/ogb-pass.json`. Se houver hooks Gemini revisados, rode
+`ogb pass --accept-hooks`; isso registra o hash atual, sem executar hook, e o
+doctor volta a avisar se o arquivo mudar depois.
 
 O `setup-ux` tambem deixa o OpenCode global com `default_agent: "YOLO"` e
 instala o agente YOLO globalmente, entao abrir `opencode` em uma pasta OGB sem
@@ -152,6 +165,7 @@ O sync tambem instala comandos de uso diario dentro do OpenCode:
 /status
 /validate
 /security-check
+/telemetry
 /trust-extension
 /update-extensions
 /upgrade-ogb
@@ -238,11 +252,45 @@ Setup OpenCode com sync no startup:
 ogb setup-opencode
 ```
 
-Esse comando instala um plugin local em `.opencode/plugins/`, grava a configuração em `.opencode/generated/ogb-startup-sync.json`, valida o comando de startup e roda `doctor`. Quando o OpenCode inicia, o plugin roda `ogb sync`, grava `.opencode/generated/ogb-plugin-status.json`, atualiza `.opencode/generated/ogb-dashboard.md` e mostra toast de sucesso/falha quando a TUI permite. O caminho mais confiável ainda é abrir pelo wrapper:
+Esse comando instala um plugin local em `.opencode/plugins/`, grava a configuração em `.opencode/generated/ogb-startup-sync.json`, valida o comando de startup e roda `doctor`. Quando o OpenCode inicia, o plugin roda `ogb auto-update`, aplica uma release nova do OGB se existir, avisa para reiniciar o OpenCode quando atualizar, roda `ogb sync`, grava `.opencode/generated/ogb-plugin-status.json` e `.opencode/generated/ogb-update-status.json`, registra telemetria local best-effort, atualiza `.opencode/generated/ogb-dashboard.md` e mostra toast de sucesso/falha quando a TUI permite. O caminho mais confiável ainda é abrir pelo wrapper:
 
 ```bash
 ogb launch
 ```
+
+Telemetria local-first:
+
+```bash
+ogb telemetry status
+ogb telemetry setup-email
+ogb telemetry preview --since 7d
+ogb telemetry send --since 7d
+ogb telemetry disable
+```
+
+Por padrao ela grava apenas registros locais redigidos em
+`~/.config/opencode-gemini-bridge/telemetry/`. Envio remoto so acontece quando
+voce configura `ogb telemetry enable --endpoint <url> --token <token>` ou
+quando o pacote foi montado pelo mantenedor com defaults privados. `disable`
+bloqueia esses defaults para aquela instalacao. O dashboard escreve
+`.opencode/generated/ogb-telemetry-status.json`, sem token.
+
+Para receber emails como no Medical Notes Workbench, rode
+`ogb telemetry setup-email`. Ele usa o Wrangler logado na maquina, cria/sube um
+Cloudflare Worker, coloca os secrets no Worker, configura Resend e grava um
+`telemetry.defaults.json` privado dentro do pacote. Quando voce distribui esse
+pacote privado, as instalacoes dos seus usuarios passam a enviar envelopes
+redigidos para o seu Worker por padrao. Eles recebem apenas o endpoint e o token
+de ingestao do Worker; a chave do Resend fica somente nos secrets da Cloudflare.
+
+O arquivo `artifacts/bridge-cli-skeleton/telemetry.defaults.json` e ignorado
+pelo Git para nao vazar o token, mas entra no pacote npm/tarball quando existe.
+Use `ogb telemetry setup-email --no-distribution-defaults` se quiser configurar
+so a sua maquina sem autoativar builds privados.
+
+Para releases montadas pelo GitHub Actions, grave esse mesmo JSON no secret
+`OGB_TELEMETRY_DEFAULTS_JSON`. O workflow restaura o arquivo antes de criar o
+tarball/zip, sem mostrar o token nos logs.
 
 ## Estrutura do pacote
 
