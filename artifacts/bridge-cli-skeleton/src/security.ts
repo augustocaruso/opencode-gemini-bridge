@@ -214,12 +214,12 @@ function checkYoloAgent(projectRoot: string): SecurityFinding {
   }
 
   const text = fs.readFileSync(yoloPath, "utf8");
-  const required = ["external_directory: ask", "task: ask", "edit: allow", "bash: allow", "mode: primary"];
+  const required = ["edit: allow", "bash: allow", "mode: primary"];
   const missing = required.filter((needle) => !text.includes(needle));
   return {
     name: "YOLO guardrails",
     status: missing.length ? "warn" : "pass",
-    message: missing.length ? `YOLO agent is missing expected guardrail(s): ${missing.join(", ")}.` : "YOLO can edit/run commands, but still asks for external directories and tasks.",
+    message: missing.length ? `YOLO agent is missing expected guardrail(s): ${missing.join(", ")}.` : "YOLO can edit/run commands; task and external_directory are user-tunable.",
     files: [".opencode/agents/YOLO.md"],
   };
 }

@@ -82,6 +82,25 @@ test("syncToOpenCode projects built-in YOLO agent", () => {
   assert.match(yolo, /external_directory: ask/);
 });
 
+test("syncToOpenCode accepts user-tuned YOLO task and external directory permissions", () => {
+  const projectRoot = tempProject();
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));
+
+  syncToOpenCode({ projectRoot, homeDir, rulesyncMode: "off" });
+  const yoloPath = path.join(projectRoot, ".opencode", "agents", "YOLO.md");
+  const customYolo = fs.readFileSync(yoloPath, "utf8")
+    .replace("  task: ask", "  task: allow")
+    .replace("  external_directory: ask", "  external_directory: allow");
+  fs.writeFileSync(yoloPath, customYolo, "utf8");
+
+  const report = syncToOpenCode({ projectRoot, homeDir, rulesyncMode: "off" });
+  const yolo = fs.readFileSync(yoloPath, "utf8");
+
+  assert.equal(report.warnings.some((warning) => warning.includes(".opencode/agents/YOLO.md")), false);
+  assert.match(yolo, /task: allow/);
+  assert.match(yolo, /external_directory: allow/);
+});
+
 test("syncToOpenCode removes previously managed non-YOLO built-in agents", () => {
   const projectRoot = tempProject();
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));

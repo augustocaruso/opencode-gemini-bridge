@@ -199,6 +199,19 @@ function copyDir(src: string, dst: string, extensionDir: string): void {
   copyEntry(src, dst);
 }
 
+function normalizeYoloOptionalPermissions(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*(task|external_directory)\s*:/.test(line))
+    .join("\n")
+    .trimEnd();
+}
+
+function hasOnlyOptionalYoloPermissionDrift(file: BuiltInTextFile, currentText: string): boolean {
+  if (file.name !== "YOLO") return false;
+  return normalizeYoloOptionalPermissions(currentText) === normalizeYoloOptionalPermissions(file.content);
+}
+
 function projectExtensionSkills(options: { projectRoot: string; homeDir: string; dryRun?: boolean; force?: boolean }): { promoted: string[]; warnings: string[] } {
   const extensionSkills = listGeminiExtensionSkillDirs(options.homeDir);
   const warnings: string[] = [];
@@ -302,6 +315,16 @@ function projectBuiltInFiles(options: {
     const previousHash = managedHashFor(state, relPath, "ogb");
     if (fs.existsSync(targetPath) && !options.force) {
       const currentHash = sha256File(targetPath);
+      const currentText = fs.readFileSync(targetPath, "utf8");
+      if (hasOnlyOptionalYoloPermissionDrift(file, currentText)) {
+        upsertManagedFile(state, {
+          path: relPath,
+          sha256: currentHash,
+          source: "ogb",
+        });
+        promoted.push(relPath);
+        continue;
+      }
       if (previousHash !== currentHash) {
         warnings.push(`${options.label} conflict: ${relPath} exists or was edited manually; use --force to overwrite`);
         continue;

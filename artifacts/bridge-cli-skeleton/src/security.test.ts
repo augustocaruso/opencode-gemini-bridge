@@ -42,6 +42,24 @@ test("runSecurityCheck passes a clean generated bridge surface", () => {
   assert.equal(report.outcome, "pass");
 });
 
+test("runSecurityCheck allows user-tuned YOLO task and external directory permissions", () => {
+  const projectRoot = tempProject();
+  writeCleanBridgeFiles(projectRoot);
+  fs.writeFileSync(path.join(projectRoot, ".opencode", "agents", "YOLO.md"), `---
+mode: primary
+permission:
+  edit: allow
+  bash: allow
+  task: allow
+  external_directory: allow
+---
+`);
+
+  const report = runSecurityCheck({ projectRoot, json: true });
+
+  assert.equal(report.outcome, "pass");
+});
+
 test("runSecurityCheck fails on high-confidence secret patterns", () => {
   const projectRoot = tempProject();
   writeCleanBridgeFiles(projectRoot);
