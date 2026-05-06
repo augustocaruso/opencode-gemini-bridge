@@ -1,6 +1,6 @@
 param(
   [string]$Project = (Get-Location).Path,
-  [string]$Prefix = $(if ($env:OGB_PREFIX) { $env:OGB_PREFIX } else { "" }),
+  [string]$Prefix = "",
   [string]$Rulesync = "auto",
   [switch]$NoSetup,
   [switch]$NoUx,
@@ -17,13 +17,23 @@ function Require-Command($Name) {
 }
 
 function Invoke-NativeCommand($Command, [string[]]$Arguments) {
-  $Output = & $Command @Arguments 2>&1
-  $ExitCode = $LASTEXITCODE
-  if ($Output) {
-    $Output | ForEach-Object { Write-Host $_ }
-  }
-  if ($ExitCode -ne 0) {
-    throw "$Command $($Arguments -join ' ') failed with exit code $ExitCode."
+  $StdOut = Join-Path ([System.IO.Path]::GetTempPath()) ("ogb-native-out-" + [System.Guid]::NewGuid().ToString("N") + ".log")
+  $StdErr = Join-Path ([System.IO.Path]::GetTempPath()) ("ogb-native-err-" + [System.Guid]::NewGuid().ToString("N") + ".log")
+  try {
+    & $Command @Arguments > $StdOut 2> $StdErr
+    $ExitCode = $LASTEXITCODE
+    if (Test-Path $StdOut) {
+      Get-Content -Path $StdOut -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+    }
+    if (Test-Path $StdErr) {
+      Get-Content -Path $StdErr -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+    }
+    if ($ExitCode -ne 0) {
+      throw "$Command $($Arguments -join ' ') failed with exit code $ExitCode."
+    }
+  } finally {
+    Remove-Item -Force $StdOut -ErrorAction SilentlyContinue
+    Remove-Item -Force $StdErr -ErrorAction SilentlyContinue
   }
 }
 
@@ -176,14 +186,39 @@ function Install-StableCli($SourceDir, $InstallDir) {
   Copy-Item -Path (Join-Path $SourceDir "dist") -Destination (Join-Path $InstallDir "dist") -Recurse -Force
 
   Invoke-NativeCommand "npm" @("--prefix", $InstallDir, "install", "--omit=dev")
-  $CliTarget = Join-Path $InstallDir "dist\cli.js"
-  if ($CliTarget -match "\r|\n|added \d+ packages|audited \d+ packages") {
-    throw "Resolved CLI target was contaminated by command output: $CliTarget"
+  $ExpectedCliTarget = Join-Path $InstallDir "dist\cli.js"
+  if (-not (Test-Path $ExpectedCliTarget)) {
+    throw "Expected built CLI at $ExpectedCliTarget, but it was not found."
   }
-  if (-not (Test-Path $CliTarget)) {
-    throw "Expected built CLI at $CliTarget, but it was not found."
+}
+
+function Test-CleanCliPath($PathValue, $Label) {
+  if (-not $PathValue) {
+    throw "$Label is empty."
   }
-  return $CliTarget
+  if ($PathValue -match "\r|\n|added \d+ packages|audited \d+ packages|npm fund|npm audit") {
+    throw "$Label was contaminated by command output: $PathValue"
+  }
+  if (-not (Test-Path $PathValue)) {
+    throw "$Label does not exist: $PathValue"
+  }
+}
+
+function Test-CleanOgbShim($ShimPath, $CliTarget) {
+  if (-not (Test-Path $ShimPath)) {
+    throw "Expected ogb.cmd under $ShimPath, but it was not found."
+  }
+  $Content = Get-Content -Raw -Path $ShimPath
+  if ($Content -match "added \d+ packages|audited \d+ packages|npm fund|npm audit") {
+    throw "Generated ogb shim contains npm output: $ShimPath"
+  }
+  if ($Content -notmatch [regex]::Escape($CliTarget)) {
+    throw "Generated ogb shim does not point at expected CLI target: $CliTarget"
+  }
+  $NonEmptyLines = @($Content -split "\r?\n" | Where-Object { $_.Trim() })
+  if ($NonEmptyLines.Count -ne 2) {
+    throw "Generated ogb shim should contain exactly 2 non-empty lines, found $($NonEmptyLines.Count): $ShimPath"
+  }
 }
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -213,18 +248,12 @@ Invoke-NativeCommand "npm" @("--prefix", $CliDir, "run", "build")
 
 Write-Host "Installing ogb into a stable local folder..."
 $CliInstallDir = Join-Path (Join-Path $HOME ".ai\opencode-pack") "opencode-gemini-bridge-cli"
-$CliTarget = Install-StableCli $CliDir $CliInstallDir
-$CliTargetValues = @($CliTarget)
-if ($CliTargetValues.Count -ne 1) {
-  throw "Install-StableCli returned $($CliTargetValues.Count) values instead of exactly one CLI path."
-}
-$CliTarget = [string]$CliTargetValues[0]
-if ($CliTarget -match "\r|\n|added \d+ packages|audited \d+ packages") {
-  throw "Install-StableCli returned a contaminated CLI path: $CliTarget"
-}
-if (-not (Test-Path $CliTarget)) {
-  throw "Install-StableCli returned a missing CLI path: $CliTarget"
-}
+Install-StableCli $CliDir $CliInstallDir
+$CliTarget = Join-Path $CliInstallDir "dist\cli.js"
+Test-CleanCliPath $CliTarget "CLI target"
+Write-Host "Prefix: $Prefix"
+Write-Host "CliInstallDir: $CliInstallDir"
+Write-Host "CliTarget: $CliTarget"
 
 Write-Host "Registering ogb command in $Prefix..."
 Remove-Item -Force (Join-Path $Prefix "ogb") -ErrorAction SilentlyContinue
@@ -235,9 +264,8 @@ Remove-Item -Recurse -Force (Join-Path $Prefix "node_modules\opencode-gemini-bri
 $OgbBin = Join-Path $Prefix "ogb.cmd"
 "@ECHO off`r`nnode `"$CliTarget`" %*`r`n" | Set-Content -Path $OgbBin -Encoding ASCII
 
-if (-not (Test-Path $OgbBin)) {
-  throw "Expected ogb.cmd under $Prefix, but it was not found."
-}
+Test-CleanOgbShim $OgbBin $CliTarget
+Write-Host "OgbBin: $OgbBin"
 
 $InstalledVersionOutput = & $OgbBin --version 2>&1
 $InstalledVersionExit = $LASTEXITCODE

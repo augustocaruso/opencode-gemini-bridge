@@ -237,6 +237,7 @@ function validateWindowsInstaller(projectRoot: string, checks: ValidationCheck[]
     "Require-Command \"node\"",
     "Require-Command \"npm\"",
     "Invoke-NativeCommand",
+    "ogb-native-out-",
     "Test-WritableDir",
     "Resolve-AppDataNpmPrefix",
     "Resolve-DefaultPrefix",
@@ -244,7 +245,10 @@ function validateWindowsInstaller(projectRoot: string, checks: ValidationCheck[]
     "Invoke-NativeCommand \"npm\" @(\"--prefix\", $CliDir, \"install\")",
     "opencode-gemini-bridge-cli",
     "Invoke-NativeCommand \"npm\" @(\"--prefix\", $InstallDir, \"install\", \"--omit=dev\")",
-    "Install-StableCli returned $($CliTargetValues.Count) values",
+    "Install-StableCli $CliDir $CliInstallDir",
+    "$CliTarget = Join-Path $CliInstallDir \"dist\\cli.js\"",
+    "Test-CleanCliPath $CliTarget \"CLI target\"",
+    "Test-CleanOgbShim $OgbBin $CliTarget",
     "Installed ogb verification returned no version output.",
     "node `\"$CliTarget`\" %*",
     "ogb.cmd",
@@ -261,7 +265,11 @@ function validateWindowsInstaller(projectRoot: string, checks: ValidationCheck[]
   ];
   const missing = required.filter((needle) => !text.includes(needle));
   const forbidden = [
+    "[string]$Prefix = $(if ($env:OGB_PREFIX)",
     "npm --prefix $InstallDir install --omit=dev",
+    "return $CliTarget",
+    "$CliTarget = Install-StableCli",
+    "Install-StableCli returned $($CliTargetValues.Count) values",
     "$InstalledVersion.Trim()",
   ].filter((needle) => text.includes(needle));
   checks.push({
