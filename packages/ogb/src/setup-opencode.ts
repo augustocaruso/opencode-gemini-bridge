@@ -252,11 +252,41 @@ function telemetryPlanFrom(syncPlan) {
   };
 }
 
+function cmdQuote(value) {
+  const escaped = String(value)
+    .replace(/"/g, '""')
+    .replace(/\^/g, "^^")
+    .replace(/%/g, "^%");
+  return '"' + escaped + '"';
+}
+
+function cmdToken(value, command = false) {
+  const text = String(value);
+  if (command && /^[A-Za-z0-9_.-]+$/.test(text)) return text;
+  if (!command && /^[A-Za-z0-9_./:@+=-]+$/.test(text)) return text;
+  return cmdQuote(text);
+}
+
+function commandForPlatform(command, args) {
+  if (process.platform !== "win32") return { command, args };
+
+  const ext = path.basename(String(command)).toLowerCase().match(/\.[^.]+$/)?.[0];
+  if (ext === ".exe") return { command, args };
+
+  const comspec = process.env.ComSpec || process.env.COMSPEC || "cmd.exe";
+  const commandLine = ["call", cmdToken(command, true), ...args.map((arg) => cmdToken(arg))].join(" ");
+  return {
+    command: comspec,
+    args: ["/d", "/v:off", "/c", commandLine],
+  };
+}
+
 function runProcess({ cwd, plan, input }) {
   return new Promise((resolve) => {
     let settled = false;
     const startedAt = Date.now();
-    const child = spawn(plan.command, plan.args, {
+    const normalized = commandForPlatform(plan.command, plan.args);
+    const child = spawn(normalized.command, normalized.args, {
       cwd,
       env: process.env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -284,18 +314,21 @@ function runProcess({ cwd, plan, input }) {
         ok: false,
         exitCode: null,
         error: error.message,
+        signal: null,
         durationMs: Date.now() - startedAt,
         stdout,
         stderr,
       });
     });
 
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
       if (settled) return;
       settled = true;
       resolve({
         ok: code === 0,
         exitCode: code,
+        signal,
+        error: code === null && signal ? "Process terminated by signal " + signal : undefined,
         durationMs: Date.now() - startedAt,
         stdout,
         stderr,

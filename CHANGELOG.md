@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.0.49 - Windows startup plugin process runner
+
+- Faz o plugin de startup sync usar `cmd /c call` no Windows para executar shims `.cmd` como `ogb.cmd`, evitando falha instantanea com `exit code null`.
+- Registra signal/erro quando o processo filho termina sem exit code numerico, deixando o diagnostico do startup sync mais claro.
+- Faz `ogb reset` limpar status antigos de update, validation e security para o dashboard nao continuar vermelho por relatórios obsoletos.
+
 ## 0.0.48 - Windows npm warning tolerance
 
 - Faz o instalador Windows capturar stdout/stderr de comandos nativos sem deixar warnings do `npm.cmd` virarem erro fatal no PowerShell.

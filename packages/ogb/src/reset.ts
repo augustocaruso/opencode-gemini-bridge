@@ -109,6 +109,9 @@ function clearStartupSyncStatus(homeDir: string): void {
   const paths = resolveProjectPaths(homeDir, homeDir);
   fs.rmSync(paths.pluginStatusPath, { force: true });
   fs.rmSync(path.join(paths.generatedDir, "ogb-startup-sync.lock"), { force: true });
+  fs.rmSync(paths.updateStatusPath, { force: true });
+  fs.rmSync(paths.validationPath, { force: true });
+  fs.rmSync(paths.securityPath, { force: true });
 }
 
 async function promptResetConfirmation(plan: ResetPlan): Promise<boolean> {

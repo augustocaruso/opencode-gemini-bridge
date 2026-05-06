@@ -93,6 +93,15 @@ test("runReset cleans home project artifacts and recreates global config", async
     state: "fail",
     exitCode: null,
   }) + "\n");
+  writeFile(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-update-status.json"), JSON.stringify({
+    status: "error",
+  }) + "\n");
+  writeFile(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-validation.json"), JSON.stringify({
+    outcome: "fail",
+  }) + "\n");
+  writeFile(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-security.json"), JSON.stringify({
+    outcome: "fail",
+  }) + "\n");
 
   const report = await runReset({
     homeDir,
@@ -126,6 +135,9 @@ test("runReset cleans home project artifacts and recreates global config", async
   assert.deepEqual(readJson(path.join(homeDir, ".config", "opencode", "tui.json")).plugin, [TUI_SIDEBAR_PLUGIN_SPEC]);
   assert.equal(fs.existsSync(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-startup-sync.json")), true);
   assert.equal(fs.existsSync(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-plugin-status.json")), false);
+  assert.equal(fs.existsSync(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-update-status.json")), false);
+  assert.equal(fs.existsSync(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-validation.json")), false);
+  assert.equal(fs.existsSync(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-security.json")), false);
   assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "plugins", "ogb-startup-sync.js")), false);
   assert.match(fs.readFileSync(path.join(homeDir, ".config", "zsh", ".zshrc"), "utf8"), /OPENCODE_ENABLE_EXA=1/);
   assert.equal(report.doctor?.warnings.some((warning) => warning.includes("Last OpenCode startup sync failed")), false);
