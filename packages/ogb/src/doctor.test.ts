@@ -28,6 +28,24 @@ test("runDoctor prints one warning line for duplicate skill names", () => {
   assert.match(duplicateWarnings[0], /\.opencode\/skill\/gemini-importer/);
 });
 
+test("runDoctor counts OpenCode skills without double-counting Gemini sources in home mode", () => {
+  const homeDir = tempRoot();
+  for (const root of [
+    path.join(homeDir, ".gemini", "skills", "projected"),
+    path.join(homeDir, ".config", "opencode", "skills", "projected"),
+    path.join(homeDir, ".config", "opencode", "skills", "opencode-only"),
+    path.join(homeDir, ".opencode", "skills", "legacy-home-project"),
+  ]) {
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, "SKILL.md"), "---\nname: skill\n---\n", "utf8");
+  }
+
+  const report = runDoctor({ projectRoot: homeDir, homeDir, silent: true });
+
+  assert.equal(report.counts.skills.ok, 2);
+  assert.equal(report.warnings.some((warning) => warning.includes("legacy-home-project")), false);
+});
+
 test("runDoctor matches OpenCode plugins by package name across versions", () => {
   const projectRoot = tempRoot();
   const homeDir = tempRoot();

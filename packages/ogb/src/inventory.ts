@@ -166,6 +166,10 @@ function geminiRoot(projectRoot: string, homeDir: string, scope: ResourceScope, 
   return path.join(scope === "project" ? projectRoot : homeDir, ".gemini", kind);
 }
 
+function scopedRoots<T extends [ResourceSource, ResourceScope, string] | [ResourceScope, string]>(homeMode: boolean, roots: T[]): T[] {
+  return homeMode ? roots.filter((root) => root[root.length - 2] !== "project") : roots;
+}
+
 function markDuplicateNames<T extends { name: string; path: string; source?: ResourceSource; status: ResourceStatus; message?: string }>(items: T[]): T[] {
   const counts = new Map<string, number>();
   for (const item of items) {
@@ -184,8 +188,8 @@ function markDuplicateNames<T extends { name: string; path: string; source?: Res
   });
 }
 
-function collectSkills(projectRoot: string, homeDir: string): SkillInfo[] {
-  const roots = uniqueResourceRoots<Array<[ResourceSource, ResourceScope, string]>[number]>([
+function collectSkills(projectRoot: string, homeDir: string, homeMode: boolean): SkillInfo[] {
+  const roots = uniqueResourceRoots(scopedRoots(homeMode, [
     ["gemini", "project", geminiRoot(projectRoot, homeDir, "project", "skills")],
     ["opencode", "project", path.join(projectRoot, ".opencode", "skills")],
     ["opencode", "project", path.join(projectRoot, ".opencode", "skill")],
@@ -194,7 +198,7 @@ function collectSkills(projectRoot: string, homeDir: string): SkillInfo[] {
     ["opencode", "global", path.join(homeDir, ".config", "opencode", "skills")],
     ["opencode", "global", path.join(homeDir, ".config", "opencode", "skill")],
     ["opencode", "global", path.join(homeDir, ".agents", "skills")],
-  ]);
+  ]));
 
   return markDuplicateNames(roots.flatMap(([source, scope, root]) => listDirs(root).map((skillDir) => {
     const skillFile = path.join(skillDir, "SKILL.md");
@@ -209,15 +213,15 @@ function collectSkills(projectRoot: string, homeDir: string): SkillInfo[] {
   })));
 }
 
-function collectAgents(projectRoot: string, homeDir: string): AgentInfo[] {
-  const roots = uniqueResourceRoots<Array<[ResourceSource, ResourceScope, string]>[number]>([
+function collectAgents(projectRoot: string, homeDir: string, homeMode: boolean): AgentInfo[] {
+  const roots = uniqueResourceRoots(scopedRoots(homeMode, [
     ["gemini", "project", geminiRoot(projectRoot, homeDir, "project", "agents")],
     ["opencode", "project", path.join(projectRoot, ".opencode", "agents")],
     ["opencode", "project", path.join(projectRoot, ".opencode", "agent")],
     ["gemini", "global", geminiRoot(projectRoot, homeDir, "global", "agents")],
     ["opencode", "global", path.join(homeDir, ".config", "opencode", "agents")],
     ["opencode", "global", path.join(homeDir, ".config", "opencode", "agent")],
-  ]);
+  ]));
 
   return markDuplicateNames(roots.flatMap(([source, scope, root]) => listFilesWithExtensions(root, [".md"]).map((filePath) => ({
     name: path.basename(filePath, ".md"),
@@ -229,15 +233,15 @@ function collectAgents(projectRoot: string, homeDir: string): AgentInfo[] {
   } satisfies AgentInfo))));
 }
 
-function collectCommands(projectRoot: string, homeDir: string): CommandInfo[] {
-  const roots = uniqueResourceRoots<Array<[ResourceSource, ResourceScope, string]>[number]>([
+function collectCommands(projectRoot: string, homeDir: string, homeMode: boolean): CommandInfo[] {
+  const roots = uniqueResourceRoots(scopedRoots(homeMode, [
     ["gemini", "project", geminiRoot(projectRoot, homeDir, "project", "commands")],
     ["opencode", "project", path.join(projectRoot, ".opencode", "commands")],
     ["opencode", "project", path.join(projectRoot, ".opencode", "command")],
     ["gemini", "global", geminiRoot(projectRoot, homeDir, "global", "commands")],
     ["opencode", "global", path.join(homeDir, ".config", "opencode", "commands")],
     ["opencode", "global", path.join(homeDir, ".config", "opencode", "command")],
-  ]);
+  ]));
 
   return markDuplicateNames(roots.flatMap(([source, scope, root]) => listFilesWithExtensions(root, [".md", ".toml"], true).map((filePath) => ({
     name: toPosix(path.relative(root, filePath)).slice(0, -path.extname(filePath).length),
@@ -287,11 +291,11 @@ function collectMcps(projectRoot: string, homeDir: string): GeminiMcpServer[] {
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function collectHooks(projectRoot: string, homeDir: string): HookInfo[] {
-  const settings = uniqueRootEntries<Array<[ResourceScope, string]>[number]>([
+function collectHooks(projectRoot: string, homeDir: string, homeMode: boolean): HookInfo[] {
+  const settings = uniqueRootEntries(scopedRoots(homeMode, [
     ["project", path.join(projectRoot, ".gemini", "settings.json")],
     ["global", path.join(homeDir, ".gemini", "settings.json")],
-  ]);
+  ]));
   const hooks: HookInfo[] = [];
 
   for (const [scope, settingsPath] of settings) {
@@ -313,11 +317,11 @@ function collectHooks(projectRoot: string, homeDir: string): HookInfo[] {
   return hooks;
 }
 
-function collectExtensions(projectRoot: string, homeDir: string): ExtensionInfo[] {
-  const roots = uniqueRootEntries<Array<[ResourceScope, string]>[number]>([
+function collectExtensions(projectRoot: string, homeDir: string, homeMode: boolean): ExtensionInfo[] {
+  const roots = uniqueRootEntries(scopedRoots(homeMode, [
     ["project", path.join(projectRoot, ".gemini", "extensions")],
     ["global", path.join(homeDir, ".gemini", "extensions")],
-  ]);
+  ]));
 
   return roots.flatMap(([scope, root]) => listDirs(root).map((extensionDir) => ({
     name: path.basename(extensionDir),
@@ -330,11 +334,11 @@ function collectExtensions(projectRoot: string, homeDir: string): ExtensionInfo[
   } satisfies ExtensionInfo)));
 }
 
-function collectExtensionGeminiFiles(projectRoot: string, homeDir: string): string[] {
-  const roots = uniqueRootEntries<Array<[ResourceScope, string]>[number]>([
+function collectExtensionGeminiFiles(projectRoot: string, homeDir: string, homeMode: boolean): string[] {
+  const roots = uniqueRootEntries(scopedRoots(homeMode, [
     ["project", path.join(projectRoot, ".gemini", "extensions")],
     ["global", path.join(homeDir, ".gemini", "extensions")],
-  ]);
+  ]));
 
   return roots.flatMap(([, root]) => listDirs(root)
     .map((extensionDir) => path.join(extensionDir, "GEMINI.md"))
@@ -362,11 +366,11 @@ export function buildInventory(options: InventoryOptions = {}): Inventory {
   const paths = resolveProjectPaths(options.projectRoot, options.homeDir);
   const geminiFiles = [
     path.join(paths.homeDir, ".gemini", "GEMINI.md"),
-    path.join(paths.projectRoot, "GEMINI.md"),
-    ...collectExtensionGeminiFiles(paths.projectRoot, paths.homeDir),
+    ...(paths.homeMode ? [] : [path.join(paths.projectRoot, "GEMINI.md")]),
+    ...collectExtensionGeminiFiles(paths.projectRoot, paths.homeDir, paths.homeMode),
   ].filter(exists);
 
-  if (geminiFiles.length === 0 && exists(defaultGeminiInput(paths.projectRoot, paths.homeDir))) {
+  if (!paths.homeMode && geminiFiles.length === 0 && exists(defaultGeminiInput(paths.projectRoot, paths.homeDir))) {
     geminiFiles.push(defaultGeminiInput(paths.projectRoot, paths.homeDir));
   }
 
@@ -376,11 +380,11 @@ export function buildInventory(options: InventoryOptions = {}): Inventory {
     geminiFiles,
     imports: collectImports(geminiFiles, paths.homeDir),
     mcps: collectMcps(paths.projectRoot, paths.homeDir),
-    skills: collectSkills(paths.projectRoot, paths.homeDir),
-    agents: collectAgents(paths.projectRoot, paths.homeDir),
-    commands: collectCommands(paths.projectRoot, paths.homeDir),
-    hooks: collectHooks(paths.projectRoot, paths.homeDir),
-    extensions: collectExtensions(paths.projectRoot, paths.homeDir),
+    skills: collectSkills(paths.projectRoot, paths.homeDir, paths.homeMode),
+    agents: collectAgents(paths.projectRoot, paths.homeDir, paths.homeMode),
+    commands: collectCommands(paths.projectRoot, paths.homeDir, paths.homeMode),
+    hooks: collectHooks(paths.projectRoot, paths.homeDir, paths.homeMode),
+    extensions: collectExtensions(paths.projectRoot, paths.homeDir, paths.homeMode),
   };
 }
 

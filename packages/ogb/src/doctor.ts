@@ -128,6 +128,10 @@ function statusCounts<T extends { status: ResourceStatus }>(items: T[]): StatusC
   }, { ok: 0, warning: 0, error: 0, needs_review: 0 });
 }
 
+function opencodeStatusCounts<T extends { source?: string; status: ResourceStatus }>(items: T[]): StatusCounts {
+  return statusCounts(items.filter((item) => item.source === "opencode"));
+}
+
 function hookIsTrusted(hook: Inventory["hooks"][number], projectRoot: string, homeDir: string): boolean {
   const trust = readTrustFile(projectRoot, homeDir);
   const record = trust.hooks?.[hookTrustKey(hook)];
@@ -574,9 +578,9 @@ export function runDoctor(options: DoctorOptions = {}): DoctorReport {
       geminiFiles: inv.geminiFiles.length,
       imports: statusCounts(inv.imports),
       mcps: statusCounts(inv.mcps),
-      skills: statusCounts(inv.skills),
-      agents: statusCounts(inv.agents),
-      commands: statusCounts(inv.commands),
+      skills: opencodeStatusCounts(inv.skills),
+      agents: opencodeStatusCounts(inv.agents),
+      commands: opencodeStatusCounts(inv.commands),
       hooks: statusCounts(inv.hooks),
       extensions: statusCounts(inv.extensions),
     },

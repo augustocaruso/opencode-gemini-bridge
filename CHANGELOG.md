@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.0.58 - Contagem global sem somar fonte e destino
+
+- Faz o inventario tratar a home como global de verdade, evitando `scope: project` para recursos em `~/.gemini` quando `--project` e a home.
+- Para de incluir `~/GEMINI.md`, `~/.opencode/*` e outras raizes de projeto quando o OGB esta rodando no home/global.
+- Mantem o inventario mostrando fontes Gemini e destinos OpenCode, mas muda as contagens do doctor/dashboard para skills, agentes e comandos OpenCode de destino.
+- Evita que uma skill fonte em `~/.gemini/skills` e sua copia em `~/.config/opencode/skills` sejam somadas como duas skills do OpenCode.
+
 ## 0.0.57 - Windows cmd shims com argumentos verbatim
 
 - Envolve a linha inteira de `.cmd/.bat` no formato `""shim.cmd" args"` esperado pelo `cmd.exe /d /s /c`.
