@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.48 - Windows npm warning tolerance
+
+- Faz o instalador Windows capturar stdout/stderr de comandos nativos sem deixar warnings do `npm.cmd` virarem erro fatal no PowerShell.
+- Mantem a decisao de falha baseada no exit code real do processo, para `npm install` poder concluir mesmo quando dependencias emitem avisos de deprecacao.
+
 ## 0.0.47 - Windows reset cleanup and command runner
 
 - Corrige o runner Windows para executar `.cmd` via `cmd /c call` sem aspas escapadas como texto literal, e executa `.exe` diretamente.

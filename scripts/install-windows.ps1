@@ -31,23 +31,35 @@ function Resolve-NpmCommand {
 }
 
 function Invoke-NativeCommand($Command, [string[]]$Arguments) {
-  $StdOut = Join-Path ([System.IO.Path]::GetTempPath()) ("ogb-native-out-" + [System.Guid]::NewGuid().ToString("N") + ".log")
-  $StdErr = Join-Path ([System.IO.Path]::GetTempPath()) ("ogb-native-err-" + [System.Guid]::NewGuid().ToString("N") + ".log")
+  $Output = @()
+  $ExitCode = 0
+  $PreviousErrorActionPreference = $ErrorActionPreference
+  $HadNativePreference = Test-Path variable:PSNativeCommandUseErrorActionPreference
+  if ($HadNativePreference) {
+    $PreviousNativePreference = $PSNativeCommandUseErrorActionPreference
+    $PSNativeCommandUseErrorActionPreference = $false
+  }
   try {
-    & $Command @Arguments > $StdOut 2> $StdErr
+    $ErrorActionPreference = "Continue"
+    $Output = @(& $Command @Arguments 2>&1)
     $ExitCode = $LASTEXITCODE
-    if (Test-Path $StdOut) {
-      Get-Content -Path $StdOut -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
-    }
-    if (Test-Path $StdErr) {
-      Get-Content -Path $StdErr -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
-    }
-    if ($ExitCode -ne 0) {
-      throw "$Command $($Arguments -join ' ') failed with exit code $ExitCode."
-    }
   } finally {
-    Remove-Item -Force $StdOut -ErrorAction SilentlyContinue
-    Remove-Item -Force $StdErr -ErrorAction SilentlyContinue
+    $ErrorActionPreference = $PreviousErrorActionPreference
+    if ($HadNativePreference) {
+      $PSNativeCommandUseErrorActionPreference = $PreviousNativePreference
+    }
+  }
+
+  foreach ($Line in $Output) {
+    if ($Line -is [System.Management.Automation.ErrorRecord]) {
+      Write-Host $Line.Exception.Message
+    } else {
+      Write-Host $Line
+    }
+  }
+
+  if ($ExitCode -ne 0) {
+    throw "$Command $($Arguments -join ' ') failed with exit code $ExitCode."
   }
 }
 
