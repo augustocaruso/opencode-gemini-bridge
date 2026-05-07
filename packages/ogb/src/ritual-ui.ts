@@ -46,6 +46,7 @@ export interface RitualProgressModel {
   subtitle: string;
   steps: RitualProgressStep[];
   note: string;
+  active: string;
 }
 
 export interface RitualUiOptions {
@@ -115,6 +116,11 @@ function colorFromTone(tone: RitualTone): string {
   return "blue";
 }
 
+function frameWidth(): number {
+  const columns = process.stdout.columns ?? 100;
+  return Math.max(20, Math.min(columns, 96));
+}
+
 function statusMark(tone: RitualTone): string {
   if (tone === "pass") return "OK";
   if (tone === "warn") return "!!";
@@ -126,7 +132,7 @@ function statusMark(tone: RitualTone): string {
 function progressMark(status: RitualProgressStatus | undefined): string {
   if (status === "running") return "RUN";
   if (status === "waiting") return "WAIT";
-  return "NEXT";
+  return "TODO";
 }
 
 function progressTone(status: RitualProgressStatus | undefined): RitualTone {
@@ -271,11 +277,13 @@ export function ritualViewModel(kind: RitualKind, report: InstallReport | PassRe
 }
 
 export function ritualProgressModel(kind: RitualKind, subtitle: string, steps: RitualProgressStep[]): RitualProgressModel {
+  const active = steps.find((step) => step.status === "running")?.label ?? steps[0]?.label ?? "prepare ritual";
   return {
     title: `${titleForKind(kind)} in progress`,
     subtitle,
     steps: steps.length > 0 ? steps : [{ label: "prepare ritual", status: "running" }],
-    note: "Working now. The final report will appear when this ritual finishes.",
+    note: "The final report will appear when this ritual finishes.",
+    active,
   };
 }
 
@@ -320,13 +328,18 @@ function StepRow(props: { step: RitualStep }) {
 }
 
 function ProgressStepRow(props: { step: RitualProgressStep }) {
-  const tone = progressTone(props.step.status);
   return React.createElement(
     Box,
-    { flexDirection: "row" },
-    React.createElement(Text, { color: colorFromTone(tone), bold: true }, progressMark(props.step.status).padEnd(6)),
-    React.createElement(Text, { bold: props.step.status === "running" }, props.step.label),
-    props.step.detail ? React.createElement(Text, { color: "gray" }, `  ${props.step.detail}`) : null,
+    { flexDirection: "column", marginBottom: 0 },
+    React.createElement(
+      Box,
+      { flexDirection: "row" },
+      React.createElement(Text, { color: "gray" }, `${progressMark(props.step.status).padEnd(6)} `),
+      React.createElement(Text, { bold: true }, props.step.label),
+    ),
+    props.step.detail ? React.createElement(Box, { marginLeft: 7 },
+      React.createElement(Text, { color: "gray" }, props.step.detail),
+    ) : null,
   );
 }
 
@@ -336,7 +349,7 @@ function RitualApp(props: { model: RitualViewModel }) {
   const children: React.ReactNode[] = [
     React.createElement(
       Box,
-      { key: "hero", borderStyle: "round", borderColor, paddingX: 2, paddingY: 1, flexDirection: "column" },
+      { key: "hero", borderStyle: "round", borderColor: "gray", paddingX: 1, paddingY: 0, flexDirection: "column", width: frameWidth() },
       React.createElement(
         Box,
         { flexDirection: "row" },
@@ -346,7 +359,7 @@ function RitualApp(props: { model: RitualViewModel }) {
       React.createElement(Text, { color: "gray" }, model.subtitle),
       React.createElement(
         Box,
-        { flexDirection: "row", marginTop: 1, flexWrap: "wrap" },
+        { flexDirection: "row", flexWrap: "wrap" },
         ...model.metrics.map((metric) => React.createElement(MetricRow, { key: metric.label, metric })),
       ),
     ),
@@ -355,60 +368,72 @@ function RitualApp(props: { model: RitualViewModel }) {
   if (model.steps.length > 0) {
     children.push(
       React.createElement(Text, { key: "space-steps" }, ""),
-      React.createElement(SectionTitle, { key: "steps-title" }, "Ritual"),
-      ...model.steps.slice(0, 12).map((step) => React.createElement(StepRow, { key: step.label, step })),
+      React.createElement(Box, { key: "steps-wrap", flexDirection: "column", marginLeft: 1 },
+        React.createElement(SectionTitle, null, "Ritual"),
+        ...model.steps.slice(0, 12).map((step) => React.createElement(StepRow, { key: step.label, step })),
+      ),
     );
   }
 
   if (model.callouts.length > 0) {
     children.push(
       React.createElement(Text, { key: "space-callouts" }, ""),
-      React.createElement(SectionTitle, { key: "callouts-title" }, model.tone === "fail" ? "Needs Attention" : "Notes"),
-      ...model.callouts.map((callout, index) => React.createElement(Text, { key: `callout-${index}`, color: model.tone === "fail" ? "red" : "yellow" }, `- ${callout}`)),
+      React.createElement(Box, { key: "callouts-wrap", flexDirection: "column", marginLeft: 1 },
+        React.createElement(SectionTitle, null, model.tone === "fail" ? "Needs Attention" : "Notes"),
+        ...model.callouts.map((callout, index) => React.createElement(Text, { key: `callout-${index}`, color: model.tone === "fail" ? "red" : "yellow" }, `- ${callout}`)),
+      ),
     );
   }
 
   if (model.next.length > 0) {
     children.push(
       React.createElement(Text, { key: "space-next" }, ""),
-      React.createElement(SectionTitle, { key: "next-title" }, "Next"),
-      ...model.next.slice(0, 4).map((item, index) => React.createElement(Text, { key: `next-${index}`, color: "cyan" }, `- ${item}`)),
+      React.createElement(Box, { key: "next-wrap", flexDirection: "column", marginLeft: 1 },
+        React.createElement(SectionTitle, null, "Next"),
+        ...model.next.slice(0, 4).map((item, index) => React.createElement(Text, { key: `next-${index}`, color: "gray" }, `- ${item}`)),
+      ),
     );
   }
 
   if (model.files.length > 0) {
     children.push(
       React.createElement(Text, { key: "space-files" }, ""),
-      React.createElement(Text, { key: "files", color: "gray" }, `Files: ${model.files.slice(0, 3).join(" | ")}`),
+      React.createElement(Box, { key: "files-wrap", flexDirection: "column", marginLeft: 1 },
+        React.createElement(SectionTitle, null, "Files"),
+        ...model.files.slice(0, 3).map((file, index) => React.createElement(Text, { key: `file-${index}`, color: "gray" }, `- ${file}`)),
+      ),
     );
   }
 
-  return React.createElement(Box, { flexDirection: "column", marginLeft: 1 }, ...children);
+  return React.createElement(Box, { flexDirection: "column" }, ...children);
 }
 
 function ProgressApp(props: { model: RitualProgressModel }) {
   const model = props.model;
   return React.createElement(
     Box,
-    { flexDirection: "column", marginLeft: 1 },
+    { flexDirection: "column" },
     React.createElement(
       Box,
-      { key: "hero", borderStyle: "round", borderColor: "blue", paddingX: 2, paddingY: 1, flexDirection: "column" },
+      { key: "hero", borderStyle: "round", borderColor: "gray", paddingX: 1, paddingY: 0, flexDirection: "column", width: frameWidth() },
       React.createElement(
         Box,
         { flexDirection: "row" },
-        React.createElement(Text, { color: "blue", bold: true }, "[RUN] "),
+        React.createElement(Text, { color: "cyan", bold: true }, "◐ "),
         React.createElement(Text, { bold: true }, model.title),
       ),
       React.createElement(Text, { color: "gray" }, model.subtitle),
-      React.createElement(Text, { color: "cyan" }, model.note),
+      React.createElement(Text, { color: "gray" }, `Working: ${model.active}`),
+      React.createElement(Text, { color: "gray" }, model.note),
     ),
     React.createElement(Text, null, ""),
-    React.createElement(SectionTitle, null, "Process"),
-    ...model.steps.slice(0, 12).map((step, index) => React.createElement(ProgressStepRow, {
-      key: `${step.label}-${index}`,
-      step: { ...step, status: step.status ?? (index === 0 ? "running" : "queued") },
-    })),
+    React.createElement(Box, { flexDirection: "column", marginLeft: 1 },
+      React.createElement(SectionTitle, null, "Todo"),
+      ...model.steps.slice(0, 12).map((step, index) => React.createElement(ProgressStepRow, {
+        key: `${step.label}-${index}`,
+        step: { ...step, status: step.status ?? "queued" },
+      })),
+    ),
   );
 }
 

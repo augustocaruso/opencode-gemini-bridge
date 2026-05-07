@@ -209,12 +209,12 @@ function projectSubtitle(project: string | undefined): string {
 
 function checkProgressSteps(opts: CheckCliOptions): RitualProgressStep[] {
   return [
-    ...(opts.setup === false ? [] : [{ label: "setup OpenCode plugin", detail: "startup sync and command wiring" }]),
-    ...(opts.sync === false ? [] : [{ label: "sync bridge assets", detail: "context, MCPs, agents, commands and skills" }]),
-    { label: "run doctor", detail: "inventory and compatibility checks" },
-    ...(opts.validation === false ? [] : [{ label: "validate resolved config", detail: opts.windows ? "including Windows static checks" : "global/project config" }]),
-    ...(opts.security === false ? [] : [{ label: "run security-check", detail: "YOLO, MCP env and extension safety" }]),
-    ...(opts.dashboard === false ? [] : [{ label: "refresh dashboard", detail: "final human summary" }]),
+    ...(opts.setup === false ? [] : [{ label: "Ensure OpenCode startup sync is installed.", detail: "Checks the plugin file, global registration, and command wiring." }]),
+    ...(opts.sync === false ? [] : [{ label: "Sync Gemini resources into OpenCode.", detail: "Projects context, MCPs, agents, commands, and skills into the right scope." }]),
+    { label: "Inspect the bridge inventory with doctor.", detail: "Looks for missing generated files, plugin state, extension risk, and stale status." },
+    ...(opts.validation === false ? [] : [{ label: "Validate the resolved OpenCode configuration.", detail: opts.windows ? "Includes Windows command/path checks." : "Checks global/project config, instructions, MCPs, and plugin references." }]),
+    ...(opts.security === false ? [] : [{ label: "Run the security guardrails.", detail: "Reviews YOLO permissions, secret patterns, MCP env, and extension trust surface." }]),
+    ...(opts.dashboard === false ? [] : [{ label: "Refresh the dashboard summary.", detail: "Writes the final status, warnings, next actions, and report paths." }]),
   ];
 }
 
@@ -275,10 +275,10 @@ function addUpdateOptions(command: Command): Command {
 
 function updateProgressSteps(opts: UpdateCliOptions): RitualProgressStep[] {
   return [
-    { label: "resolve release", detail: opts.release && opts.release !== "latest" ? opts.release : "latest GitHub release" },
-    { label: "download release pack", detail: "official bootstrap script" },
-    { label: "run installer", detail: opts.dryRun ? "preview only" : "replace OGB CLI and profile files" },
-    ...(opts.setup === false ? [] : [{ label: "run post-update check", detail: opts.installOpencode === false ? "without installing OpenCode" : "full ritual after update" }]),
+    { label: "Resolve the requested release.", detail: opts.release && opts.release !== "latest" ? opts.release : "Uses the latest GitHub release." },
+    { label: "Download the official release pack.", detail: "Runs the platform bootstrap script for this machine." },
+    { label: "Apply the installer.", detail: opts.dryRun ? "Preview only; no files are changed." : "Replaces the OGB CLI and managed profile files." },
+    ...(opts.setup === false ? [] : [{ label: "Run the full post-update check.", detail: opts.installOpencode === false ? "Verifies the bridge without installing OpenCode." : "Refreshes setup, sync, doctor, validation, security, and dashboard." }]),
   ];
 }
 
@@ -777,15 +777,15 @@ function installProgressSteps(opts: {
   windows?: boolean;
 }): RitualProgressStep[] {
   return [
-    ...(opts.cleanupHome === false ? [] : [{ label: "clean old home artifacts", detail: "backup first, then remove empty leftovers" }]),
+    ...(opts.cleanupHome === false ? [] : [{ label: "Clean old home-project artifacts.", detail: "Backs up accidental home checkout files and removes empty leftovers." }]),
     ...(opts.ux === false ? [] : [{
-      label: "apply OpenCode profile",
-      detail: opts.resetGlobal ? "overwrite global config from OGB defaults" : "merge managed global profile",
+      label: "Apply the OpenCode profile.",
+      detail: opts.resetGlobal ? "Overwrites global config from OGB defaults." : "Merges managed global settings without replacing user-owned fields.",
     }]),
-    ...(opts.installOpencode === false ? [] : [{ label: "verify OpenCode install", detail: "install/update when missing" }]),
-    ...(opts.plugins === false ? [] : [{ label: "install global plugins", detail: "auth, fallback, sidebar and OGB startup sync" }]),
-    ...(opts.projectProfile === false ? [] : [{ label: "write project profile", detail: "only outside home/global mode" }]),
-    ...(opts.check === false || opts.dryRun ? [] : [{ label: "run full check", detail: opts.windows ? "including Windows validation" : "setup, sync, doctor, validation, security and dashboard" }]),
+    ...(opts.installOpencode === false ? [] : [{ label: "Verify OpenCode is available.", detail: "Installs or updates OpenCode when the platform flow allows it." }]),
+    ...(opts.plugins === false ? [] : [{ label: "Install global OpenCode plugins.", detail: "Covers auth, fallback, sidebar, and OGB startup sync integrations." }]),
+    ...(opts.projectProfile === false ? [] : [{ label: "Write the project profile when appropriate.", detail: "Skipped automatically when the target is the home/global scope." }]),
+    ...(opts.check === false || opts.dryRun ? [] : [{ label: "Run the full bridge check.", detail: opts.windows ? "Includes Windows validation." : "Covers setup, sync, doctor, validation, security, and dashboard." }]),
   ];
 }
 
@@ -907,14 +907,14 @@ function resetProgressSteps(opts: {
   plugins?: boolean;
 }): RitualProgressStep[] {
   return [
-    { label: "confirm home reset", status: opts.yes || opts.dryRun ? "running" : "waiting", detail: opts.yes ? "--yes accepted" : opts.dryRun ? "preview mode" : "type RESET when prompted" },
-    { label: "configure websearch env", detail: "OPENCODE_ENABLE_EXA=1" },
-    { label: "clean old home project artifacts", detail: "backup first" },
-    { label: "overwrite global OpenCode profile", detail: "global config, commands, agents and sidebar" },
-    ...(opts.installOpencode === false ? [] : [{ label: "verify OpenCode install", detail: "install/update when missing" }]),
-    ...(opts.plugins === false ? [] : [{ label: "install global plugins", detail: "auth, fallback, sidebar and startup sync" }]),
-    { label: "sync Gemini globals", detail: "context, MCPs, agents, commands and skills" },
-    { label: "run doctor and full check", detail: "final verification" },
+    { label: "Confirm the home reset.", status: opts.yes || opts.dryRun ? "running" : "waiting", detail: opts.yes ? "--yes accepted." : opts.dryRun ? "Preview mode; no files are changed." : "Waits for the RESET confirmation prompt." },
+    { label: "Configure OpenCode websearch support.", detail: "Persists OPENCODE_ENABLE_EXA=1 when the platform allows it." },
+    { label: "Clean old home-project artifacts.", detail: "Backs up accidental project files before removing them." },
+    { label: "Overwrite the global OpenCode profile.", detail: "Rebuilds global config, commands, agents, and sidebar files." },
+    ...(opts.installOpencode === false ? [] : [{ label: "Verify OpenCode is available.", detail: "Installs or updates OpenCode when needed." }]),
+    ...(opts.plugins === false ? [] : [{ label: "Install global OpenCode plugins.", detail: "Covers auth, fallback, sidebar, and startup sync integrations." }]),
+    { label: "Sync Gemini globals into OpenCode.", detail: "Projects context, MCPs, agents, commands, and skills into global scope." },
+    { label: "Run doctor and the full bridge check.", detail: "Performs final verification and writes reports." },
   ];
 }
 
