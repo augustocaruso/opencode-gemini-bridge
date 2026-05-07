@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { runDoctor } from "./doctor.js";
+import { buildInstallerPlan } from "./installer-planner.js";
 import { formatPassReport, runPass, type PassReport } from "./pass.js";
 
 function tempRoot(): string {
@@ -35,6 +36,7 @@ test("runPass can accept reviewed Gemini hooks and produce a clean doctor", () =
   const doctor = runDoctor({ projectRoot, homeDir: projectRoot, silent: true });
 
   assert.equal(report.outcome, "pass");
+  assert.equal(report.plan.intent, "check");
   assert.equal(report.acceptedHooks.length, 1);
   assert.equal(doctor.warnings.some((warning) => warning.startsWith("Hook needs review:")), false);
   process.exitCode = oldExitCode;
@@ -71,6 +73,7 @@ test("formatPassReport prints a compact human report", () => {
     version: "0.0.40",
     projectRoot,
     outcome: "warn",
+    plan: buildInstallerPlan({ intent: "check", projectRoot, homeDir: "/tmp" }),
     automated: ["setup-opencode", "sync", "doctor", "validate", "dashboard"],
     steps: [
       { name: "setup-opencode", status: "pass" },

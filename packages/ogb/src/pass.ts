@@ -3,6 +3,7 @@ import path from "node:path";
 import { runDashboard, type DashboardReport } from "./dashboard.js";
 import { runDoctor, type DoctorReport } from "./doctor.js";
 import { sha256File } from "./file-hash.js";
+import { buildInstallerPlan, type InstallerPlan } from "./installer-planner.js";
 import { buildInventory } from "./inventory.js";
 import { resolveProjectPaths } from "./paths.js";
 import { runSecurityCheck, type SecurityReport } from "./security.js";
@@ -12,6 +13,7 @@ import { hookTrustKey, readTrustFile, writeTrustFile } from "./trust.js";
 import { OGB_VERSION } from "./types.js";
 import { runValidation, type ValidationReport } from "./validation.js";
 import type { RulesyncMode } from "./rulesync.js";
+import { writeStateRecord } from "./state-store.js";
 
 export interface PassOptions {
   projectRoot?: string;
@@ -61,6 +63,7 @@ export interface PassReport {
   version: string;
   projectRoot: string;
   outcome: "pass" | "warn" | "fail";
+  plan: InstallerPlan;
   automated: string[];
   steps: PassStep[];
   acceptedHooks: string[];
@@ -120,11 +123,6 @@ function acceptCurrentHooks(projectRoot: string, homeDir: string, dryRun?: boole
 
   if (!dryRun && accepted.length > 0) writeTrustFile(paths.trustPath, trust);
   return accepted.sort();
-}
-
-function writeReport(filePath: string, report: PassReport): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 }
 
 function statusText(status: PassStep["status"] | PassReport["outcome"] | PassBlocker["severity"]): string {
@@ -234,6 +232,15 @@ function buildSyncSummary(sync: SyncReport | undefined): PassSyncSummary | undef
 
 export function runPass(options: PassOptions = {}): PassReport {
   const paths = resolveProjectPaths(options.projectRoot, options.homeDir);
+  const plan = buildInstallerPlan({
+    intent: "check",
+    projectRoot: paths.projectRoot,
+    homeDir: paths.homeDir,
+    dryRun: options.dryRun,
+    force: options.force,
+    windows: options.windows,
+    rulesyncMode: options.rulesyncMode,
+  });
   const automated: string[] = [];
   const blockers: PassBlocker[] = [];
   let setup: SetupOpenCodeReport | undefined;
@@ -342,6 +349,7 @@ export function runPass(options: PassOptions = {}): PassReport {
     version: OGB_VERSION,
     projectRoot: paths.projectRoot,
     outcome,
+    plan,
     automated,
     steps,
     acceptedHooks,
@@ -361,7 +369,7 @@ export function runPass(options: PassOptions = {}): PassReport {
     },
   };
 
-  if (!options.dryRun) writeReport(paths.passPath, report);
+  if (!options.dryRun) writeStateRecord("check", report as unknown as Record<string, unknown>, { projectRoot: paths.projectRoot, homeDir: paths.homeDir });
   if (!options.silent) {
     if (options.json) console.log(JSON.stringify(report, null, 2));
     else console.log(formatPassReport(report).trimEnd());

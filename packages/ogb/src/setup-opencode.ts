@@ -6,10 +6,10 @@ import { parse as parseJsonc } from "jsonc-parser";
 import { runDoctor, type DoctorReport } from "./doctor.js";
 import { externalOpenCodePlugins, externalTuiPlugins } from "./external-integrations.js";
 import { sha256Text } from "./file-hash.js";
+import { runNativeCommand } from "./native-runner.js";
 import { defaultOpenCodeAgent, readOgbConfig } from "./ogb-config.js";
 import { resolveProjectPaths, toPosixRelative } from "./paths.js";
 import { ensureProjectConfig, type ProjectConfigResult } from "./project-config.js";
-import { spawnCommandSync } from "./process.js";
 import { recoverStaleStartupStatus } from "./startup-status.js";
 import { emptySyncState, managedHashFor, readSyncState, upsertManagedFile, writeSyncState } from "./sync-state.js";
 import { ensureTuiSidebar } from "./tui-sidebar.js";
@@ -1218,16 +1218,17 @@ function writeManagedText(options: {
 }
 
 function checkCommand(plan: SetupCommandPlan): SetupOpenCodeReport["commandCheck"] {
-  const result = spawnCommandSync(plan.command, [...plan.baseArgs, "--version"], {
-    encoding: "utf8",
-    timeout: 10_000,
+  const result = runNativeCommand({
+    command: plan.command,
+    args: [...plan.baseArgs, "--version"],
+    timeoutMs: 10_000,
   });
 
   if (result.error) {
     return {
       skipped: false,
       ok: false,
-      message: `Could not execute startup command: ${result.error.message}`,
+      message: `Could not execute startup command: ${result.error}`,
     };
   }
 
@@ -1257,9 +1258,10 @@ export function checkPluginSyntax(pluginPath?: string): SetupOpenCodeReport["plu
     fs.writeFileSync(target, STARTUP_SYNC_PLUGIN_SOURCE, "utf8");
   }
 
-  const result = spawnCommandSync(process.execPath, ["--check", target], {
-    encoding: "utf8",
-    timeout: 10_000,
+  const result = runNativeCommand({
+    command: process.execPath,
+    args: ["--check", target],
+    timeoutMs: 10_000,
   });
 
   if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
@@ -1267,7 +1269,7 @@ export function checkPluginSyntax(pluginPath?: string): SetupOpenCodeReport["plu
   if (result.error) {
     return {
       ok: false,
-      message: `Could not run node --check: ${result.error.message}`,
+      message: `Could not run node --check: ${result.error}`,
     };
   }
 

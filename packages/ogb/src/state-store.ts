@@ -1,12 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import { resolveProjectPaths } from "./paths.js";
+import { OGB_VERSION } from "./types.js";
 
-export type StateReportKind = "install" | "update" | "check" | "startup" | "validation" | "security" | "dashboard";
+export type StateReportKind = "install" | "update" | "check" | "startup" | "doctor" | "validation" | "security" | "dashboard";
 
 export interface StateStoreOptions {
   projectRoot?: string;
   homeDir?: string;
+  now?: Date;
 }
 
 export interface StateRecord<T = Record<string, unknown>> {
@@ -22,12 +24,13 @@ const REPORT_FILES: Record<StateReportKind, keyof ReturnType<typeof resolveProje
   update: "updateStatusPath",
   check: "passPath",
   startup: "pluginStatusPath",
+  doctor: "doctorPath",
   validation: "validationPath",
   security: "securityPath",
   dashboard: "dashboardPath",
 };
 
-function reportPath(kind: StateReportKind, options: StateStoreOptions): string {
+export function stateRecordPath(kind: StateReportKind, options: StateStoreOptions = {}): string {
   const paths = resolveProjectPaths(options.projectRoot, options.homeDir);
   if (kind === "install") return path.join(paths.generatedDir, "ogb-install.json");
   const key = REPORT_FILES[kind];
@@ -43,11 +46,17 @@ function parseJson(filePath: string): Record<string, unknown> | undefined {
 }
 
 function hasModernMarker(data: Record<string, unknown> | undefined): boolean {
-  return Boolean(data && (typeof data.generatedAt === "string" || typeof data.checkedAt === "string" || typeof data.finishedAt === "string" || data.version));
+  return Boolean(data && (
+    typeof data.ogbVersion === "string"
+    || typeof data.generatedAt === "string"
+    || typeof data.checkedAt === "string"
+    || typeof data.finishedAt === "string"
+    || typeof data.version === "string"
+  ));
 }
 
 export function readStateRecord<T extends Record<string, unknown> = Record<string, unknown>>(kind: StateReportKind, options: StateStoreOptions = {}): StateRecord<T> {
-  const filePath = reportPath(kind, options);
+  const filePath = stateRecordPath(kind, options);
   if (!fs.existsSync(filePath)) {
     return { kind, path: filePath, exists: false, legacy: false };
   }
@@ -62,9 +71,10 @@ export function readStateRecord<T extends Record<string, unknown> = Record<strin
 }
 
 export function writeStateRecord(kind: StateReportKind, data: Record<string, unknown>, options: StateStoreOptions = {}): StateRecord {
-  const filePath = reportPath(kind, options);
+  const filePath = stateRecordPath(kind, options);
   const stamped = {
-    generatedAt: new Date().toISOString(),
+    generatedAt: (options.now ?? new Date()).toISOString(),
+    ogbVersion: OGB_VERSION,
     ...data,
   };
   fs.mkdirSync(path.dirname(filePath), { recursive: true });

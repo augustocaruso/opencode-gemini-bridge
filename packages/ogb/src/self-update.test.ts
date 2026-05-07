@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { buildPostUpdateRitualCommand, buildSelfUpdateCommand, checkOgbUpdate, runAutoUpdate, runSelfUpdate, writeSelfUpdateSuccessStatus } from "./self-update.js";
 import { resolveProjectPaths } from "./paths.js";
+import { OGB_VERSION } from "./types.js";
 
 test("buildSelfUpdateCommand uses GitHub bootstrap on POSIX platforms", () => {
   const command = buildSelfUpdateCommand({
@@ -71,6 +72,7 @@ test("runSelfUpdate dry-run does not execute the bootstrap", () => {
   const report = runSelfUpdate({ dryRun: true, projectRoot: "/tmp/ogb" });
 
   assert.equal(report.status, "preview");
+  assert.equal(report.plan.intent, "update");
   assert.equal(report.command[0], process.platform === "win32" ? "powershell.exe" : "bash");
   assert.match(report.message, /Would download/);
 });
@@ -96,6 +98,8 @@ test("writeSelfUpdateSuccessStatus overwrites stale update errors", () => {
   assert.equal(saved.status, "updated");
   assert.equal(saved.latestTag, "v0.0.53");
   assert.equal(saved.restartRequired, true);
+  assert.equal(saved.ogbVersion, OGB_VERSION);
+  assert.equal(typeof saved.generatedAt, "string");
   assert.match(saved.message, /full bridge check/);
   assert.doesNotMatch(saved.message, /reset --yes/);
   assert.doesNotMatch(saved.message, /old failure/);
@@ -138,6 +142,8 @@ test("checkOgbUpdate reports available releases and writes status", async () => 
   const saved = JSON.parse(fs.readFileSync(resolveProjectPaths(projectRoot).updateStatusPath, "utf8"));
   assert.equal(saved.status, "available");
   assert.equal(saved.checkedAt, "2026-05-06T12:00:00.000Z");
+  assert.equal(typeof saved.generatedAt, "string");
+  assert.equal(saved.ogbVersion, OGB_VERSION);
 });
 
 test("checkOgbUpdate reports current when latest tag matches current version", async () => {
@@ -169,7 +175,9 @@ test("runAutoUpdate dry-run builds an update command without installing OpenCode
 
   assert.equal(report.status, "available");
   assert.equal(report.restartRequired, false);
+  assert.equal(report.plan.intent, "update");
   assert.ok(report.selfUpdate);
+  assert.equal(report.selfUpdate.plan.intent, "update");
   assert.match(report.selfUpdate.command.join(" "), /v0\.0\.39/);
   assert.match(report.selfUpdate.command.join(" "), /no-(opencode|openCode)/i);
   assert.equal(report.selfUpdate.postUpdate?.status, "preview");

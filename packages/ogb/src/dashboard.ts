@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { runDoctor } from "./doctor.js";
 import { resolveProjectPaths } from "./paths.js";
+import { readStateRecord, writeStateRecord, type StateStoreOptions } from "./state-store.js";
 import { telemetryStatus, type TelemetryStatus } from "./telemetry.js";
 import { OGB_VERSION, type StatusCounts } from "./types.js";
 
@@ -255,7 +256,7 @@ function consumeCompletedRestart(
   updateStatus: Record<string, any> | undefined,
   validation: Record<string, any> | undefined,
   security: Record<string, any> | undefined,
-  updateStatusPath: string,
+  stateOptions: StateStoreOptions,
 ): Record<string, any> | undefined {
   if (!updateRequiresRestart(updateStatus)) return updateStatus;
   if (!updateTargetsCurrentVersion(updateStatus)) return updateStatus;
@@ -271,8 +272,7 @@ function consumeCompletedRestart(
     message: `OGB ${OGB_VERSION} esta carregado e o check pos-update foi regenerado.`,
   };
   try {
-    fs.mkdirSync(path.dirname(updateStatusPath), { recursive: true });
-    fs.writeFileSync(updateStatusPath, `${JSON.stringify(consumed, null, 2)}\n`, "utf8");
+    writeStateRecord("update", consumed, stateOptions);
   } catch {
     // Dashboard rendering should not fail just because the update status could not be rewritten.
   }
@@ -541,13 +541,14 @@ export function runDashboard(options: DashboardOptions = {}): DashboardReport {
     }
   }
 
-  const doctor = readJson(paths.doctorPath);
-  const validation = readJson(paths.validationPath);
-  const security = readJson(paths.securityPath);
+  const stateOptions = { projectRoot: paths.projectRoot, homeDir: paths.homeDir };
+  const doctor = readStateRecord<Record<string, any>>("doctor", stateOptions).data;
+  const validation = readStateRecord<Record<string, any>>("validation", stateOptions).data;
+  const security = readStateRecord<Record<string, any>>("security", stateOptions).data;
   const limits = readJson(paths.limitsPath);
-  const pluginStatus = readJson(paths.pluginStatusPath);
-  const rawUpdateStatus = readJson(paths.updateStatusPath);
-  const updateStatus = consumeCompletedRestart(rawUpdateStatus, validation, security, paths.updateStatusPath);
+  const pluginStatus = readStateRecord<Record<string, any>>("startup", stateOptions).data;
+  const rawUpdateStatus = readStateRecord<Record<string, any>>("update", stateOptions).data;
+  const updateStatus = consumeCompletedRestart(rawUpdateStatus, validation, security, stateOptions);
   const telemetry = publicTelemetryStatus(telemetryStatus({ homeDir: paths.homeDir }));
   const doctorSummary = reportSummary("doctor", doctor);
   const validationSummary = reportSummary("validation", validation, { homeMode: paths.homeMode, updateStatus });
@@ -729,7 +730,7 @@ export function runDashboard(options: DashboardOptions = {}): DashboardReport {
   const markdown = formatDashboard(report);
   fs.mkdirSync(path.dirname(paths.dashboardPath), { recursive: true });
   fs.writeFileSync(paths.telemetryStatusPath, `${JSON.stringify(report.telemetry, null, 2)}\n`, "utf8");
-  fs.writeFileSync(paths.dashboardPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  writeStateRecord("dashboard", report as unknown as Record<string, unknown>, stateOptions);
   fs.writeFileSync(paths.dashboardMarkdownPath, markdown, "utf8");
 
   if (!options.silent && !options.writeOnly) {

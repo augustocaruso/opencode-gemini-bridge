@@ -1,9 +1,11 @@
 import { cleanupHomeProjectArtifacts, type HomeCleanupReport } from "./home-cleanup.js";
+import { buildInstallerPlan, type InstallerPlan } from "./installer-planner.js";
 import { runPass, type PassReport } from "./pass.js";
 import { resolveProjectPaths } from "./paths.js";
 import { setupUx, type SetupUxReport } from "./setup-ux.js";
 import { OGB_VERSION } from "./types.js";
 import type { RulesyncMode } from "./rulesync.js";
+import { writeStateRecord } from "./state-store.js";
 
 export interface InstallOptions {
   projectRoot?: string;
@@ -31,6 +33,7 @@ export interface InstallReport {
   homeDir: string;
   homeMode: boolean;
   outcome: "pass" | "warn" | "fail" | "preview";
+  plan: InstallerPlan;
   cleanup?: HomeCleanupReport;
   setup?: SetupUxReport;
   check?: PassReport;
@@ -45,6 +48,17 @@ function installOutcome(options: InstallOptions, warnings: string[], check?: Pas
 
 export function runInstall(options: InstallOptions = {}): InstallReport {
   const paths = resolveProjectPaths(options.projectRoot, options.homeDir);
+  const plan = buildInstallerPlan({
+    intent: "install",
+    projectRoot: paths.projectRoot,
+    homeDir: paths.homeDir,
+    platform: options.platform,
+    env: options.env,
+    dryRun: options.dryRun,
+    force: options.force,
+    rulesyncMode: options.rulesyncMode,
+    windows: options.windows,
+  });
   const cleanup = options.cleanupHome === false
     ? undefined
     : cleanupHomeProjectArtifacts({ homeDir: paths.homeDir, dryRun: options.dryRun });
@@ -82,17 +96,20 @@ export function runInstall(options: InstallOptions = {}): InstallReport {
     ...(check?.blockers.filter((blocker) => blocker.severity === "warn").map((blocker) => `${blocker.source}: ${blocker.message}`) ?? []),
   ];
 
-  return {
+  const report: InstallReport = {
     version: OGB_VERSION,
     projectRoot: paths.projectRoot,
     homeDir: paths.homeDir,
     homeMode: paths.homeMode,
     outcome: installOutcome(options, warnings, check),
+    plan,
     cleanup,
     setup,
     check,
     warnings,
   };
+  if (!options.dryRun) writeStateRecord("install", report as unknown as Record<string, unknown>, { projectRoot: paths.projectRoot, homeDir: paths.homeDir });
+  return report;
 }
 
 function outcomeLabel(outcome: InstallReport["outcome"]): string {

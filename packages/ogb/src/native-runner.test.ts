@@ -82,3 +82,32 @@ test("runner contract preserves command, args, status, signal, and error", () =>
   assert.equal(result.signal, "SIGTERM");
   assert.equal(result.error, "spawn failed");
 });
+
+test("runner contract forwards cwd, env, timeout, and stdio to the native process", () => {
+  const result = runNativeCommand({
+    command: "node",
+    args: ["--version"],
+    cwd: "/tmp/project",
+    env: { OGB_TEST: "1" },
+    timeoutMs: 1234,
+    stdio: "inherit",
+  }, (_command, _args, options) => {
+    assert.equal(options.cwd, "/tmp/project");
+    assert.deepEqual(options.env, { OGB_TEST: "1" });
+    assert.equal(options.timeout, 1234);
+    assert.equal(options.stdio, "inherit");
+    return {
+      pid: 123,
+      output: [],
+      signal: null,
+      status: 0,
+      stdout: null,
+      stderr: null,
+      error: undefined,
+    } as any;
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "");
+});

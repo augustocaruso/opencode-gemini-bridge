@@ -61,6 +61,8 @@ test("runReset accepts an accidentally quoted home project path", async () => {
   const startupConfig = readJson(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-startup-sync.json"));
 
   assert.equal(report.outcome, "pass");
+  assert.equal(report.plan.intent, "reset");
+  assert.equal(report.plan.homeMode, true);
   assert.ok(report.check);
   assert.equal(report.homeDir, path.resolve(homeDir));
   assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "generated")), false);
@@ -91,6 +93,7 @@ test("runReset cancellation leaves home project artifacts and global config unch
   });
 
   assert.equal(report.outcome, "cancelled");
+  assert.equal(report.plan.intent, "reset");
   assert.equal(fs.existsSync(path.join(homeDir, "opencode.jsonc")), true);
   assert.equal(readJson(path.join(homeDir, ".config", "opencode", "opencode.json")).custom, true);
 });
@@ -142,6 +145,7 @@ test("runReset cleans home project artifacts and recreates global config", async
   });
 
   assert.equal(report.outcome, "pass");
+  assert.equal(report.plan.intent, "reset");
   assert.ok(report.check);
   assert.equal(fs.existsSync(path.join(homeDir, "opencode.jsonc")), false);
   assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "commands", "sync.md")), false);

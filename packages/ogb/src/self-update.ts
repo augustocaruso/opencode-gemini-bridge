@@ -1,11 +1,12 @@
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 import { resolveCommand } from "./command-resolution.js";
 import { formatCommand } from "./extensions.js";
+import { buildInstallerPlan, type InstallerPlan } from "./installer-planner.js";
+import { runNativeCommand } from "./native-runner.js";
 import { normalizePathInput, resolveProjectPaths } from "./paths.js";
-import { spawnCommandSync } from "./process.js";
+import { writeStateRecord } from "./state-store.js";
 import { OGB_VERSION } from "./types.js";
+import type { RulesyncMode } from "./rulesync.js";
 
 const DEFAULT_REPO = "augustocaruso/opencode-gemini-bridge";
 const DEFAULT_VERSION = "latest";
@@ -28,6 +29,7 @@ export interface SelfUpdateOptions {
 export interface SelfUpdateReport {
   status: "preview" | "applied" | "error";
   command: string[];
+  plan: InstallerPlan;
   message: string;
   postUpdate?: PostUpdateRitualReport;
 }
@@ -79,6 +81,7 @@ export interface AutoUpdateReport {
   restartRequired: boolean;
   message: string;
   check: UpdateCheckReport;
+  plan: InstallerPlan;
   selfUpdate?: SelfUpdateReport;
   postUpdate?: PostUpdateRitualReport;
 }
@@ -137,14 +140,8 @@ function latestIsNewer(currentVersion: string, latestTag: string): boolean {
   return normalizeTagVersion(latestTag) !== normalizeTagVersion(currentVersion);
 }
 
-function updateStatusPath(projectRoot: string | undefined): string {
-  return resolveProjectPaths(projectRoot).updateStatusPath;
-}
-
 function writeUpdateReport(projectRoot: string | undefined, report: UpdateCheckReport | AutoUpdateReport): void {
-  const filePath = updateStatusPath(projectRoot);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify({ version: 1, ...report }, null, 2)}\n`, "utf8");
+  writeStateRecord("update", { version: 1, ...report }, { projectRoot });
 }
 
 export function writeSelfUpdateSuccessStatus(options: SelfUpdateOptions = {}, now = new Date()): AutoUpdateReport {
@@ -173,6 +170,7 @@ export function writeSelfUpdateSuccessStatus(options: SelfUpdateOptions = {}, no
       ? `OGB update completed for ${latestTag}. Running the full bridge check and then restart OpenCode.`
       : "OGB update completed. Running the full bridge check and then restart OpenCode.",
     check,
+    plan: buildUpdatePlan(options),
   };
   writeUpdateReport(options.projectRoot, report);
   return report;
@@ -190,6 +188,25 @@ export function buildPostUpdateRitualCommand(options: SelfUpdateOptions = {}, pl
   const args = ["--project", paths.projectRoot, "check", "--force"];
   if (platform === "win32") args.push("--windows");
   return [ogb, ...args];
+}
+
+function buildUpdatePlan(options: SelfUpdateOptions = {}, platform: NodeJS.Platform = process.platform): InstallerPlan {
+  const paths = resolveProjectPaths(options.projectRoot);
+  const rulesyncMode: RulesyncMode | undefined = options.rulesync === "auto" || options.rulesync === "off" || options.rulesync === "require"
+    ? options.rulesync
+    : undefined;
+  return buildInstallerPlan({
+    intent: "update",
+    projectRoot: paths.projectRoot,
+    homeDir: paths.homeDir,
+    platform,
+    dryRun: options.dryRun,
+    force: options.force,
+    release: options.version,
+    prefix: options.prefix,
+    rulesyncMode,
+    windows: platform === "win32",
+  });
 }
 
 export function runPostUpdateRitual(options: SelfUpdateOptions = {}): PostUpdateRitualReport {
@@ -210,10 +227,11 @@ export function runPostUpdateRitual(options: SelfUpdateOptions = {}): PostUpdate
   }
 
   const paths = resolveProjectPaths(options.projectRoot);
-  const result = spawnCommandSync(command[0], command.slice(1), {
+  const result = runNativeCommand({
+    command: command[0],
+    args: command.slice(1),
     cwd: paths.projectRoot,
-    encoding: "utf8",
-    timeout: 5 * 60_000,
+    timeoutMs: 5 * 60_000,
     env: {
       ...process.env,
       NO_COLOR: process.env.NO_COLOR ?? "1",
@@ -228,7 +246,7 @@ export function runPostUpdateRitual(options: SelfUpdateOptions = {}): PostUpdate
       command,
       exitCode: result.status,
       signal: result.signal,
-      message: `Post-update check could not run: ${result.error.message}`,
+      message: `Post-update check could not run: ${result.error}`,
       stdoutTail,
       stderrTail,
     };
@@ -329,25 +347,29 @@ export function buildSelfUpdateCommand(options: SelfUpdateOptions = {}, platform
 
 export function runSelfUpdate(options: SelfUpdateOptions = {}): SelfUpdateReport {
   const command = buildSelfUpdateCommand(options);
+  const plan = buildUpdatePlan(options);
   if (options.dryRun) {
     return {
       status: "preview",
       command,
+      plan,
       message: "Would download the selected OGB release and rerun the official bootstrap installer.",
       postUpdate: runPostUpdateRitual({ ...options, dryRun: true }),
     };
   }
 
-  const result = spawnSync(command[0], command.slice(1), {
+  const result = runNativeCommand({
+    command: command[0],
+    args: command.slice(1),
     stdio: "inherit",
     env: process.env,
   });
 
   if (result.error) {
-    return { status: "error", command, message: result.error.message };
+    return { status: "error", command, plan, message: result.error };
   }
   if (result.status !== 0) {
-    return { status: "error", command, message: `Bootstrap exited with code ${result.status ?? "unknown"}.` };
+    return { status: "error", command, plan, message: `Bootstrap exited with code ${result.status ?? "unknown"}.` };
   }
   let successStatus: AutoUpdateReport | undefined;
   try {
@@ -368,6 +390,7 @@ export function runSelfUpdate(options: SelfUpdateOptions = {}): SelfUpdateReport
     return {
       status: "error",
       command,
+      plan,
       postUpdate,
       message: `OGB bootstrap completed, but the post-update check did not finish cleanly: ${postUpdate.message}`,
     };
@@ -375,6 +398,7 @@ export function runSelfUpdate(options: SelfUpdateOptions = {}): SelfUpdateReport
   return {
     status: "applied",
     command,
+    plan,
     postUpdate,
     message: postUpdate?.status === "warn"
       ? "OGB bootstrap completed. Full bridge check ran with warnings; see ogb check/dashboard for details."
@@ -442,6 +466,7 @@ export async function runAutoUpdate(options: AutoUpdateOptions = {}): Promise<Au
       restartRequired: false,
       message: check.message,
       check,
+      plan: buildUpdatePlan(options),
     };
     if (options.write !== false) writeUpdateReport(options.projectRoot, report);
     return report;
@@ -478,6 +503,7 @@ export async function runAutoUpdate(options: AutoUpdateOptions = {}): Promise<Au
         ? `OGB updated to ${check.latestTag ?? check.latestVersion}. Running the full bridge check and then restart OpenCode.`
         : `OGB auto-update failed: ${selfUpdate.message}`,
     check,
+    plan: buildUpdatePlan(selfUpdateOptions),
     selfUpdate,
   };
   if (options.write !== false) writeUpdateReport(options.projectRoot, report);

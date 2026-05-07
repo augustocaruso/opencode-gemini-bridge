@@ -5,9 +5,10 @@ import { parse as parseJsonc } from "jsonc-parser";
 import { BUILT_IN_AGENTS, BUILT_IN_COMMANDS, REMOVED_BUILT_IN_AGENT_NAMES } from "./built-ins.js";
 import { resolveCommand } from "./command-resolution.js";
 import { runDoctor } from "./doctor.js";
+import { runNativeCommand, type NativeCommandResult } from "./native-runner.js";
 import { globalOpenCodeConfigDir, globalOpenCodeConfigFiles } from "./opencode-paths.js";
 import { resolveProjectPaths } from "./paths.js";
-import { spawnCommandSync } from "./process.js";
+import { writeStateRecord } from "./state-store.js";
 import { OGB_VERSION } from "./types.js";
 
 export interface ValidationOptions {
@@ -35,11 +36,12 @@ export interface ValidationReport {
   checks: ValidationCheck[];
 }
 
-function run(command: string, args: string[], cwd: string, timeout = 30000, extraEnv: Record<string, string> = {}) {
-  return spawnCommandSync(command, args, {
+function run(command: string, args: string[], cwd: string, timeout = 30000, extraEnv: Record<string, string> = {}): NativeCommandResult {
+  return runNativeCommand({
+    command,
+    args,
     cwd,
-    encoding: "utf8",
-    timeout,
+    timeoutMs: timeout,
     env: {
       ...process.env,
       NO_COLOR: process.env.NO_COLOR ?? "1",
@@ -102,7 +104,7 @@ function addToolCheck(checks: ValidationCheck[], command: string, args: string[]
   checks.push({
     name: `${command} executable`,
     status: result.error || result.status !== 0 ? "warn" : "pass",
-    message: result.error?.message ?? (output || `${command} responded successfully.`),
+    message: result.error ?? (output || `${command} responded successfully.`),
   });
 }
 
@@ -117,7 +119,7 @@ function validateOgbGlobal(checks: ValidationCheck[], projectRoot: string, homeD
   checks.push({
     name: "ogb global binary",
     status: result.error || result.status !== 0 || version !== OGB_VERSION ? "warn" : "pass",
-    message: result.error?.message ?? (version === OGB_VERSION
+    message: result.error ?? (version === OGB_VERSION
       ? `ogb ${version} resolves to ${resolved}.`
       : `ogb resolves to ${resolved}, but reports ${version || "unknown version"}; expected ${OGB_VERSION}.`),
     details: { resolved, expectedVersion: OGB_VERSION, reportedVersion: version },
@@ -201,7 +203,7 @@ function validateOpenCodeDebugConfig(projectRoot: string, homeDir: string, check
     checks.push({
       name: "OpenCode resolved config",
       status: "fail",
-      message: result.error?.message ?? (result.stderr || "opencode debug config failed").trim(),
+      message: result.error ?? (result.stderr || "opencode debug config failed").trim(),
     });
     return;
   }
@@ -421,7 +423,7 @@ function validateOptionalOpenCodeRun(projectRoot: string, homeDir: string, check
   checks.push({
     name: "OpenCode live run",
     status: result.error || result.status !== 0 || !output.includes("OGB_VALIDATE_OK") ? "warn" : "pass",
-    message: result.error?.message ?? (output.includes("OGB_VALIDATE_OK") ? "OpenCode live run responded." : "OpenCode live run did not confirm the expected text."),
+    message: result.error ?? (output.includes("OGB_VALIDATE_OK") ? "OpenCode live run responded." : "OpenCode live run did not confirm the expected text."),
   });
 }
 
@@ -478,8 +480,7 @@ export function runValidation(options: ValidationOptions = {}): ValidationReport
     checks,
   };
 
-  fs.mkdirSync(path.dirname(paths.validationPath), { recursive: true });
-  fs.writeFileSync(paths.validationPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  writeStateRecord("validation", report as unknown as Record<string, unknown>, { projectRoot: paths.projectRoot, homeDir: paths.homeDir });
 
   if (options.silent) {
     // Report is written to disk for callers such as ogb check.

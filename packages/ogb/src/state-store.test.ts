@@ -28,6 +28,7 @@ test("state store contract writes and reads stamped reports by kind", () => {
   assert.equal(read.legacy, false);
   assert.equal(read.data?.outcome, "pass");
   assert.equal(typeof read.data?.generatedAt, "string");
+  assert.equal(read.data?.ogbVersion, OGB_VERSION);
 });
 
 test("state store contract consumes legacy update status without throwing", () => {
@@ -45,6 +46,21 @@ test("state store contract consumes legacy update status without throwing", () =
   assert.equal(record.legacy, true);
   assert.equal(record.data?.status, "updated");
   assert.equal(record.data?.restartRequired, true);
+});
+
+test("state store treats schema-only numeric version reports as legacy", () => {
+  const projectRoot = tempRoot();
+  const paths = resolveProjectPaths(projectRoot);
+  writeJson(paths.updateStatusPath, {
+    version: 1,
+    status: "error",
+    message: "old schema marker without timestamp",
+  });
+
+  const record = readStateRecord("update", { projectRoot });
+
+  assert.equal(record.exists, true);
+  assert.equal(record.legacy, true);
 });
 
 test("state store legacy status remains compatible with dashboard", () => {

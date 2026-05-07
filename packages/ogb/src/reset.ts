@@ -4,10 +4,11 @@ import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { cleanupHomeProjectArtifacts, type HomeCleanupReport } from "./home-cleanup.js";
 import { runDoctor, type DoctorReport } from "./doctor.js";
+import { buildInstallerPlan, type InstallerPlan } from "./installer-planner.js";
+import { runNativeCommand } from "./native-runner.js";
 import { globalOpenCodeConfigDir } from "./opencode-paths.js";
 import { runPass, type PassReport } from "./pass.js";
 import { resolveProjectPaths } from "./paths.js";
-import { spawnCommandSync } from "./process.js";
 import { setupUx, type SetupUxReport } from "./setup-ux.js";
 import { syncToOpenCode, type SyncReport } from "./sync.js";
 import { OGB_VERSION } from "./types.js";
@@ -43,6 +44,7 @@ export interface ResetReport {
   version: string;
   homeDir: string;
   outcome: "pass" | "cancelled" | "preview";
+  plan: InstallerPlan;
   globalConfigPath: string;
   exaEnv: ResetEnvReport;
   cleanup: HomeCleanupReport;
@@ -85,11 +87,12 @@ function ensureExaEnv(options: { homeDir: string; platform?: NodeJS.Platform; dr
     const script = "[Environment]::SetEnvironmentVariable('OPENCODE_ENABLE_EXA','1','User')";
     const shells = ["powershell.exe", "pwsh", "powershell"];
     for (const shell of shells) {
-      const result = spawnCommandSync(shell, ["-NoProfile", "-Command", script], {
-        encoding: "utf8",
+      const result = runNativeCommand({
+        command: shell,
+        args: ["-NoProfile", "-Command", script],
         stdio: "pipe",
       });
-      if (!result.error && result.status === 0) {
+      if (result.ok) {
         return { status: "configured", message: "Set OPENCODE_ENABLE_EXA=1 for the Windows user environment." };
       }
     }
@@ -149,6 +152,17 @@ async function promptResetConfirmation(plan: ResetPlan): Promise<boolean> {
 export async function runReset(options: ResetOptions = {}): Promise<ResetReport> {
   const paths = resolveProjectPaths(options.projectRoot, options.homeDir);
   if (!paths.homeMode) throw new ResetNotHomeError(paths.projectRoot, paths.homeDir);
+  const installerPlan = buildInstallerPlan({
+    intent: "reset",
+    projectRoot: paths.projectRoot,
+    homeDir: paths.homeDir,
+    platform: options.platform,
+    env: options.env,
+    dryRun: options.dryRun,
+    force: true,
+    rulesyncMode: options.rulesyncMode,
+    windows: (options.platform ?? process.platform) === "win32",
+  });
 
   const globalConfigPath = path.join(globalOpenCodeConfigDir({ homeDir: paths.homeDir, platform: options.platform, env: options.env }), "opencode.json");
   const cleanupPreview = cleanupHomeProjectArtifacts({ homeDir: paths.homeDir, dryRun: true });
@@ -166,6 +180,7 @@ export async function runReset(options: ResetOptions = {}): Promise<ResetReport>
         version: OGB_VERSION,
         homeDir: paths.homeDir,
         outcome: "cancelled",
+        plan: installerPlan,
         globalConfigPath,
         exaEnv: { status: "preview", message: "Reset cancelled before changing environment." },
         cleanup: cleanupPreview,
@@ -202,6 +217,7 @@ export async function runReset(options: ResetOptions = {}): Promise<ResetReport>
       version: OGB_VERSION,
       homeDir: paths.homeDir,
       outcome: "preview",
+      plan: installerPlan,
       globalConfigPath,
       exaEnv,
       cleanup: cleanupPreview,
@@ -254,6 +270,7 @@ export async function runReset(options: ResetOptions = {}): Promise<ResetReport>
     version: OGB_VERSION,
     homeDir: paths.homeDir,
     outcome: "pass",
+    plan: installerPlan,
     globalConfigPath,
     exaEnv,
     cleanup,

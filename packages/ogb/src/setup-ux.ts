@@ -7,9 +7,9 @@ import { BUILT_IN_AGENTS, BUILT_IN_COMMANDS } from "./built-ins.js";
 import { resolveCommand } from "./command-resolution.js";
 import { GLOBAL_AGENTS_MD } from "./global-agents.js";
 import { normalizeRuntimeOptions, type OgbConfig } from "./ogb-config.js";
+import { runNativeCommand } from "./native-runner.js";
 import { globalOpenCodeConfigDir, legacyWindowsAppDataOpenCodeConfigDir } from "./opencode-paths.js";
 import { isHomeProject, normalizePathInput } from "./paths.js";
-import { spawnCommandSync } from "./process.js";
 import { checkPluginSyntax, STARTUP_SYNC_PLUGIN_SOURCE, startupConfigSource } from "./setup-opencode.js";
 import { recoverStaleStartupStatus } from "./startup-status.js";
 import { ensureGlobalTuiSidebar } from "./tui-sidebar.js";
@@ -564,9 +564,10 @@ function ensureGlobalTuiRuntime(options: {
 
 function runCommand(command: string[], dryRun?: boolean, cwd?: string): SetupUxCommand {
   if (dryRun) return { command, status: "preview", message: `Would run ${command.join(" ")}` };
-  const result = spawnCommandSync(command[0], command.slice(1), {
+  const result = runNativeCommand({
+    command: command[0],
+    args: command.slice(1),
     cwd,
-    encoding: "utf8",
     stdio: "pipe",
     env: {
       ...process.env,
@@ -579,7 +580,7 @@ function runCommand(command: string[], dryRun?: boolean, cwd?: string): SetupUxC
     return {
       command,
       status: "fail",
-      message: result.error?.message ?? (output || "command failed"),
+      message: result.error ?? (output || "command failed"),
     };
   }
   return { command, status: "ok", message: output || "ok" };
@@ -631,9 +632,10 @@ function runAuthProbe(opencodeCommand: string, provider: "openai" | "google", dr
   ];
   if (dryRun) return { command, status: "preview", message: `Would probe ${provider} auth methods` };
 
-  const result = spawnCommandSync(command[0], command.slice(1), {
+  const result = runNativeCommand({
+    command: command[0],
+    args: command.slice(1),
     cwd,
-    encoding: "utf8",
     stdio: "pipe",
     env: {
       ...process.env,
@@ -644,7 +646,7 @@ function runAuthProbe(opencodeCommand: string, provider: "openai" | "google", dr
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
   const missing = missingAuthProbeExpectations(provider, output);
   const available = authProbeAvailableMethods(output);
-  if (result.error) return { command, status: "fail", message: result.error.message };
+  if (result.error) return { command, status: "fail", message: result.error };
   if (missing.length > 0) {
     return {
       command,

@@ -8,6 +8,7 @@ export interface NativeCommandSpec {
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
   platform?: NodeJS.Platform;
+  stdio?: SpawnSyncOptions["stdio"];
 }
 
 export interface PreparedNativeCommand {
@@ -44,6 +45,7 @@ export function runNativeCommand(spec: NativeCommandSpec, spawnSyncImpl: SpawnSy
     cwd: spec.cwd,
     env: spec.env,
     encoding: "utf8",
+    stdio: spec.stdio,
     timeout: spec.timeoutMs,
     windowsVerbatimArguments: prepared.windowsVerbatimArguments,
   });
