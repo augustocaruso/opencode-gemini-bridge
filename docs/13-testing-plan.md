@@ -137,10 +137,18 @@ Depois do MVP Mac:
 
 - PowerShell scripts.
 - Paths com `C:\Users\...`.
+- Paths acidentalmente quoteados: `"C:\Users\..."` e `'"C:\Users\..."'`.
 - Junction/hardlink fallback.
 - Execução via `opencode`.
 - Verificar `robocopy` ou Node copy.
 - `ogb validate --windows` para checagem estatica do instalador.
+- `ogb pass --windows` como ritual final do instalador.
+- `self-update --release vX.Y.Z` e `self-update` via `latest`.
+- Dashboard consumindo `restartRequired` quando a versao atual ja tem validation
+  e security PASS.
+- Startup plugin em home/global sem criar `%USERPROFILE%\.opencode\generated`.
+- Runner Node para `.cmd/.bat` via `cmd.exe /d /s /c` e `.exe` direto.
+- PowerShell nativo escrevendo warning em stderr com exit code 0.
 
 ## GitHub Actions
 
