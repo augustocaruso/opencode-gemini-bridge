@@ -10,6 +10,8 @@ import { runDoctor } from "./doctor.js";
 import { externalOpenCodePlugins } from "./external-integrations.js";
 import { formatCommand, installGeminiExtension, updateGeminiExtensions } from "./extensions.js";
 import { flattenGeminiMd } from "./flatten.js";
+import { findHelpCommand, formatHelpCatalog, formatHelpCommand, HELP_COMMANDS } from "./help-catalog.js";
+import { renderInteractiveHelp } from "./help-ui.js";
 import { cleanupHomeProjectArtifacts, printHomeCleanupReport } from "./home-cleanup.js";
 import { printInstallReport, runInstall } from "./install.js";
 import { buildInventory, writeInventory } from "./inventory.js";
@@ -345,6 +347,43 @@ program
   .description("OpenCode Gemini Bridge")
   .version(OGB_VERSION)
   .option("--project <path>", "Project root", process.cwd());
+program.addHelpCommand(false);
+
+program.command("help")
+  .description("Explore OGB commands with an interactive command guide")
+  .argument("[command]", "Command name or alias to explain")
+  .option("--plain", "Print a classic text guide instead of the interactive terminal UI")
+  .option("--json", "Print command metadata as JSON")
+  .action(async (commandName: string | undefined, opts: { plain?: boolean; json?: boolean }) => {
+    const selected = findHelpCommand(commandName);
+    if (commandName && !selected) {
+      const message = `Unknown OGB command: ${commandName}`;
+      if (opts.json) console.log(JSON.stringify({ ok: false, error: message, commands: HELP_COMMANDS.map((command) => command.name) }, null, 2));
+      else {
+        console.error(message);
+        console.error("Run `ogb help` to browse available commands.");
+      }
+      process.exitCode = 1;
+      return;
+    }
+
+    if (opts.json) {
+      console.log(JSON.stringify(selected ?? HELP_COMMANDS, null, 2));
+      return;
+    }
+
+    if (selected) {
+      console.log(formatHelpCommand(selected).trimEnd());
+      return;
+    }
+
+    if (shouldUseRitualUi({ plain: opts.plain })) {
+      await renderInteractiveHelp(HELP_COMMANDS);
+      return;
+    }
+
+    console.log(formatHelpCatalog().trimEnd());
+  });
 
 program.command("init")
   .description("Create a conservative opencode.jsonc for the bridge")

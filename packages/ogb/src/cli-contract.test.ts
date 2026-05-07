@@ -9,6 +9,7 @@ function command(name: string) {
 }
 
 test("CLI exposes the first cargo-like installer API verbs", () => {
+  assert.match(command("help").description(), /interactive command guide/);
   assert.match(command("install").description(), /Install or reinstall/);
   assert.match(command("check").description(), /full bridge check/);
   assert.match(command("update").description(), /post-update check/);
