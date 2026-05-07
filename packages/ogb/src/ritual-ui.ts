@@ -119,6 +119,61 @@ function countChangedWrites(report: InstallReport | ResetReport): number | undef
   return writes.filter((write) => write.status !== "unchanged").length;
 }
 
+function uniqueLines(items: Array<string | undefined>, limit = 5): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    const text = item?.replace(/\s+/g, " ").trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function checkCallouts(report: PassReport | undefined, fallback: string[] = []): string[] {
+  return uniqueLines([
+    ...(report?.blockers.map((item) => `${item.source}: ${item.message}`) ?? []),
+    ...fallback,
+  ]);
+}
+
+function checkNext(report: PassReport | undefined, fallback: string[]): string[] {
+  return uniqueLines([
+    ...(report?.blockers.map((item) => item.action) ?? []),
+    ...fallback,
+  ], 4);
+}
+
+function unexpectedErrorNext(kind: RitualKind, message: string): string[] {
+  const command = `ogb ${kind} --plain`;
+  const generic = [
+    `Run \`${command}\` to see the classic logs without the rich UI.`,
+    "Then run `ogb dashboard --plain` to inspect the last persisted bridge status.",
+  ];
+  if (/ENOENT|not found|command not found|no such file|n.o . reconhecido/i.test(message)) {
+    return [
+      "Check whether Node, npm, OpenCode and OGB resolve on PATH in this shell.",
+      `Run \`${command}\` after fixing PATH so the full native command output stays visible.`,
+      "On Windows, open PowerShell 7 again after changing PATH or reinstalling shims.",
+    ];
+  }
+  if (/EACCES|EPERM|permission|access denied|permiss/i.test(message)) {
+    return [
+      "Check file ownership/permissions for the path mentioned in the error.",
+      `Run \`${command}\` again after granting write access or closing processes that may be locking the file.`,
+    ];
+  }
+  if (/JSON|parse|Unexpected token/i.test(message)) {
+    return [
+      "Open the config file mentioned in the error and fix invalid JSON/JSONC syntax.",
+      `Run \`${command}\` again; the same TODO item should move past FAIL once the file parses.`,
+    ];
+  }
+  return generic;
+}
+
 function installModel(report: InstallReport): RitualViewModel {
   const tone = toneFromOutcome(report.outcome);
   const steps: RitualStep[] = [];
@@ -143,9 +198,9 @@ function installModel(report: InstallReport): RitualViewModel {
       { label: "warnings", value: String(report.warnings.length), tone: report.warnings.length > 0 ? "warn" : "pass" },
     ],
     steps,
-    callouts: report.warnings.slice(0, 5),
+    callouts: checkCallouts(report.check, report.warnings),
     next: tone === "fail"
-      ? ["Run ogb dashboard for details.", "Run ogb check --plain if you need the classic report."]
+      ? checkNext(report.check, ["Run `ogb dashboard --plain` for the persisted bridge state.", "Run `ogb check --plain` for the classic report."])
       : report.outcome === "preview"
         ? ["Run ogb install without --dry-run to apply this plan."]
         : ["OpenCode profile is ready.", "Run ogb check any time you want the full ritual."],
@@ -202,12 +257,14 @@ function resetModel(report: ResetReport): RitualViewModel {
       { label: "warnings", value: String(report.warnings.length), tone: report.warnings.length > 0 ? "warn" : "pass" },
     ],
     steps,
-    callouts: report.warnings.slice(0, 5),
+    callouts: checkCallouts(report.check, report.warnings),
     next: report.outcome === "preview"
       ? ["Run ogb reset --yes without --dry-run to apply this plan."]
       : report.outcome === "cancelled"
         ? ["Nothing was changed."]
-        : ["Global OpenCode profile was rebuilt.", "Run ogb check if you want another verification pass."],
+        : report.check?.outcome === "fail"
+          ? checkNext(report.check, ["Run `ogb check --plain` for the classic report."])
+          : ["Global OpenCode profile was rebuilt.", "Run ogb check if you want another verification pass."],
     files: [report.globalConfigPath, ...(report.check ? [report.check.files.pass, report.check.files.dashboard] : [])],
   };
 }
@@ -231,12 +288,14 @@ function updateModel(report: SelfUpdateReport): RitualViewModel {
       { label: "download + bootstrap", status: tone, detail: report.command.join(" ") },
       ...(report.postUpdate ? [{ label: "post-update check", status: postUpdateTone, detail: report.postUpdate.message }] : []),
     ],
-    callouts: report.status === "error" ? [report.message, report.postUpdate?.stderrTail, report.postUpdate?.stdoutTail].filter((item): item is string => Boolean(item)).slice(0, 3) : [],
+    callouts: report.status === "error" ? uniqueLines([report.message, report.stderrTail, report.stdoutTail, report.postUpdate?.stderrTail, report.postUpdate?.stdoutTail]) : [],
     next: report.status === "preview"
       ? ["Run ogb update without --dry-run to apply this release."]
       : report.status === "applied"
         ? ["Restart OpenCode so the new plugin/sidebar code is loaded.", "Then run ogb check if you want a fresh human-readable pass."]
-        : ["Run ogb dashboard for the last known bridge state.", "Use ogb update --plain for the classic command log."],
+        : report.postUpdate?.status === "fail" || report.postUpdate?.status === "error"
+          ? ["Run `ogb check --plain --force` to inspect the post-update failure directly.", "Run `ogb dashboard --plain` for the last persisted bridge state."]
+          : ["Run `ogb update --plain` so the bootstrap log is printed without the rich UI.", "Check Node/npm/PowerShell PATH and network access, then retry the same release."],
     files: [],
   };
 }
@@ -355,7 +414,7 @@ export function failLiveRitualModel(model: LiveRitualModel, error: unknown, opti
     finishedAt: options.now ?? Date.now(),
     steps,
     callouts: [message],
-    next: ["Run the same command with --plain to see the classic logs.", "Run ogb dashboard for the last persisted bridge status."],
+    next: unexpectedErrorNext(model.kind, message),
     final: true,
   };
 }

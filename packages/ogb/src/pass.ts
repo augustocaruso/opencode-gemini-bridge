@@ -103,6 +103,52 @@ function actionForWarning(warning: string): string {
   return "Leia o aviso do doctor; se for recurso gerenciado pelo OGB, rode `ogb check --force` depois de revisar.";
 }
 
+function compactLine(value: string | undefined, maxChars = 180): string | undefined {
+  const text = value?.replace(/\s+/g, " ").trim();
+  if (!text) return undefined;
+  return text.length > maxChars ? `${text.slice(0, Math.max(0, maxChars - 1))}…` : text;
+}
+
+function firstValidationIssue(report: ValidationReport | undefined, status: ValidationReport["outcome"]): string | undefined {
+  const check = report?.checks.find((item) => item.status === status)
+    ?? (status === "fail" ? report?.checks.find((item) => item.status === "warn") : undefined);
+  if (!check) return undefined;
+  const name = compactLine(check.name, 80);
+  const message = compactLine(check.message, 220);
+  if (name && message) return `${name}: ${message}`;
+  return name ?? message;
+}
+
+function firstSecurityIssue(report: SecurityReport | undefined, status: SecurityReport["outcome"]): string | undefined {
+  const finding = report?.findings.find((item) => item.status === status)
+    ?? (status === "fail" ? report?.findings.find((item) => item.status === "warn") : undefined);
+  if (!finding) return undefined;
+  const name = compactLine(finding.name, 80);
+  const message = compactLine(finding.message, 220);
+  const files = finding.files?.slice(0, 2).map((file) => compactLine(file, 120)).filter((file): file is string => Boolean(file));
+  const suffix = files && files.length > 0 ? ` (${files.join(", ")})` : "";
+  if (name && message) return `${name}: ${message}${suffix}`;
+  return name ?? message;
+}
+
+function firstDashboardIssue(report: DashboardReport | undefined, severity: "fail" | "warn"): string | undefined {
+  const items = severity === "fail" ? report?.errors : report?.warnings;
+  return compactLine(items?.find((item) => item.trim().length > 0), 240);
+}
+
+function validationAction(options: PassOptions): string {
+  const command = options.windows ? "ogb validate --windows --plain" : "ogb validate --plain";
+  return `Rode \`${command}\` para ver os checks detalhados e confirme se o problema e arquivo gerenciado, PATH/comando nativo ou config do OpenCode.`;
+}
+
+function securityAction(): string {
+  return "Rode `ogb security-check --plain`, revise o finding destacado e corrija antes de confiar no perfil gerado.";
+}
+
+function dashboardAction(): string {
+  return "Rode `ogb dashboard --plain` e abra o arquivo Markdown do dashboard para ver o estado persistido completo.";
+}
+
 function blocker(source: PassBlocker["source"], severity: PassBlocker["severity"], message: string, action: string): PassBlocker {
   return { source, severity, message, action };
 }
@@ -408,7 +454,12 @@ export function runPass(options: PassOptions = {}): PassReport {
       emitCheckProgress(options.onProgress, "validation", "fail", error instanceof Error ? error.message : String(error));
       throw error;
     }
-    emitCheckProgress(options.onProgress, "validation", progressStatusFromOutcome(validation.outcome), validation.outcome === "pass" ? "Validation is clean." : `Validation outcome: ${validation.outcome}.`);
+    emitCheckProgress(
+      options.onProgress,
+      "validation",
+      progressStatusFromOutcome(validation.outcome),
+      validation.outcome === "pass" ? "Validation is clean." : firstValidationIssue(validation, validation.outcome) ?? `Validation outcome: ${validation.outcome}.`,
+    );
     automated.push("validate");
   }
 
@@ -420,7 +471,12 @@ export function runPass(options: PassOptions = {}): PassReport {
       emitCheckProgress(options.onProgress, "security", "fail", error instanceof Error ? error.message : String(error));
       throw error;
     }
-    emitCheckProgress(options.onProgress, "security", progressStatusFromOutcome(security.outcome), security.outcome === "pass" ? "Security guardrails are clean." : `Security outcome: ${security.outcome}.`);
+    emitCheckProgress(
+      options.onProgress,
+      "security",
+      progressStatusFromOutcome(security.outcome),
+      security.outcome === "pass" ? "Security guardrails are clean." : firstSecurityIssue(security, security.outcome) ?? `Security outcome: ${security.outcome}.`,
+    );
     automated.push("security-check");
   }
 
@@ -432,18 +488,23 @@ export function runPass(options: PassOptions = {}): PassReport {
       emitCheckProgress(options.onProgress, "dashboard", "fail", error instanceof Error ? error.message : String(error));
       throw error;
     }
-    emitCheckProgress(options.onProgress, "dashboard", progressStatusFromOutcome(dashboard.outcome), dashboard.outcome === "pass" ? "Dashboard refreshed." : `Dashboard outcome: ${dashboard.outcome}.`);
+    emitCheckProgress(
+      options.onProgress,
+      "dashboard",
+      progressStatusFromOutcome(dashboard.outcome),
+      dashboard.outcome === "pass" ? "Dashboard refreshed." : firstDashboardIssue(dashboard, dashboard.outcome === "fail" ? "fail" : "warn") ?? `Dashboard outcome: ${dashboard.outcome}.`,
+    );
     automated.push("dashboard");
   }
 
   for (const error of doctor.errors) blockers.push(blocker("doctor", "fail", error, "Corrija o erro indicado pelo doctor e rode `ogb check` novamente."));
   for (const warning of doctor.warnings) blockers.push(blocker("doctor", "warn", warning, actionForWarning(warning)));
-  if (validation?.outcome === "fail") blockers.push(blocker("validation", "fail", "Validation falhou.", "Rode `ogb validate` para ver os checks detalhados."));
-  if (validation?.outcome === "warn") blockers.push(blocker("validation", "warn", "Validation passou com avisos.", "Rode `ogb validate` para ver os checks detalhados."));
-  if (security?.outcome === "fail") blockers.push(blocker("security", "fail", "Security-check falhou.", "Rode `ogb security-check` e revise os achados."));
-  if (security?.outcome === "warn") blockers.push(blocker("security", "warn", "Security-check passou com avisos.", "Rode `ogb security-check` e revise os achados."));
-  if (dashboard?.outcome === "fail") blockers.push(blocker("dashboard", "fail", "Dashboard final falhou.", "Abra `.opencode/generated/ogb-dashboard.md` para os detalhes."));
-  if (dashboard?.outcome === "warn") blockers.push(blocker("dashboard", "warn", "Dashboard final passou com avisos.", "Abra `.opencode/generated/ogb-dashboard.md` para os detalhes."));
+  if (validation?.outcome === "fail") blockers.push(blocker("validation", "fail", `Validation falhou: ${firstValidationIssue(validation, "fail") ?? "um check obrigatorio falhou."}`, validationAction(options)));
+  if (validation?.outcome === "warn") blockers.push(blocker("validation", "warn", `Validation passou com avisos: ${firstValidationIssue(validation, "warn") ?? "ha checks que precisam de revisao."}`, validationAction(options)));
+  if (security?.outcome === "fail") blockers.push(blocker("security", "fail", `Security-check falhou: ${firstSecurityIssue(security, "fail") ?? "um guardrail obrigatorio falhou."}`, securityAction()));
+  if (security?.outcome === "warn") blockers.push(blocker("security", "warn", `Security-check passou com avisos: ${firstSecurityIssue(security, "warn") ?? "ha guardrails que precisam de revisao."}`, securityAction()));
+  if (dashboard?.outcome === "fail") blockers.push(blocker("dashboard", "fail", `Dashboard final falhou: ${firstDashboardIssue(dashboard, "fail") ?? "o resumo final registrou erro."}`, dashboardAction()));
+  if (dashboard?.outcome === "warn") blockers.push(blocker("dashboard", "warn", `Dashboard final passou com avisos: ${firstDashboardIssue(dashboard, "warn") ?? "o resumo final registrou avisos."}`, dashboardAction()));
 
   const outcome = blockers.some((item) => item.severity === "fail")
     ? "fail"

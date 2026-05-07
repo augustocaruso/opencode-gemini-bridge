@@ -86,6 +86,32 @@ test("runPass removes progress steps disabled by check flags", () => {
   process.exitCode = oldExitCode;
 });
 
+test("runPass carries the first validation failure into blocker copy and next action", () => {
+  const projectRoot = tempRoot();
+  const oldExitCode = process.exitCode;
+  const events: RitualProgressEvent[] = [];
+
+  const report = runPass({
+    projectRoot,
+    homeDir: projectRoot,
+    skipSync: true,
+    skipSecurity: true,
+    skipDashboard: true,
+    silent: true,
+    setExitCode: false,
+    onProgress: (event) => events.push(event),
+  });
+
+  const validationBlocker = report.blockers.find((item) => item.source === "validation");
+  const validationEvent = events.find((event) => event.stepId === "validate" && event.status === "fail");
+  assert.equal(report.outcome, "fail");
+  assert.ok(validationBlocker);
+  assert.match(validationBlocker.message, /Validation falhou: .+:/);
+  assert.match(validationBlocker.action, /ogb validate --plain/);
+  assert.match(validationEvent?.message ?? "", /:/);
+  process.exitCode = oldExitCode;
+});
+
 test("trusted Gemini hooks require review again after settings change", () => {
   const projectRoot = tempRoot();
   const oldExitCode = process.exitCode;

@@ -110,6 +110,30 @@ test("runSelfUpdate dry-run emits update ritual progress", () => {
   ]);
 });
 
+test("runSelfUpdate reports bootstrap stderr tail and specific progress failure", () => {
+  const events: RitualProgressEvent[] = [];
+  const report = runSelfUpdate({
+    projectRoot: "/tmp/ogb",
+    stdio: "pipe",
+    onProgress: (event) => events.push(event),
+    runCommand: (spec) => ({
+      ok: false,
+      command: spec.command,
+      args: spec.args ?? [],
+      status: 1,
+      signal: null,
+      stdout: "Downloading OGB...",
+      stderr: "npm is not recognized as a command",
+    }),
+  });
+
+  assert.equal(report.status, "error");
+  assert.equal(report.stderrTail, "npm is not recognized as a command");
+  assert.match(report.message, /Bootstrap exited with code 1/);
+  const installFailure = events.find((event) => event.stepId === "install" && event.status === "fail");
+  assert.match(installFailure?.message ?? "", /npm is not recognized/);
+});
+
 test("writeSelfUpdateSuccessStatus overwrites stale update errors", () => {
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-update-success-"));
   const paths = resolveProjectPaths(projectRoot);

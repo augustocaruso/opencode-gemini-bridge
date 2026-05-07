@@ -1,7 +1,7 @@
 import { resolveCommand } from "./command-resolution.js";
 import { formatCommand } from "./extensions.js";
 import { buildInstallerPlan, type InstallerPlan } from "./installer-planner.js";
-import { runNativeCommand } from "./native-runner.js";
+import { runNativeCommand, type NativeCommandResult, type NativeCommandSpec } from "./native-runner.js";
 import { createPlatformAdapter } from "./platform-adapter.js";
 import { normalizePathInput, resolveProjectPaths } from "./paths.js";
 import { emitRitualProgress, progressStatusFromOutcome, type RitualProgressSink } from "./ritual-progress.js";
@@ -27,6 +27,7 @@ export interface SelfUpdateOptions {
   writeStatus?: boolean;
   stdio?: "inherit" | "pipe";
   onProgress?: RitualProgressSink;
+  runCommand?: (spec: NativeCommandSpec) => NativeCommandResult;
 }
 
 export interface SelfUpdateReport {
@@ -34,6 +35,8 @@ export interface SelfUpdateReport {
   command: string[];
   plan: InstallerPlan;
   message: string;
+  stdoutTail?: string;
+  stderrTail?: string;
   postUpdate?: PostUpdateRitualReport;
 }
 
@@ -412,7 +415,8 @@ export function runSelfUpdate(options: SelfUpdateOptions = {}): SelfUpdateReport
     status: "running",
     message: "Waiting for bootstrap to finish.",
   });
-  const result = runNativeCommand({
+  const runCommand = options.runCommand ?? runNativeCommand;
+  const result = runCommand({
     command: command[0],
     args: command.slice(1),
     stdio: options.stdio ?? "inherit",
@@ -434,10 +438,19 @@ export function runSelfUpdate(options: SelfUpdateOptions = {}): SelfUpdateReport
       status: "fail",
       message: result.error,
     });
-    return { status: "error", command, plan, message: result.error };
+    return {
+      status: "error",
+      command,
+      plan,
+      message: `Could not start the OGB bootstrap command: ${result.error}`,
+      stdoutTail: outputTail(result.stdout),
+      stderrTail: outputTail(result.stderr),
+    };
   }
   if (result.status !== 0) {
     const message = `Bootstrap exited with code ${result.status ?? "unknown"}.`;
+    const stdoutTail = outputTail(result.stdout);
+    const stderrTail = outputTail(result.stderr);
     emitRitualProgress(options.onProgress, {
       stepId: "download",
       label: "Download the official release pack.",
@@ -450,9 +463,9 @@ export function runSelfUpdate(options: SelfUpdateOptions = {}): SelfUpdateReport
       label: "Apply the installer.",
       detail: "Replaces the OGB CLI and managed profile files.",
       status: "fail",
-      message: outputTail(result.stderr) ?? outputTail(result.stdout) ?? message,
+      message: stderrTail ?? stdoutTail ?? message,
     });
-    return { status: "error", command, plan, message };
+    return { status: "error", command, plan, message, stdoutTail, stderrTail };
   }
   emitRitualProgress(options.onProgress, {
     stepId: "download",

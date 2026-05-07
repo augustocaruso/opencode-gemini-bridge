@@ -161,6 +161,22 @@ test("live progress model turns thrown errors into a visible failed todo", () =>
   assert.equal(failed.statusLabel, "FAIL");
   assert.equal(failed.steps[0].status, "fail");
   assert.match(failed.callouts[0], /boom/);
+  assert.match(failed.next[0], /plain/);
+});
+
+test("unexpected command errors get PATH-specific next actions", () => {
+  const started = applyRitualProgressEvent(createLiveRitualModel("update", projectRoot, [
+    { stepId: "install", label: "apply installer" },
+  ], { now: 1000, width: 100 }), {
+    stepId: "install",
+    label: "apply installer",
+    status: "running",
+  });
+
+  const failed = failLiveRitualModel(started, new Error("ENOENT: opencode.cmd not found"), { now: 2000 });
+
+  assert.match(failed.next[0], /PATH/);
+  assert.match(failed.next[1], /ogb update --plain/);
 });
 
 test("check ritual view model highlights projected bridge assets", () => {
@@ -232,4 +248,60 @@ test("install, reset and update models expose user-facing next steps", () => {
   assert.ok(ritualViewModel("install", install).next.some((item) => /ready/.test(item)));
   assert.ok(ritualViewModel("reset", reset).next.some((item) => /rebuilt/.test(item)));
   assert.ok(ritualViewModel("update", update).next.some((item) => /Restart OpenCode/.test(item)));
+});
+
+test("install and reset final models keep nested check blockers specific", () => {
+  const failingCheck = passReport({
+    outcome: "fail",
+    blockers: [{
+      severity: "fail",
+      source: "validation",
+      message: "Validation falhou: Global OpenCode config: opencode.json is missing.",
+      action: "Rode `ogb validate --plain` para ver os checks detalhados.",
+    }],
+  });
+  const install: InstallReport = {
+    version: "0.0.61",
+    projectRoot,
+    homeDir,
+    homeMode: false,
+    outcome: "fail",
+    plan: buildInstallerPlan({ intent: "install", projectRoot, homeDir }),
+    warnings: ["fallback warning"],
+    check: failingCheck,
+  };
+  const reset: ResetReport = {
+    version: "0.0.61",
+    homeDir,
+    outcome: "pass",
+    plan: buildInstallerPlan({ intent: "reset", projectRoot: homeDir, homeDir }),
+    globalConfigPath: `${homeDir}/.config/opencode/opencode.json`,
+    exaEnv: { status: "configured", message: "OPENCODE_ENABLE_EXA=1 configured." },
+    cleanup: { homeDir, dryRun: false, actions: [], warnings: [] },
+    warnings: [],
+    check: failingCheck,
+  };
+
+  const installModel = ritualViewModel("install", install);
+  const resetModel = ritualViewModel("reset", reset);
+
+  assert.match(installModel.callouts[0], /Global OpenCode config/);
+  assert.match(installModel.next[0], /ogb validate --plain/);
+  assert.match(resetModel.callouts[0], /Global OpenCode config/);
+  assert.match(resetModel.next[0], /ogb validate --plain/);
+});
+
+test("update final model surfaces bootstrap tails and useful retry actions", () => {
+  const model = ritualViewModel("update", {
+    status: "error",
+    command: ["bash", "-lc", "bootstrap"],
+    plan: buildInstallerPlan({ intent: "update", projectRoot, homeDir, release: "v0.0.61" }),
+    message: "Bootstrap exited with code 1.",
+    stderrTail: "npm is not recognized as a command",
+    stdoutTail: "Downloading OGB",
+  });
+
+  assert.equal(model.statusLabel, "FAIL");
+  assert.match(model.callouts.join("\n"), /npm is not recognized/);
+  assert.match(model.next[0], /ogb update --plain/);
 });
