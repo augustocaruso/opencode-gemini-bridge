@@ -4,6 +4,7 @@ import { buildInstallerPlan, type InstallerPlan } from "./installer-planner.js";
 import { runNativeCommand } from "./native-runner.js";
 import { createPlatformAdapter } from "./platform-adapter.js";
 import { normalizePathInput, resolveProjectPaths } from "./paths.js";
+import { emitRitualProgress, progressStatusFromOutcome, type RitualProgressSink } from "./ritual-progress.js";
 import { writeStateRecord } from "./state-store.js";
 import { OGB_VERSION } from "./types.js";
 import type { RulesyncMode } from "./rulesync.js";
@@ -24,6 +25,8 @@ export interface SelfUpdateOptions {
   dryRun?: boolean;
   postUpdate?: boolean;
   writeStatus?: boolean;
+  stdio?: "inherit" | "pipe";
+  onProgress?: RitualProgressSink;
 }
 
 export interface SelfUpdateReport {
@@ -348,38 +351,155 @@ export function buildSelfUpdateCommand(options: SelfUpdateOptions = {}, platform
 }
 
 export function runSelfUpdate(options: SelfUpdateOptions = {}): SelfUpdateReport {
+  emitRitualProgress(options.onProgress, {
+    stepId: "resolve",
+    label: "Resolve the requested release.",
+    detail: options.version && options.version !== "latest" ? options.version : "Uses the latest GitHub release.",
+    status: "running",
+  });
   const command = buildSelfUpdateCommand(options);
   const plan = buildUpdatePlan(options);
+  emitRitualProgress(options.onProgress, {
+    stepId: "resolve",
+    label: "Resolve the requested release.",
+    detail: options.version && options.version !== "latest" ? options.version : "Uses the latest GitHub release.",
+    status: "pass",
+    message: options.version && options.version !== "latest" ? `Release ${options.version} selected.` : "Latest release selected.",
+  });
   if (options.dryRun) {
+    emitRitualProgress(options.onProgress, {
+      stepId: "download",
+      label: "Download the official release pack.",
+      detail: "Runs the platform bootstrap script for this machine.",
+      status: "skipped",
+      message: "Dry-run preview; download skipped.",
+    });
+    emitRitualProgress(options.onProgress, {
+      stepId: "install",
+      label: "Apply the installer.",
+      detail: "Replaces the OGB CLI and managed profile files.",
+      status: "skipped",
+      message: "Dry-run preview; install skipped.",
+    });
+    const postUpdate = runPostUpdateRitual({ ...options, dryRun: true });
+    emitRitualProgress(options.onProgress, {
+      stepId: "post-check",
+      label: "Run the full post-update check.",
+      detail: "Refreshes setup, sync, doctor, validation, security, and dashboard.",
+      status: progressStatusFromOutcome(postUpdate.status),
+      message: postUpdate.message,
+    });
     return {
       status: "preview",
       command,
       plan,
       message: "Would download the selected OGB release and rerun the official bootstrap installer.",
-      postUpdate: runPostUpdateRitual({ ...options, dryRun: true }),
+      postUpdate,
     };
   }
 
+  emitRitualProgress(options.onProgress, {
+    stepId: "download",
+    label: "Download the official release pack.",
+    detail: "Runs the platform bootstrap script for this machine.",
+    status: "running",
+    message: "Bootstrap is running.",
+  });
+  emitRitualProgress(options.onProgress, {
+    stepId: "install",
+    label: "Apply the installer.",
+    detail: "Replaces the OGB CLI and managed profile files.",
+    status: "running",
+    message: "Waiting for bootstrap to finish.",
+  });
   const result = runNativeCommand({
     command: command[0],
     args: command.slice(1),
-    stdio: "inherit",
+    stdio: options.stdio ?? "inherit",
     env: process.env,
   });
 
   if (result.error) {
+    emitRitualProgress(options.onProgress, {
+      stepId: "download",
+      label: "Download the official release pack.",
+      detail: "Runs the platform bootstrap script for this machine.",
+      status: "fail",
+      message: result.error,
+    });
+    emitRitualProgress(options.onProgress, {
+      stepId: "install",
+      label: "Apply the installer.",
+      detail: "Replaces the OGB CLI and managed profile files.",
+      status: "fail",
+      message: result.error,
+    });
     return { status: "error", command, plan, message: result.error };
   }
   if (result.status !== 0) {
-    return { status: "error", command, plan, message: `Bootstrap exited with code ${result.status ?? "unknown"}.` };
+    const message = `Bootstrap exited with code ${result.status ?? "unknown"}.`;
+    emitRitualProgress(options.onProgress, {
+      stepId: "download",
+      label: "Download the official release pack.",
+      detail: "Runs the platform bootstrap script for this machine.",
+      status: "fail",
+      message,
+    });
+    emitRitualProgress(options.onProgress, {
+      stepId: "install",
+      label: "Apply the installer.",
+      detail: "Replaces the OGB CLI and managed profile files.",
+      status: "fail",
+      message: outputTail(result.stderr) ?? outputTail(result.stdout) ?? message,
+    });
+    return { status: "error", command, plan, message };
   }
+  emitRitualProgress(options.onProgress, {
+    stepId: "download",
+    label: "Download the official release pack.",
+    detail: "Runs the platform bootstrap script for this machine.",
+    status: "pass",
+    message: "Bootstrap completed.",
+  });
+  emitRitualProgress(options.onProgress, {
+    stepId: "install",
+    label: "Apply the installer.",
+    detail: "Replaces the OGB CLI and managed profile files.",
+    status: "pass",
+    message: "Installer completed.",
+  });
   let successStatus: AutoUpdateReport | undefined;
   try {
     if (options.writeStatus !== false) successStatus = writeSelfUpdateSuccessStatus(options);
   } catch {
     // Updating dashboard status must never turn a successful bootstrap into a failed self-update.
   }
+  if (options.postUpdate === false) {
+    emitRitualProgress(options.onProgress, {
+      stepId: "post-check",
+      label: "Run the full post-update check.",
+      detail: "Refreshes setup, sync, doctor, validation, security, and dashboard.",
+      status: "skipped",
+      message: "Post-update check skipped because setup was disabled.",
+    });
+  } else {
+    emitRitualProgress(options.onProgress, {
+      stepId: "post-check",
+      label: "Run the full post-update check.",
+      detail: "Refreshes setup, sync, doctor, validation, security, and dashboard.",
+      status: "running",
+    });
+  }
   const postUpdate = options.postUpdate === false ? undefined : runPostUpdateRitual(options);
+  if (postUpdate) {
+    emitRitualProgress(options.onProgress, {
+      stepId: "post-check",
+      label: "Run the full post-update check.",
+      detail: "Refreshes setup, sync, doctor, validation, security, and dashboard.",
+      status: progressStatusFromOutcome(postUpdate.status),
+      message: postUpdate.message,
+    });
+  }
   if (successStatus && postUpdate) {
     try {
       writeUpdateReport(options.projectRoot, { ...successStatus, postUpdate });

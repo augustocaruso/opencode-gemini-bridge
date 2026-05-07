@@ -13,6 +13,7 @@ import { hookTrustKey, readTrustFile, writeTrustFile } from "./trust.js";
 import { OGB_VERSION } from "./types.js";
 import { runValidation, type ValidationReport } from "./validation.js";
 import type { RulesyncMode } from "./rulesync.js";
+import { emitRitualProgress, progressStatusFromFindings, progressStatusFromOutcome, type RitualProgressSink } from "./ritual-progress.js";
 import { writeStateRecord } from "./state-store.js";
 
 export interface PassOptions {
@@ -31,6 +32,7 @@ export interface PassOptions {
   silent?: boolean;
   setExitCode?: boolean;
   rulesyncMode?: RulesyncMode;
+  onProgress?: RitualProgressSink;
 }
 
 export interface PassBlocker {
@@ -156,6 +158,56 @@ function syncSummaryLine(sync: PassSyncSummary): string {
   return parts.length > 0 ? parts.join(", ") : "sem arquivos projetados";
 }
 
+const CHECK_PROGRESS = {
+  setup: {
+    stepId: "setup",
+    label: "Ensure OpenCode startup sync is installed.",
+    detail: "Checks the plugin file, global registration, and command wiring.",
+  },
+  sync: {
+    stepId: "sync",
+    label: "Sync Gemini resources into OpenCode.",
+    detail: "Projects context, MCPs, agents, commands, and skills into the right scope.",
+  },
+  doctor: {
+    stepId: "doctor",
+    label: "Inspect the bridge inventory with doctor.",
+    detail: "Looks for missing generated files, plugin state, extension risk, and stale status.",
+  },
+  hooks: {
+    stepId: "hook-review",
+    label: "Record reviewed Gemini hooks.",
+    detail: "Stores trusted hook hashes when --accept-hooks is used.",
+  },
+  validation: {
+    stepId: "validate",
+    label: "Validate the resolved OpenCode configuration.",
+    detail: "Checks global/project config, instructions, MCPs, and plugin references.",
+  },
+  security: {
+    stepId: "security",
+    label: "Run the security guardrails.",
+    detail: "Reviews YOLO permissions, secret patterns, MCP env, and extension trust surface.",
+  },
+  dashboard: {
+    stepId: "dashboard",
+    label: "Refresh the dashboard summary.",
+    detail: "Writes the final status, warnings, next actions, and report paths.",
+  },
+} as const;
+
+type CheckProgressKey = keyof typeof CHECK_PROGRESS;
+
+function emitCheckProgress(
+  sink: RitualProgressSink | undefined,
+  key: CheckProgressKey,
+  status: Parameters<typeof emitRitualProgress>[1]["status"],
+  message?: string,
+): void {
+  const step = CHECK_PROGRESS[key];
+  emitRitualProgress(sink, { ...step, status, message });
+}
+
 function friendlyBlockerMessage(item: PassBlocker): string {
   if (/opencode-auto-fallback.*plugin is not active/i.test(item.message)) {
     return "Auto fallback esta ligado, mas o plugin externo nao carregou.";
@@ -250,52 +302,137 @@ export function runPass(options: PassOptions = {}): PassReport {
   let dashboard: DashboardReport | undefined;
 
   if (!options.skipSetup) {
-    setup = setupOpenCode({
-      projectRoot: paths.projectRoot,
-      homeDir: paths.homeDir,
-      dryRun: options.dryRun,
-      force: options.force,
-      skipDoctor: true,
-      skipCommandCheck: true,
-    });
+    emitCheckProgress(options.onProgress, "setup", "running");
+    try {
+      setup = setupOpenCode({
+        projectRoot: paths.projectRoot,
+        homeDir: paths.homeDir,
+        dryRun: options.dryRun,
+        force: options.force,
+        skipDoctor: true,
+        skipCommandCheck: true,
+      });
+    } catch (error) {
+      emitCheckProgress(options.onProgress, "setup", "fail", error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    emitCheckProgress(
+      options.onProgress,
+      "setup",
+      setup.warnings.length > 0 ? "warn" : "pass",
+      setup.warnings.length > 0 ? `${setup.warnings.length} warning(s)` : "Startup sync wiring is present.",
+    );
     automated.push("setup-opencode");
     for (const warning of setup.warnings) blockers.push(blocker("setup", "warn", warning, "Revise conflitos do setup; rode `ogb check --force` se quiser sobrescrever arquivos gerenciados."));
   }
 
   if (!options.skipSync) {
-    sync = syncToOpenCode({
-      projectRoot: paths.projectRoot,
-      homeDir: paths.homeDir,
-      dryRun: options.dryRun,
-      force: options.force,
-      silent: true,
-      rulesyncMode: options.rulesyncMode,
-    });
+    emitCheckProgress(options.onProgress, "sync", "running");
+    try {
+      sync = syncToOpenCode({
+        projectRoot: paths.projectRoot,
+        homeDir: paths.homeDir,
+        dryRun: options.dryRun,
+        force: options.force,
+        silent: true,
+        rulesyncMode: options.rulesyncMode,
+      });
+    } catch (error) {
+      emitCheckProgress(options.onProgress, "sync", "fail", error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    emitCheckProgress(
+      options.onProgress,
+      "sync",
+      sync.warnings.length > 0 ? "warn" : "pass",
+      sync.warnings.length > 0
+        ? `${sync.warnings.length} warning(s)`
+        : `${sync.projectedSkills.length} skill(s), ${sync.projectedCommands.length} command(s), ${sync.projectedAgents.length + sync.projectedExtensionAgents.length} agent(s) projected.`,
+    );
     automated.push("sync");
     for (const warning of sync.warnings) blockers.push(blocker("sync", "warn", warning, "Revise conflitos do sync; rode `ogb check --force` se quiser sobrescrever arquivos gerenciados."));
   }
 
-  let doctor = runDoctor({ projectRoot: paths.projectRoot, homeDir: paths.homeDir, silent: true });
+  emitCheckProgress(options.onProgress, "doctor", "running");
+  let doctor: DoctorReport;
+  try {
+    doctor = runDoctor({ projectRoot: paths.projectRoot, homeDir: paths.homeDir, silent: true });
+  } catch (error) {
+    emitCheckProgress(options.onProgress, "doctor", "fail", error instanceof Error ? error.message : String(error));
+    throw error;
+  }
+  emitCheckProgress(
+    options.onProgress,
+    "doctor",
+    progressStatusFromFindings(doctor.errors.length, doctor.warnings.length),
+    doctor.errors.length > 0
+      ? `${doctor.errors.length} error(s)`
+      : doctor.warnings.length > 0
+        ? `${doctor.warnings.length} warning(s)`
+        : "Doctor is clean.",
+  );
   automated.push("doctor");
 
-  const acceptedHooks = options.acceptHooks ? acceptCurrentHooks(paths.projectRoot, paths.homeDir, options.dryRun) : [];
+  let acceptedHooks: string[] = [];
+  if (options.acceptHooks) {
+    emitCheckProgress(options.onProgress, "hooks", "running");
+    try {
+      acceptedHooks = acceptCurrentHooks(paths.projectRoot, paths.homeDir, options.dryRun);
+    } catch (error) {
+      emitCheckProgress(options.onProgress, "hooks", "fail", error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    emitCheckProgress(options.onProgress, "hooks", "pass", `${acceptedHooks.length} hook(s) accepted.`);
+  }
   if (acceptedHooks.length > 0) {
+    emitCheckProgress(options.onProgress, "doctor", "running", "Rechecking after hook trust update.");
     doctor = runDoctor({ projectRoot: paths.projectRoot, homeDir: paths.homeDir, silent: true });
+    emitCheckProgress(
+      options.onProgress,
+      "doctor",
+      progressStatusFromFindings(doctor.errors.length, doctor.warnings.length),
+      doctor.errors.length > 0
+        ? `${doctor.errors.length} error(s)`
+        : doctor.warnings.length > 0
+          ? `${doctor.warnings.length} warning(s)`
+          : "Doctor is clean after hook review.",
+    );
     automated.push("doctor-after-hook-acceptance");
   }
 
   if (!options.skipValidation) {
-    validation = runValidation({ projectRoot: paths.projectRoot, homeDir: paths.homeDir, silent: true, windows: options.windows });
+    emitCheckProgress(options.onProgress, "validation", "running");
+    try {
+      validation = runValidation({ projectRoot: paths.projectRoot, homeDir: paths.homeDir, silent: true, windows: options.windows });
+    } catch (error) {
+      emitCheckProgress(options.onProgress, "validation", "fail", error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    emitCheckProgress(options.onProgress, "validation", progressStatusFromOutcome(validation.outcome), validation.outcome === "pass" ? "Validation is clean." : `Validation outcome: ${validation.outcome}.`);
     automated.push("validate");
   }
 
   if (!options.skipSecurity) {
-    security = runSecurityCheck({ projectRoot: paths.projectRoot, homeDir: paths.homeDir, silent: true });
+    emitCheckProgress(options.onProgress, "security", "running");
+    try {
+      security = runSecurityCheck({ projectRoot: paths.projectRoot, homeDir: paths.homeDir, silent: true });
+    } catch (error) {
+      emitCheckProgress(options.onProgress, "security", "fail", error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    emitCheckProgress(options.onProgress, "security", progressStatusFromOutcome(security.outcome), security.outcome === "pass" ? "Security guardrails are clean." : `Security outcome: ${security.outcome}.`);
     automated.push("security-check");
   }
 
   if (!options.skipDashboard) {
-    dashboard = runDashboard({ projectRoot: paths.projectRoot, homeDir: paths.homeDir, silent: true, refresh: false });
+    emitCheckProgress(options.onProgress, "dashboard", "running");
+    try {
+      dashboard = runDashboard({ projectRoot: paths.projectRoot, homeDir: paths.homeDir, silent: true, refresh: false });
+    } catch (error) {
+      emitCheckProgress(options.onProgress, "dashboard", "fail", error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    emitCheckProgress(options.onProgress, "dashboard", progressStatusFromOutcome(dashboard.outcome), dashboard.outcome === "pass" ? "Dashboard refreshed." : `Dashboard outcome: ${dashboard.outcome}.`);
     automated.push("dashboard");
   }
 

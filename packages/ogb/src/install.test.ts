@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { runInstall } from "./install.js";
+import type { RitualProgressEvent } from "./ritual-progress.js";
 import { readStateRecord } from "./state-store.js";
 
 function tempRoot(): string {
@@ -33,6 +34,34 @@ test("runInstall previews setup without running the final check", () => {
   assert.equal(report.check, undefined);
   assert.ok(report.setup.writes.some((write) => write.status === "preview"));
   assert.equal(fs.existsSync(path.join(projectRoot, ".opencode", "ogb.config.jsonc")), false);
+});
+
+test("runInstall emits top-level ritual progress", () => {
+  const root = tempRoot();
+  const homeDir = path.join(root, "home");
+  const projectRoot = path.join(root, "project");
+  const events: RitualProgressEvent[] = [];
+  fs.mkdirSync(projectRoot, { recursive: true });
+
+  runInstall({
+    projectRoot,
+    homeDir,
+    dryRun: true,
+    installOpenCode: false,
+    installPlugins: false,
+    installTuiDependencies: false,
+    onProgress: (event) => events.push(event),
+  });
+
+  assert.deepEqual([...new Set(events.map((event) => event.stepId))], [
+    "cleanup",
+    "profile",
+    "opencode",
+    "plugins",
+    "project-profile",
+    "check",
+  ]);
+  assert.equal(events.find((event) => event.stepId === "check")?.status, "skipped");
 });
 
 test("runInstall applies the current install flow and finishes with check", () => {

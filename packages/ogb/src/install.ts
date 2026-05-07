@@ -2,6 +2,7 @@ import { cleanupHomeProjectArtifacts, type HomeCleanupReport } from "./home-clea
 import { buildInstallerPlan, type InstallerPlan } from "./installer-planner.js";
 import { runPass, type PassReport } from "./pass.js";
 import { resolveProjectPaths } from "./paths.js";
+import { emitRitualProgress, progressStatusFromOutcome, type RitualProgressSink } from "./ritual-progress.js";
 import { setupUx, type SetupUxReport } from "./setup-ux.js";
 import { OGB_VERSION } from "./types.js";
 import type { RulesyncMode } from "./rulesync.js";
@@ -25,6 +26,7 @@ export interface InstallOptions {
   acceptHooks?: boolean;
   windows?: boolean;
   rulesyncMode?: RulesyncMode;
+  onProgress?: RitualProgressSink;
 }
 
 export interface InstallReport {
@@ -61,35 +63,180 @@ export function runInstall(options: InstallOptions = {}): InstallReport {
   });
   const cleanup = options.cleanupHome === false
     ? undefined
-    : cleanupHomeProjectArtifacts({ homeDir: paths.homeDir, dryRun: options.dryRun });
+    : (() => {
+      emitRitualProgress(options.onProgress, {
+        stepId: "cleanup",
+        label: "Clean old home-project artifacts.",
+        detail: "Backs up accidental home checkout files and removes empty leftovers.",
+        status: "running",
+      });
+      try {
+        const report = cleanupHomeProjectArtifacts({ homeDir: paths.homeDir, dryRun: options.dryRun });
+        emitRitualProgress(options.onProgress, {
+          stepId: "cleanup",
+          label: "Clean old home-project artifacts.",
+          detail: "Backs up accidental home checkout files and removes empty leftovers.",
+          status: report.warnings.length > 0 ? "warn" : "pass",
+          message: `${report.actions.length} action(s)${report.backupDir ? ", backup created" : ""}.`,
+        });
+        return report;
+      } catch (error) {
+        emitRitualProgress(options.onProgress, {
+          stepId: "cleanup",
+          label: "Clean old home-project artifacts.",
+          detail: "Backs up accidental home checkout files and removes empty leftovers.",
+          status: "fail",
+          message: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    })();
+  if (options.cleanupHome === false) {
+    emitRitualProgress(options.onProgress, {
+      stepId: "cleanup",
+      label: "Clean old home-project artifacts.",
+      detail: "Backs up accidental home checkout files and removes empty leftovers.",
+      status: "skipped",
+      message: "Skipped by --no-cleanup-home.",
+    });
+  }
+
   const setup = options.ux === false
     ? undefined
-    : setupUx({
-      projectRoot: paths.projectRoot,
-      homeDir: paths.homeDir,
-      platform: options.platform,
-      env: options.env,
-      dryRun: options.dryRun,
-      force: options.force,
-      resetGlobal: options.resetGlobal,
-      installOpenCode: options.installOpenCode,
-      installPlugins: options.installPlugins,
-      installTuiDependencies: options.installTuiDependencies,
-      writeProjectProfile: options.writeProjectProfile,
-    });
+    : (() => {
+      emitRitualProgress(options.onProgress, {
+        stepId: "profile",
+        label: "Apply the OpenCode profile.",
+        detail: options.resetGlobal ? "Overwrites global config from OGB defaults." : "Merges managed global settings and writes the project/global profile.",
+        status: "running",
+      });
+      try {
+        const report = setupUx({
+          projectRoot: paths.projectRoot,
+          homeDir: paths.homeDir,
+          platform: options.platform,
+          env: options.env,
+          dryRun: options.dryRun,
+          force: options.force,
+          resetGlobal: options.resetGlobal,
+          installOpenCode: options.installOpenCode,
+          installPlugins: options.installPlugins,
+          installTuiDependencies: options.installTuiDependencies,
+          writeProjectProfile: options.writeProjectProfile,
+        });
+        const changedWrites = report.writes.filter((write) => write.status !== "unchanged").length;
+        const activeCommands = report.commands.filter((command) => command.status !== "skipped").length;
+        const status = report.warnings.length > 0 ? "warn" : "pass";
+        emitRitualProgress(options.onProgress, {
+          stepId: "profile",
+          label: "Apply the OpenCode profile.",
+          detail: options.resetGlobal ? "Overwrites global config from OGB defaults." : "Merges managed global settings and writes the project/global profile.",
+          status,
+          message: `${changedWrites} write(s), ${activeCommands} command(s).`,
+        });
+        const openCodeCommand = report.commands.find((command) => command.command.some((part) => /opencode-ai|opencode(?:\.cmd)?$/i.test(part)));
+        emitRitualProgress(options.onProgress, {
+          stepId: "opencode",
+          label: "Verify OpenCode is available.",
+          detail: "Installs or updates OpenCode when the platform flow allows it.",
+          status: options.installOpenCode === false ? "skipped" : openCodeCommand?.status === "fail" ? "warn" : status,
+          message: options.installOpenCode === false ? "Skipped by --no-install-opencode." : openCodeCommand?.message ?? "OpenCode availability was checked.",
+        });
+        emitRitualProgress(options.onProgress, {
+          stepId: "plugins",
+          label: "Install global OpenCode plugins.",
+          detail: "Covers auth, fallback, sidebar, and OGB startup sync integrations.",
+          status: options.installPlugins === false ? "skipped" : status,
+          message: options.installPlugins === false ? "Skipped by --no-plugins." : `${activeCommands} setup command(s) checked.`,
+        });
+        emitRitualProgress(options.onProgress, {
+          stepId: "project-profile",
+          label: "Write the project or global profile.",
+          detail: "Home uses global files; projects get the managed OGB profile.",
+          status: options.writeProjectProfile === false ? "skipped" : status,
+          message: paths.homeMode ? "Home/global profile was used." : "Project profile was checked.",
+        });
+        return report;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        for (const stepId of ["profile", "opencode", "plugins", "project-profile"]) {
+          emitRitualProgress(options.onProgress, {
+            stepId,
+            label: stepId === "opencode" ? "Verify OpenCode is available." : stepId === "plugins" ? "Install global OpenCode plugins." : stepId === "project-profile" ? "Write the project or global profile." : "Apply the OpenCode profile.",
+            detail: stepId === "opencode" ? "Installs or updates OpenCode when the platform flow allows it." : stepId === "plugins" ? "Covers auth, fallback, sidebar, and OGB startup sync integrations." : stepId === "project-profile" ? "Home uses global files; projects get the managed OGB profile." : "Merges managed global settings and writes the project/global profile.",
+            status: "fail",
+            message,
+          });
+        }
+        throw error;
+      }
+    })();
+  if (options.ux === false) {
+    for (const [stepId, label] of [
+      ["profile", "Apply the OpenCode profile."],
+      ["opencode", "Verify OpenCode is available."],
+      ["plugins", "Install global OpenCode plugins."],
+      ["project-profile", "Write the project or global profile."],
+    ] as const) {
+      emitRitualProgress(options.onProgress, {
+        stepId,
+        label,
+        detail: "Skipped because the OpenCode UX setup was disabled.",
+        status: "skipped",
+        message: "Skipped by --no-ux.",
+      });
+    }
+  }
+
   const check = options.dryRun || options.check === false
     ? undefined
-    : runPass({
-      projectRoot: paths.projectRoot,
-      homeDir: paths.homeDir,
-      dryRun: options.dryRun,
-      force: options.force,
-      acceptHooks: options.acceptHooks,
-      windows: options.windows,
-      silent: true,
-      setExitCode: false,
-      rulesyncMode: options.rulesyncMode,
+    : (() => {
+      emitRitualProgress(options.onProgress, {
+        stepId: "check",
+        label: "Run the full bridge check.",
+        detail: "Covers setup, sync, doctor, validation, security, and dashboard.",
+        status: "running",
+      });
+      try {
+        const report = runPass({
+          projectRoot: paths.projectRoot,
+          homeDir: paths.homeDir,
+          dryRun: options.dryRun,
+          force: options.force,
+          acceptHooks: options.acceptHooks,
+          windows: options.windows,
+          silent: true,
+          setExitCode: false,
+          rulesyncMode: options.rulesyncMode,
+        });
+        emitRitualProgress(options.onProgress, {
+          stepId: "check",
+          label: "Run the full bridge check.",
+          detail: "Covers setup, sync, doctor, validation, security, and dashboard.",
+          status: progressStatusFromOutcome(report.outcome),
+          message: report.outcome === "pass" ? "Full check is clean." : `Full check outcome: ${report.outcome}.`,
+        });
+        return report;
+      } catch (error) {
+        emitRitualProgress(options.onProgress, {
+          stepId: "check",
+          label: "Run the full bridge check.",
+          detail: "Covers setup, sync, doctor, validation, security, and dashboard.",
+          status: "fail",
+          message: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    })();
+  if (options.dryRun || options.check === false) {
+    emitRitualProgress(options.onProgress, {
+      stepId: "check",
+      label: "Run the full bridge check.",
+      detail: "Covers setup, sync, doctor, validation, security, and dashboard.",
+      status: "skipped",
+      message: options.dryRun ? "Skipped in dry-run preview." : "Skipped by --no-check.",
     });
+  }
   const warnings = [
     ...(cleanup?.warnings ?? []),
     ...(setup?.warnings ?? []),

@@ -1,9 +1,9 @@
-import { Writable } from "node:stream";
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, render, type Instance } from "ink";
 import type { InstallReport } from "./install.js";
 import type { PassReport } from "./pass.js";
 import type { ResetReport } from "./reset.js";
+import type { RitualProgressDefinition, RitualProgressEvent, RitualProgressSink, RitualProgressStatus } from "./ritual-progress.js";
 import type { SelfUpdateReport } from "./self-update.js";
 
 export type RitualKind = "install" | "check" | "reset" | "update";
@@ -21,14 +21,6 @@ export interface RitualStep {
   detail?: string;
 }
 
-export type RitualProgressStatus = "running" | "queued" | "waiting";
-
-export interface RitualProgressStep {
-  label: string;
-  status?: RitualProgressStatus;
-  detail?: string;
-}
-
 export interface RitualViewModel {
   title: string;
   subtitle: string;
@@ -41,12 +33,27 @@ export interface RitualViewModel {
   files: string[];
 }
 
-export interface RitualProgressModel {
+export interface LiveRitualStep extends RitualProgressDefinition {
+  status: RitualProgressStatus;
+  message?: string;
+}
+
+export interface LiveRitualModel {
+  kind: RitualKind;
   title: string;
   subtitle: string;
-  steps: RitualProgressStep[];
-  note: string;
-  active: string;
+  statusLabel: string;
+  tone: RitualTone;
+  startedAt: number;
+  finishedAt?: number;
+  currentStepId?: string;
+  steps: LiveRitualStep[];
+  metrics: RitualMetric[];
+  callouts: string[];
+  next: string[];
+  files: string[];
+  final: boolean;
+  width: number;
 }
 
 export interface RitualUiOptions {
@@ -56,33 +63,11 @@ export interface RitualUiOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-class MemoryWriteStream extends Writable {
-  chunks: Buffer[] = [];
-  columns: number;
-  rows = 40;
-  isTTY = true;
-
-  constructor(columns: number) {
-    super();
-    this.columns = columns;
-  }
-
-  _write(chunk: Buffer | string, encoding: BufferEncoding, callback: (error?: Error | null) => void): void {
-    this.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding));
-    callback();
-  }
-
-  getColorDepth(): number {
-    return typeof process.stdout.getColorDepth === "function" ? process.stdout.getColorDepth() : 8;
-  }
-
-  hasColors(): boolean {
-    return true;
-  }
-
-  output(): string {
-    return Buffer.concat(this.chunks).toString("utf8");
-  }
+export interface RunWithRitualUiOptions<TReport extends InstallReport | PassReport | ResetReport | SelfUpdateReport> {
+  kind: RitualKind;
+  subtitle: string;
+  steps: RitualProgressDefinition[];
+  run: (sink: RitualProgressSink) => TReport | Promise<TReport>;
 }
 
 function titleForKind(kind: RitualKind): string {
@@ -105,7 +90,7 @@ function labelFromTone(tone: RitualTone): string {
   if (tone === "warn") return "WARN";
   if (tone === "fail") return "FAIL";
   if (tone === "preview") return "PREVIEW";
-  return "READY";
+  return "RUN";
 }
 
 function colorFromTone(tone: RitualTone): string {
@@ -116,29 +101,16 @@ function colorFromTone(tone: RitualTone): string {
   return "blue";
 }
 
+function toneFromProgress(status: RitualProgressStatus): RitualTone {
+  if (status === "pass") return "pass";
+  if (status === "warn") return "warn";
+  if (status === "fail") return "fail";
+  if (status === "skipped") return "preview";
+  return "neutral";
+}
+
 function frameWidth(): number {
-  const columns = process.stdout.columns ?? 100;
-  return Math.max(20, Math.min(columns, 96));
-}
-
-function statusMark(tone: RitualTone): string {
-  if (tone === "pass") return "OK";
-  if (tone === "warn") return "!!";
-  if (tone === "fail") return "XX";
-  if (tone === "preview") return "..";
-  return "--";
-}
-
-function progressMark(status: RitualProgressStatus | undefined): string {
-  if (status === "running") return "RUN";
-  if (status === "waiting") return "WAIT";
-  return "TODO";
-}
-
-function progressTone(status: RitualProgressStatus | undefined): RitualTone {
-  if (status === "running") return "neutral";
-  if (status === "waiting") return "warn";
-  return "preview";
+  return Math.max(20, process.stdout.columns ?? 100);
 }
 
 function countChangedWrites(report: InstallReport | ResetReport): number | undefined {
@@ -150,7 +122,7 @@ function countChangedWrites(report: InstallReport | ResetReport): number | undef
 function installModel(report: InstallReport): RitualViewModel {
   const tone = toneFromOutcome(report.outcome);
   const steps: RitualStep[] = [];
-  if (report.cleanup) steps.push({ label: "home cleanup", status: "pass", detail: `${report.cleanup.actions.length} action(s)` });
+  if (report.cleanup) steps.push({ label: "home cleanup", status: report.cleanup.warnings.length > 0 ? "warn" : "pass", detail: `${report.cleanup.actions.length} action(s)` });
   if (report.setup) steps.push({
     label: "OpenCode profile",
     status: report.setup.warnings.length > 0 ? "warn" : "pass",
@@ -212,7 +184,7 @@ function resetModel(report: ResetReport): RitualViewModel {
   const tone = toneFromOutcome(report.outcome);
   const steps: RitualStep[] = [
     { label: "websearch env", status: toneFromOutcome(report.exaEnv.status === "warning" ? "warn" : report.exaEnv.status === "preview" ? "preview" : "pass"), detail: report.exaEnv.message },
-    { label: "home cleanup", status: "pass", detail: `${report.cleanup.actions.length} action(s)` },
+    { label: "home cleanup", status: report.cleanup.warnings.length > 0 ? "warn" : "pass", detail: `${report.cleanup.actions.length} action(s)` },
   ];
   if (report.setup) steps.push({ label: "global UX", status: report.setup.warnings.length > 0 ? "warn" : "pass", detail: `${countChangedWrites(report) ?? 0} write(s)` });
   if (report.sync) steps.push({ label: "global sync", status: report.sync.warnings.length > 0 ? "warn" : "pass", detail: `${report.sync.projectedSkills.length} skill(s), ${report.sync.projectedCommands.length} command(s)` });
@@ -276,14 +248,115 @@ export function ritualViewModel(kind: RitualKind, report: InstallReport | PassRe
   return checkModel(report as PassReport);
 }
 
-export function ritualProgressModel(kind: RitualKind, subtitle: string, steps: RitualProgressStep[]): RitualProgressModel {
-  const active = steps.find((step) => step.status === "running")?.label ?? steps[0]?.label ?? "prepare ritual";
+export function createLiveRitualModel(
+  kind: RitualKind,
+  subtitle: string,
+  steps: RitualProgressDefinition[],
+  options: { now?: number; width?: number } = {},
+): LiveRitualModel {
   return {
-    title: `${titleForKind(kind)} in progress`,
+    kind,
+    title: titleForKind(kind),
     subtitle,
-    steps: steps.length > 0 ? steps : [{ label: "prepare ritual", status: "running" }],
-    note: "The final report will appear when this ritual finishes.",
-    active,
+    statusLabel: "RUN",
+    tone: "neutral",
+    startedAt: options.now ?? Date.now(),
+    currentStepId: steps[0]?.stepId,
+    steps: (steps.length > 0 ? steps : [{ stepId: "prepare", label: "Prepare ritual.", detail: "Loading the workflow." }]).map((step) => ({
+      ...step,
+      status: "queued",
+    })),
+    metrics: [],
+    callouts: [],
+    next: [],
+    files: [],
+    final: false,
+    width: options.width ?? frameWidth(),
+  };
+}
+
+export function applyRitualProgressEvent(model: LiveRitualModel, event: RitualProgressEvent): LiveRitualModel {
+  const existingIndex = model.steps.findIndex((step) => step.stepId === event.stepId);
+  const nextStep: LiveRitualStep = {
+    stepId: event.stepId,
+    label: event.label,
+    detail: event.detail,
+    status: event.status,
+    message: event.message,
+  };
+  const steps = existingIndex >= 0
+    ? model.steps.map((step, index) => index === existingIndex ? { ...step, ...nextStep, detail: event.detail ?? step.detail } : step)
+    : [...model.steps, nextStep];
+  return {
+    ...model,
+    steps,
+    currentStepId: event.status === "running" ? event.stepId : model.currentStepId,
+  };
+}
+
+function canonicalStepId(label: string): string {
+  const normalized = label.toLowerCase();
+  if (normalized.includes("setup")) return "setup";
+  if (normalized.includes("sync")) return "sync";
+  if (normalized.includes("doctor")) return "doctor";
+  if (normalized.includes("validate")) return "validate";
+  if (normalized.includes("security")) return "security";
+  if (normalized.includes("dashboard")) return "dashboard";
+  if (normalized.includes("cleanup")) return "cleanup";
+  if (normalized.includes("profile") || normalized.includes("ux")) return "profile";
+  if (normalized.includes("plugin")) return "plugins";
+  if (normalized.includes("check")) return "check";
+  return normalized.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function finalStepStatus(model: RitualViewModel, step: LiveRitualStep): LiveRitualStep {
+  if (step.status !== "queued" && step.status !== "running") return step;
+  const match = model.steps.find((candidate) => canonicalStepId(candidate.label) === step.stepId || candidate.label === step.label);
+  if (!match) return { ...step, status: step.status === "running" ? "pass" : "skipped" };
+  return {
+    ...step,
+    status: match.status === "pass" ? "pass" : match.status === "warn" ? "warn" : match.status === "fail" ? "fail" : "skipped",
+    message: match.detail,
+  };
+}
+
+export function finishLiveRitualModel(
+  model: LiveRitualModel,
+  report: InstallReport | PassReport | ResetReport | SelfUpdateReport,
+  options: { now?: number } = {},
+): LiveRitualModel {
+  const view = ritualViewModel(model.kind, report);
+  return {
+    ...model,
+    title: view.title,
+    subtitle: view.subtitle,
+    statusLabel: view.statusLabel,
+    tone: view.tone,
+    finishedAt: options.now ?? Date.now(),
+    currentStepId: undefined,
+    steps: model.steps.map((step) => finalStepStatus(view, step)),
+    metrics: view.metrics,
+    callouts: view.callouts,
+    next: view.next,
+    files: view.files,
+    final: true,
+  };
+}
+
+export function failLiveRitualModel(model: LiveRitualModel, error: unknown, options: { now?: number } = {}): LiveRitualModel {
+  const message = error instanceof Error ? error.message : String(error);
+  const steps = model.steps.map((step) => step.stepId === model.currentStepId || step.status === "running"
+    ? { ...step, status: "fail" as const, message }
+    : step);
+  return {
+    ...model,
+    statusLabel: "FAIL",
+    tone: "fail",
+    finishedAt: options.now ?? Date.now(),
+    steps,
+    callouts: [message],
+    next: ["Run the same command with --plain to see the classic logs.", "Run ogb dashboard for the last persisted bridge status."],
+    final: true,
   };
 }
 
@@ -303,6 +376,22 @@ export function cleanInkFrame(raw: string): string {
   return frames.at(-1) ?? withoutCursor.trimEnd();
 }
 
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
+function statusText(status: RitualProgressStatus, spinner: string): string {
+  if (status === "running") return spinner;
+  if (status === "pass") return "OK";
+  if (status === "warn") return "WARN";
+  if (status === "fail") return "FAIL";
+  if (status === "skipped") return "SKIP";
+  return "....";
+}
+
 function SectionTitle(props: { children?: React.ReactNode }) {
   return React.createElement(Text, { bold: true, color: "white" }, props.children);
 }
@@ -311,171 +400,157 @@ function MetricRow(props: { metric: RitualMetric }) {
   const tone = props.metric.tone ?? "neutral";
   return React.createElement(
     Box,
-    { flexDirection: "row", marginRight: 2 },
+    { flexDirection: "row", marginRight: 3 },
     React.createElement(Text, { color: "gray" }, `${props.metric.label} `),
     React.createElement(Text, { bold: true, color: colorFromTone(tone) }, props.metric.value),
   );
 }
 
-function StepRow(props: { step: RitualStep }) {
+function TodoRow(props: { step: LiveRitualStep; spinner: string }) {
+  const tone = toneFromProgress(props.step.status);
+  const active = props.step.status === "running";
+  const muted = props.step.status === "queued" || props.step.status === "skipped";
   return React.createElement(
     Box,
-    { flexDirection: "row" },
-    React.createElement(Text, { color: colorFromTone(props.step.status), bold: true }, statusMark(props.step.status).padEnd(4)),
-    React.createElement(Text, { bold: true }, props.step.label),
-    props.step.detail ? React.createElement(Text, { color: "gray" }, `  ${props.step.detail}`) : null,
-  );
-}
-
-function ProgressStepRow(props: { step: RitualProgressStep }) {
-  return React.createElement(
-    Box,
-    { flexDirection: "column", marginBottom: 0 },
+    { flexDirection: "column", marginTop: 1 },
     React.createElement(
       Box,
       { flexDirection: "row" },
-      React.createElement(Text, { color: "gray" }, `${progressMark(props.step.status).padEnd(6)} `),
-      React.createElement(Text, { bold: true }, props.step.label),
+      React.createElement(Text, { color: colorFromTone(tone), bold: active || props.step.status === "fail" || props.step.status === "warn" }, `${statusText(props.step.status, props.spinner).padEnd(5)} `),
+      React.createElement(Text, { bold: active, color: muted ? "gray" : undefined }, props.step.label),
     ),
-    props.step.detail ? React.createElement(Box, { marginLeft: 7 },
-      React.createElement(Text, { color: "gray" }, props.step.detail),
-    ) : null,
+    props.step.detail
+      ? React.createElement(Box, { marginLeft: 6 },
+        React.createElement(Text, { color: "gray" }, props.step.detail),
+      )
+      : null,
+    props.step.message
+      ? React.createElement(Box, { marginLeft: 6 },
+        React.createElement(Text, { color: props.step.status === "fail" ? "red" : props.step.status === "warn" ? "yellow" : "gray" }, props.step.message),
+      )
+      : null,
   );
 }
 
-function RitualApp(props: { model: RitualViewModel }) {
-  const model = props.model;
-  const borderColor = colorFromTone(model.tone);
-  const children: React.ReactNode[] = [
-    React.createElement(
-      Box,
-      { key: "hero", borderStyle: "round", borderColor: "gray", paddingX: 1, paddingY: 0, flexDirection: "column", width: frameWidth() },
-      React.createElement(
-        Box,
-        { flexDirection: "row" },
-        React.createElement(Text, { color: borderColor, bold: true }, `[${model.statusLabel}] `),
-        React.createElement(Text, { bold: true }, model.title),
-      ),
-      React.createElement(Text, { color: "gray" }, model.subtitle),
-      React.createElement(
-        Box,
-        { flexDirection: "row", flexWrap: "wrap" },
-        ...model.metrics.map((metric) => React.createElement(MetricRow, { key: metric.label, metric })),
-      ),
-    ),
-  ];
-
-  if (model.steps.length > 0) {
-    children.push(
-      React.createElement(Text, { key: "space-steps" }, ""),
-      React.createElement(Box, { key: "steps-wrap", flexDirection: "column", marginLeft: 1 },
-        React.createElement(SectionTitle, null, "Ritual"),
-        ...model.steps.slice(0, 12).map((step) => React.createElement(StepRow, { key: step.label, step })),
-      ),
-    );
-  }
-
-  if (model.callouts.length > 0) {
-    children.push(
-      React.createElement(Text, { key: "space-callouts" }, ""),
-      React.createElement(Box, { key: "callouts-wrap", flexDirection: "column", marginLeft: 1 },
-        React.createElement(SectionTitle, null, model.tone === "fail" ? "Needs Attention" : "Notes"),
-        ...model.callouts.map((callout, index) => React.createElement(Text, { key: `callout-${index}`, color: model.tone === "fail" ? "red" : "yellow" }, `- ${callout}`)),
-      ),
-    );
-  }
-
-  if (model.next.length > 0) {
-    children.push(
-      React.createElement(Text, { key: "space-next" }, ""),
-      React.createElement(Box, { key: "next-wrap", flexDirection: "column", marginLeft: 1 },
-        React.createElement(SectionTitle, null, "Next"),
-        ...model.next.slice(0, 4).map((item, index) => React.createElement(Text, { key: `next-${index}`, color: "gray" }, `- ${item}`)),
-      ),
-    );
-  }
-
-  if (model.files.length > 0) {
-    children.push(
-      React.createElement(Text, { key: "space-files" }, ""),
-      React.createElement(Box, { key: "files-wrap", flexDirection: "column", marginLeft: 1 },
-        React.createElement(SectionTitle, null, "Files"),
-        ...model.files.slice(0, 3).map((file, index) => React.createElement(Text, { key: `file-${index}`, color: "gray" }, `- ${file}`)),
-      ),
-    );
-  }
-
-  return React.createElement(Box, { flexDirection: "column" }, ...children);
-}
-
-function ProgressApp(props: { model: RitualProgressModel }) {
-  const model = props.model;
+function BulletList(props: { title: string; items: string[]; tone?: RitualTone }) {
+  if (props.items.length === 0) return null;
   return React.createElement(
     Box,
-    { flexDirection: "column" },
-    React.createElement(
-      Box,
-      { key: "hero", borderStyle: "round", borderColor: "gray", paddingX: 1, paddingY: 0, flexDirection: "column", width: frameWidth() },
-      React.createElement(
-        Box,
-        { flexDirection: "row" },
-        React.createElement(Text, { color: "cyan", bold: true }, "◐ "),
-        React.createElement(Text, { bold: true }, model.title),
-      ),
-      React.createElement(Text, { color: "gray" }, model.subtitle),
-      React.createElement(Text, { color: "gray" }, `Working: ${model.active}`),
-      React.createElement(Text, { color: "gray" }, model.note),
-    ),
-    React.createElement(Text, null, ""),
-    React.createElement(Box, { flexDirection: "column", marginLeft: 1 },
-      React.createElement(SectionTitle, null, "Todo"),
-      ...model.steps.slice(0, 12).map((step, index) => React.createElement(ProgressStepRow, {
-        key: `${step.label}-${index}`,
-        step: { ...step, status: step.status ?? "queued" },
-      })),
-    ),
+    { flexDirection: "column", marginTop: 1 },
+    React.createElement(SectionTitle, null, props.title),
+    ...props.items.slice(0, 5).map((item, index) => React.createElement(Box, { key: `${props.title}-${index}`, marginTop: index === 0 ? 0 : 1 },
+      React.createElement(Text, { color: props.tone ? colorFromTone(props.tone) : "gray" }, `- ${item}`),
+    )),
   );
 }
 
-async function renderFrame(node: React.ReactNode): Promise<void> {
-  const output = new MemoryWriteStream(process.stdout.columns ?? 100);
-  const processChunks: Buffer[] = [];
-  const stdoutWrite = process.stdout.write;
-  const stderrWrite = process.stderr.write;
-  const captureProcessWrite = (chunk: unknown, encoding?: BufferEncoding | ((error?: Error | null) => void), callback?: (error?: Error | null) => void): boolean => {
-    processChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), typeof encoding === "string" ? encoding : "utf8"));
-    const done = typeof encoding === "function" ? encoding : callback;
-    done?.();
-    return true;
+function useTicker(final: boolean): number {
+  const [tick, setTick] = useState(Date.now());
+  useEffect(() => {
+    if (final) return undefined;
+    const timer = setInterval(() => setTick(Date.now()), 160);
+    return () => clearInterval(timer);
+  }, [final]);
+  return tick;
+}
+
+function RitualPanel(props: { model: LiveRitualModel }) {
+  const model = props.model;
+  const tick = useTicker(model.final);
+  const spinnerFrames = useMemo(() => ["◐", "◓", "◑", "◒"], []);
+  const spinner = spinnerFrames[Math.floor(tick / 160) % spinnerFrames.length];
+  const current = model.steps.find((step) => step.status === "running")
+    ?? model.steps.find((step) => step.stepId === model.currentStepId)
+    ?? model.steps.find((step) => step.status === "queued")
+    ?? model.steps.at(-1);
+  const elapsed = formatElapsed((model.finishedAt ?? tick) - model.startedAt);
+  const borderColor = model.final ? colorFromTone(model.tone) : "gray";
+  const headline = model.final
+    ? model.statusLabel
+    : `${spinner} RUN`;
+
+  return React.createElement(
+    Box,
+    { borderStyle: "round", borderColor, paddingX: 1, paddingY: 0, flexDirection: "column", width: model.width },
+    React.createElement(
+      Box,
+      { flexDirection: "row", justifyContent: "space-between" },
+      React.createElement(Box, { flexDirection: "row" },
+        React.createElement(Text, { color: model.final ? colorFromTone(model.tone) : "cyan", bold: true }, `${headline} `),
+        React.createElement(Text, { bold: true }, model.title),
+      ),
+      React.createElement(Text, { color: "gray" }, elapsed),
+    ),
+    React.createElement(Text, { color: "gray" }, model.subtitle),
+    React.createElement(Box, { marginTop: 1, flexDirection: "column" },
+      React.createElement(Text, { color: "gray" }, model.final
+        ? model.tone === "pass"
+          ? "Final report: bridge is clean."
+          : model.tone === "warn"
+            ? "Final report: review the warnings below."
+            : model.tone === "fail"
+              ? "Final report: blockers need attention."
+              : "Final report: preview completed."
+        : `Working: ${current?.label ?? "Preparing ritual."}`),
+      current?.message && !model.final ? React.createElement(Text, { color: "gray" }, current.message) : null,
+    ),
+    model.metrics.length > 0
+      ? React.createElement(Box, { flexDirection: "row", flexWrap: "wrap", marginTop: 1 },
+        ...model.metrics.map((metric) => React.createElement(MetricRow, { key: metric.label, metric })),
+      )
+      : null,
+    React.createElement(Box, { flexDirection: "column", marginTop: 1 },
+      React.createElement(SectionTitle, null, "TODOs"),
+      ...model.steps.map((step) => React.createElement(TodoRow, { key: step.stepId, step, spinner })),
+    ),
+    React.createElement(BulletList, { title: model.tone === "fail" ? "Problems" : "Notes", items: model.callouts, tone: model.tone === "fail" ? "fail" : "warn" }),
+    React.createElement(BulletList, { title: "Next", items: model.next }),
+    React.createElement(BulletList, { title: "Reports", items: model.files }),
+  );
+}
+
+function renderModel(instance: Instance | undefined, model: LiveRitualModel): Instance {
+  const node = React.createElement(RitualPanel, { model });
+  if (instance) {
+    instance.rerender(node);
+    return instance;
+  }
+  return render(node, {
+    exitOnCtrlC: false,
+    patchConsole: false,
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function runWithRitualUi<TReport extends InstallReport | PassReport | ResetReport | SelfUpdateReport>(
+  options: RunWithRitualUiOptions<TReport>,
+): Promise<TReport> {
+  let model = createLiveRitualModel(options.kind, options.subtitle, options.steps);
+  let instance: Instance | undefined;
+  instance = renderModel(instance, model);
+  await delay(25);
+
+  const sink: RitualProgressSink = (event) => {
+    model = applyRitualProgressEvent(model, event);
+    instance = renderModel(instance, model);
   };
 
-  let instance: Instance | undefined;
-  process.stdout.write = captureProcessWrite as typeof process.stdout.write;
-  process.stderr.write = captureProcessWrite as typeof process.stderr.write;
   try {
-    instance = render(node, {
-      stdout: output as unknown as NodeJS.WriteStream,
-      stderr: output as unknown as NodeJS.WriteStream,
-      exitOnCtrlC: false,
-      patchConsole: false,
-    });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    instance.unmount();
-    instance.cleanup();
+    const report = await options.run(sink);
+    model = finishLiveRitualModel(model, report);
+    instance = renderModel(instance, model);
+    await delay(40);
+    return report;
+  } catch (error) {
+    model = failLiveRitualModel(model, error);
+    instance = renderModel(instance, model);
+    await delay(40);
+    throw error;
   } finally {
-    process.stdout.write = stdoutWrite;
-    process.stderr.write = stderrWrite;
+    instance?.unmount();
+    instance?.cleanup();
   }
-
-  const raw = `${Buffer.concat(processChunks).toString("utf8")}${output.output()}`;
-  const frame = cleanInkFrame(raw);
-  if (frame.trim().length > 0) process.stdout.write(`${frame}\n`);
-}
-
-export async function renderRitualProgress(kind: RitualKind, subtitle: string, steps: RitualProgressStep[]): Promise<void> {
-  await renderFrame(React.createElement(ProgressApp, { model: ritualProgressModel(kind, subtitle, steps) }));
-}
-
-export async function renderRitualReport(kind: RitualKind, report: InstallReport | PassReport | ResetReport | SelfUpdateReport): Promise<void> {
-  await renderFrame(React.createElement(RitualApp, { model: ritualViewModel(kind, report) }));
 }

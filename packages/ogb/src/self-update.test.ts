@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { buildPostUpdateRitualCommand, buildSelfUpdateCommand, checkOgbUpdate, runAutoUpdate, runSelfUpdate, writeSelfUpdateSuccessStatus } from "./self-update.js";
 import { resolveProjectPaths } from "./paths.js";
+import type { RitualProgressEvent } from "./ritual-progress.js";
 import { OGB_VERSION } from "./types.js";
 
 test("buildSelfUpdateCommand uses GitHub bootstrap on POSIX platforms", () => {
@@ -89,6 +90,24 @@ test("runSelfUpdate dry-run does not execute the bootstrap", () => {
   assert.equal(report.plan.intent, "update");
   assert.equal(report.command[0], process.platform === "win32" ? "powershell.exe" : "bash");
   assert.match(report.message, /Would download/);
+});
+
+test("runSelfUpdate dry-run emits update ritual progress", () => {
+  const events: RitualProgressEvent[] = [];
+  const report = runSelfUpdate({
+    dryRun: true,
+    projectRoot: "/tmp/ogb",
+    onProgress: (event) => events.push(event),
+  });
+
+  assert.equal(report.status, "preview");
+  assert.deepEqual(events.map((event) => `${event.stepId}:${event.status}`), [
+    "resolve:running",
+    "resolve:pass",
+    "download:skipped",
+    "install:skipped",
+    "post-check:skipped",
+  ]);
 });
 
 test("writeSelfUpdateSuccessStatus overwrites stale update errors", () => {

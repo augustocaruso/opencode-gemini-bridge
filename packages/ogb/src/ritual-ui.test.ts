@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildInstallerPlan } from "./installer-planner.js";
-import { cleanInkFrame, ritualProgressModel, ritualViewModel, shouldUseRitualUi } from "./ritual-ui.js";
+import { applyRitualProgressEvent, cleanInkFrame, createLiveRitualModel, failLiveRitualModel, finishLiveRitualModel, ritualViewModel, shouldUseRitualUi } from "./ritual-ui.js";
 import type { InstallReport } from "./install.js";
 import type { PassReport } from "./pass.js";
 import type { ResetReport } from "./reset.js";
@@ -67,17 +67,100 @@ test("Ink frame cleanup keeps the final rendered frame for transcript captures",
   assert.equal(cleanInkFrame(raw), "second frame");
 });
 
-test("progress model gives every ritual an immediate process surface", () => {
-  const model = ritualProgressModel("check", projectRoot, [
-    { label: "setup OpenCode plugin" },
-    { label: "sync bridge assets" },
-    { label: "run doctor" },
-  ]);
+test("live progress model starts full-width with every todo queued", () => {
+  const model = createLiveRitualModel("check", projectRoot, [
+    { stepId: "setup", label: "setup OpenCode plugin" },
+    { stepId: "sync", label: "sync bridge assets" },
+    { stepId: "doctor", label: "run doctor" },
+  ], { now: 1000, width: 132 });
 
-  assert.equal(model.title, "OGB check in progress");
+  assert.equal(model.title, "OGB check");
   assert.equal(model.subtitle, projectRoot);
-  assert.match(model.note, /final report/);
+  assert.equal(model.statusLabel, "RUN");
+  assert.equal(model.width, 132);
+  assert.equal(model.currentStepId, "setup");
+  assert.equal(model.final, false);
   assert.deepEqual(model.steps.map((step) => step.label), ["setup OpenCode plugin", "sync bridge assets", "run doctor"]);
+  assert.deepEqual(model.steps.map((step) => step.status), ["queued", "queued", "queued"]);
+});
+
+test("live progress events update the active todo without creating a second report model", () => {
+  let model = createLiveRitualModel("check", projectRoot, [
+    { stepId: "setup", label: "setup OpenCode plugin", detail: "wire plugin" },
+    { stepId: "sync", label: "sync bridge assets", detail: "project resources" },
+  ], { now: 1000, width: 100 });
+
+  model = applyRitualProgressEvent(model, {
+    stepId: "setup",
+    label: "setup OpenCode plugin",
+    detail: "wire plugin",
+    status: "running",
+    message: "Checking plugin file.",
+  });
+  model = applyRitualProgressEvent(model, {
+    stepId: "setup",
+    label: "setup OpenCode plugin",
+    status: "pass",
+    message: "Startup sync wiring is present.",
+  });
+  model = applyRitualProgressEvent(model, {
+    stepId: "sync",
+    label: "sync bridge assets",
+    status: "running",
+  });
+
+  assert.equal(model.currentStepId, "sync");
+  assert.deepEqual(model.steps.map((step) => [step.stepId, step.status]), [
+    ["setup", "pass"],
+    ["sync", "running"],
+  ]);
+  assert.match(model.steps[0].message ?? "", /Startup sync/);
+});
+
+test("finishing the live progress model turns the same todo list into the final report", () => {
+  let model = createLiveRitualModel("check", projectRoot, [
+    { stepId: "setup", label: "setup OpenCode plugin" },
+    { stepId: "sync", label: "sync bridge assets" },
+    { stepId: "doctor", label: "run doctor" },
+    { stepId: "validate", label: "validate config" },
+    { stepId: "security", label: "security guardrails" },
+    { stepId: "dashboard", label: "dashboard summary" },
+  ], { now: 1000, width: 100 });
+  for (const step of model.steps) {
+    model = applyRitualProgressEvent(model, { ...step, status: "pass" });
+  }
+
+  const finished = finishLiveRitualModel(model, passReport(), { now: 3000 });
+
+  assert.equal(finished.final, true);
+  assert.equal(finished.statusLabel, "PASS");
+  assert.equal(finished.finishedAt, 3000);
+  assert.deepEqual(finished.steps.map((step) => step.status), ["pass", "pass", "pass", "pass", "pass", "pass"]);
+  assert.deepEqual(finished.metrics.map((metric) => [metric.label, metric.value]), [
+    ["automated", "6"],
+    ["skills", "17"],
+    ["commands", "17"],
+    ["agents", "7"],
+    ["blockers", "0"],
+  ]);
+  assert.ok(finished.next.some((item) => /Bridge is clean/.test(item)));
+});
+
+test("live progress model turns thrown errors into a visible failed todo", () => {
+  const started = applyRitualProgressEvent(createLiveRitualModel("check", projectRoot, [
+    { stepId: "setup", label: "setup OpenCode plugin" },
+  ], { now: 1000, width: 100 }), {
+    stepId: "setup",
+    label: "setup OpenCode plugin",
+    status: "running",
+  });
+
+  const failed = failLiveRitualModel(started, new Error("boom"), { now: 2000 });
+
+  assert.equal(failed.final, true);
+  assert.equal(failed.statusLabel, "FAIL");
+  assert.equal(failed.steps[0].status, "fail");
+  assert.match(failed.callouts[0], /boom/);
 });
 
 test("check ritual view model highlights projected bridge assets", () => {
