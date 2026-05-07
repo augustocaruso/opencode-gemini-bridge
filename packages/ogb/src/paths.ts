@@ -6,6 +6,7 @@ export interface ProjectPaths {
   projectRoot: string;
   homeDir: string;
   homeMode: boolean;
+  bridgeConfigDir: string;
   generatedDir: string;
   inventoryPath: string;
   doctorPath: string;
@@ -63,20 +64,22 @@ export function resolveProjectPaths(projectRoot = process.cwd(), homeDir = os.ho
   const root = path.resolve(normalizePathInput(projectRoot));
   const home = path.resolve(normalizePathInput(homeDir));
   const homeMode = isHomeProject(root, home);
+  const bridgeConfigDir = path.join(home, ".config", "opencode-gemini-bridge");
   const generatedDir = homeMode
-    ? path.join(home, ".config", "opencode-gemini-bridge", "generated")
+    ? path.join(bridgeConfigDir, "generated")
     : path.join(root, ".opencode", "generated");
   const ogbConfigPath = homeMode
-    ? path.join(home, ".config", "opencode-gemini-bridge", "ogb.config.jsonc")
+    ? path.join(bridgeConfigDir, "ogb.config.jsonc")
     : path.join(root, ".opencode", "ogb.config.jsonc");
   const trustPath = homeMode
-    ? path.join(home, ".config", "opencode-gemini-bridge", "ogb-trust.jsonc")
+    ? path.join(bridgeConfigDir, "ogb-trust.jsonc")
     : path.join(root, ".opencode", "ogb-trust.jsonc");
 
   return {
     projectRoot: root,
     homeDir: home,
     homeMode,
+    bridgeConfigDir,
     generatedDir,
     inventoryPath: path.join(generatedDir, "ogb-inventory.json"),
     doctorPath: path.join(generatedDir, "ogb-doctor.json"),

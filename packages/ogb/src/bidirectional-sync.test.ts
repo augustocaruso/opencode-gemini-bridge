@@ -56,6 +56,9 @@ test("runBidirectionalSync force updates with backup", () => {
   const updated = report.changes.find((change) => change.status === "updated");
   assert.ok(updated?.backup);
   assert.equal(fs.existsSync(updated.backup), true);
+  assert.ok(updated.backup.startsWith(path.join(homeDir, ".config", "opencode-gemini-bridge", "backups", "bidirectional-sync")));
+  assert.equal(report.backups.length, 1);
+  assert.equal(fs.readFileSync(report.backups[0].backup, "utf8"), "Manual OpenCode rules\n");
 });
 
 test("runBidirectionalSync syncs global rules only inside the provided homeDir", () => {

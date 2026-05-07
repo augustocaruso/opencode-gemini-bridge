@@ -147,16 +147,20 @@ test("ensureTuiSidebar appends missing external TUI plugin without duplicating O
 
 test("ensureTuiSidebar refuses to overwrite manually changed plugin without force", () => {
   const projectRoot = tempProject();
-  ensureTuiSidebar({ projectRoot });
+  const homeDir = tempProject();
+  ensureTuiSidebar({ projectRoot, homeDir });
   const pluginPath = projectPath(projectRoot, TUI_SIDEBAR_PLUGIN_PATH);
   fs.writeFileSync(pluginPath, "export default { id: 'manual', tui: async () => {} }\n", "utf8");
 
-  const conflict = ensureTuiSidebar({ projectRoot });
+  const conflict = ensureTuiSidebar({ projectRoot, homeDir });
   assert.equal(conflict.plugin.status, "conflict");
   assert.match(fs.readFileSync(pluginPath, "utf8"), /manual/);
 
-  const forced = ensureTuiSidebar({ projectRoot, force: true });
+  const forced = ensureTuiSidebar({ projectRoot, homeDir, force: true });
   assert.equal(forced.plugin.status, "updated");
+  assert.ok(forced.plugin.backup);
+  assert.ok(forced.plugin.backup.startsWith(path.join(homeDir, ".config", "opencode-gemini-bridge", "backups", "tui-sidebar")));
+  assert.match(fs.readFileSync(forced.plugin.backup, "utf8"), /manual/);
   assert.match(fs.readFileSync(pluginPath, "utf8"), /ogb:sidebar/);
 });
 

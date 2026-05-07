@@ -61,7 +61,9 @@ Política:
 - escolhe o arquivo existente mais novo como fonte do grupo;
 - cria alvos ausentes;
 - se o alvo existe e difere, vira conflito;
-- `--force` cria backup antes de atualizar;
+- `--force` cria backup central em `~/.config/opencode-gemini-bridge/backups/`
+  antes de atualizar; a retencao mantem ate 5 sessoes por operacao e remove
+  sessoes com mais de 30 dias;
 - não instala daemon;
 - não mexe em skills/assets/scripts nesta fase.
 

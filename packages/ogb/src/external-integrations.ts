@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { BackupSession } from "./backup-policy.js";
 import { OGB_VERSION } from "./types.js";
 import type { GeminiExtensionProjectionMap } from "./extension-projection.js";
 import { fallbackModelId, type ModelFallbackEntry, type OgbConfig } from "./ogb-config.js";
@@ -15,6 +16,7 @@ export interface ExternalIntegrationWrite {
   path: string;
   relPath: string;
   status: "created" | "updated" | "unchanged" | "preview" | "skipped";
+  backup?: string;
   message: string;
 }
 
@@ -60,6 +62,7 @@ function writeJsonFile(options: {
   relPath: string;
   value: unknown;
   dryRun?: boolean;
+  backupSession?: BackupSession;
 }): ExternalIntegrationWrite {
   const text = `${JSON.stringify(options.value, null, 2)}\n`;
   const exists = fs.existsSync(options.path);
@@ -83,12 +86,14 @@ function writeJsonFile(options: {
     };
   }
 
+  const backup = exists ? options.backupSession?.backupExisting(options.path) : undefined;
   fs.mkdirSync(path.dirname(options.path), { recursive: true });
   fs.writeFileSync(options.path, text, "utf8");
   return {
     path: options.path,
     relPath: options.relPath,
     status: exists ? "updated" : "created",
+    backup,
     message: `${exists ? "Updated" : "Created"} ${options.relPath}`,
   };
 }
@@ -158,6 +163,7 @@ export function projectExternalIntegrations(options: {
   config: OgbConfig;
   extensionMap: GeminiExtensionProjectionMap;
   dryRun?: boolean;
+  backupSession?: BackupSession;
 }): ExternalIntegrationReport {
   const homeDir = options.homeDir || os.homedir();
   const writes: ExternalIntegrationWrite[] = [];
@@ -167,6 +173,7 @@ export function projectExternalIntegrations(options: {
     path: path.join(options.projectRoot, ...OGB_UI_CONFIG_PATH.split("/")),
     relPath: OGB_UI_CONFIG_PATH,
     dryRun: options.dryRun,
+    backupSession: options.backupSession,
     value: {
       version: 1,
       generatedBy: `ogb ${OGB_VERSION}`,
@@ -182,6 +189,7 @@ export function projectExternalIntegrations(options: {
       path: path.join(options.projectRoot, ...QUOTA_CONFIG_PATH.split("/")),
       relPath: QUOTA_CONFIG_PATH,
       dryRun: options.dryRun,
+      backupSession: options.backupSession,
       value: quotaConfig(options.config),
     }));
   }
@@ -193,6 +201,7 @@ export function projectExternalIntegrations(options: {
       path: fallbackPath,
       relPath: path.relative(homeDir, fallbackPath).split(path.sep).join("/"),
       dryRun: options.dryRun,
+      backupSession: options.backupSession,
       value: autoFallbackConfigFromProjection(options.config, options.extensionMap),
     }));
     if (options.extensionMap.modelFallbacks.length === 0) {
@@ -204,6 +213,6 @@ export function projectExternalIntegrations(options: {
     openCodePlugins: externalOpenCodePlugins(options.config),
     tuiPlugins: externalTuiPlugins(options.config),
     writes,
-    warnings,
+    warnings: [...new Set([...warnings, ...(options.backupSession?.retention.warnings ?? [])])],
   };
 }

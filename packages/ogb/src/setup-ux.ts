@@ -3,191 +3,47 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse as parseJsonc } from "jsonc-parser";
-import { BUILT_IN_AGENTS, BUILT_IN_COMMANDS } from "./built-ins.js";
 import { resolveCommand } from "./command-resolution.js";
-import { GLOBAL_AGENTS_MD } from "./global-agents.js";
+import { readLocalRole } from "./local-role.js";
 import { normalizeRuntimeOptions, type OgbConfig } from "./ogb-config.js";
 import { runNativeCommand } from "./native-runner.js";
 import { createPlatformAdapter, type PlatformAdapter } from "./platform-adapter.js";
 import { isHomeProject } from "./paths.js";
+import { createProfileWriter, type ProfileWriteReason, type ProfileWriteStatus, type ProfileWriter } from "./profile-writer.js";
 import { checkPluginSyntax, STARTUP_SYNC_PLUGIN_SOURCE, startupConfigSource } from "./setup-opencode.js";
 import { recoverStaleStartupStatus } from "./startup-status.js";
-import { ensureGlobalTuiSidebar } from "./tui-sidebar.js";
+import { ensureGlobalTuiSidebar, TUI_SIDEBAR_PLUGIN_SOURCE } from "./tui-sidebar.js";
 import { OGB_VERSION } from "./types.js";
+import { UX_PROFILE_PRESET } from "./ux-profile.generated.js";
 
-export const OGB_UX_SAFE_PLUGINS = [
-  "opencode-gemini-auth@1.4.12",
-  "@ex-machina/opencode-anthropic-auth@1.8.0",
-  "opencode-update-notifier@0.1.0",
-  "opencode-auto-fallback@0.4.3",
-  "@tarquinen/opencode-dcp@3.1.9",
-  "opencode-pty@0.3.4",
-];
-
-export const OGB_UX_DISABLED_PLUGINS = [
-  "opencode-websearch-cited@1.2.0",
-  "opencode-auto-fallback@0.4.2",
-];
-
+export const OGB_UX_SAFE_PLUGINS = [...UX_PROFILE_PRESET.safePlugins];
+export const OGB_UX_DISABLED_PLUGINS = [...UX_PROFILE_PRESET.disabledPlugins];
 export const OGB_UX_PLUGINS = OGB_UX_SAFE_PLUGINS;
-
-export const OGB_TUI_RUNTIME_DEPENDENCIES = {
-  "@opentui/solid": "0.2.2",
-  "solid-js": "1.9.12",
-} as const;
-
-export const REMOVED_GLOBAL_UX_COMMANDS = ["dev-server"];
+export const OGB_TUI_RUNTIME_DEPENDENCIES = { ...UX_PROFILE_PRESET.tuiRuntimeDependencies };
+export const REMOVED_GLOBAL_UX_COMMANDS = [...UX_PROFILE_PRESET.removedGlobalCommands];
+const UX_PROFILE_COMMANDS: Record<string, string> = UX_PROFILE_PRESET.files.commands;
 
 export function globalStartupPluginSpec(pluginPath: string): string {
   return pathToFileURL(pluginPath).href;
 }
 
-export const RESEARCH_COMMAND = `---
-description: Pesquisa web com citacoes e sintese curta
----
-
-Pesquise na web sobre:
-
-$ARGUMENTS
-
-Use pesquisa web quando precisar de informacao atual, verificacao externa ou
-fontes. Responda em portugues.
-
-Contrato da resposta:
-
-- comece com uma resposta direta em 3-6 linhas;
-- destaque datas concretas quando o assunto for recente;
-- compare fontes se houver divergencia;
-- termine com uma secao \`Fontes\` com os links/citacoes retornados pela ferramenta;
-- se a busca nao for necessaria, diga isso brevemente e responda sem forcar web.
-`;
+export const RESEARCH_COMMAND = UX_PROFILE_COMMANDS.research ?? "";
 
 export function globalBuiltInCommandContent(name: string): string {
-  return BUILT_IN_COMMANDS.find((command) => command.name === name)?.content ?? "";
+  return UX_PROFILE_COMMANDS[name] ?? "";
 }
 
-export const DCP_CONFIG = {
-  $schema: "https://raw.githubusercontent.com/Opencode-DCP/opencode-dynamic-context-pruning/master/dcp.schema.json",
-  enabled: true,
-  debug: false,
-  pruneNotification: "minimal",
-  pruneNotificationType: "toast",
-  commands: {
-    enabled: true,
-    protectedTools: [],
-  },
-  manualMode: {
-    enabled: false,
-    automaticStrategies: true,
-  },
-  turnProtection: {
-    enabled: false,
-    turns: 4,
-  },
-  experimental: {
-    allowSubAgents: false,
-    customPrompts: false,
-  },
-  protectedFilePatterns: [],
-  compress: {
-    mode: "range",
-    permission: "allow",
-    showCompression: false,
-    summaryBuffer: true,
-    maxContextLimit: "80%",
-    minContextLimit: "45%",
-    nudgeFrequency: 5,
-    iterationNudgeThreshold: 15,
-    nudgeForce: "soft",
-    protectedTools: [],
-    protectUserMessages: false,
-  },
-  strategies: {
-    deduplication: {
-      enabled: true,
-      protectedTools: [],
-    },
-    purgeErrors: {
-      enabled: true,
-      turns: 4,
-      protectedTools: [],
-    },
-  },
-};
+export const DCP_CONFIG = UX_PROFILE_PRESET.dcpConfig;
+export const OGB_UX_PROJECT_CONFIG: OgbConfig = UX_PROFILE_PRESET.projectConfig;
+const OGB_UX_WATCHER_IGNORE = UX_PROFILE_PRESET.globalConfig.watcherIgnore;
 
-export const OGB_UX_PROJECT_CONFIG: OgbConfig = {
-  openCode: {
-    defaultAgent: "YOLO",
-  },
-  externalPlugins: {
-    quotaUi: {
-      enabled: false,
-      suppressOgbLimits: true,
-      enableToast: false,
-      formatStyle: "allWindows",
-      enabledProviders: ["openai", "anthropic", "google-gemini-cli"],
-      onlyCurrentModel: false,
-      percentDisplayMode: "used",
-    },
-    autoFallback: {
-      enabled: false,
-      plugin: "opencode-auto-fallback@0.4.3",
-      installProjectPlugin: false,
-      cooldownMs: 60_000,
-      maxRetries: 2,
-      logging: false,
-    },
-  },
-  modelFallbacks: {
-    agents: {
-      "med-knowledge-architect": {
-        model: { id: "google/gemini-3.1-pro-preview", variant: "high" },
-        fallback_models: [
-          { model: "anthropic/claude-sonnet-4-6", effort: "high" },
-          { model: "openai/gpt-5.5", variant: "high" },
-        ],
-      },
-      "med-flashcard-maker": {
-        model: { id: "google/gemini-3.1-pro-preview", variant: "high" },
-        fallback_models: [
-          { model: "anthropic/claude-sonnet-4-6", effort: "high" },
-          { model: "openai/gpt-5.5", variant: "high" },
-        ],
-      },
-      "med-catalog-curator": {
-        model: { id: "google/gemini-3.1-pro-preview", variant: "medium" },
-        fallback_models: [
-          { model: "openai/gpt-5.4", variant: "medium" },
-          { model: "anthropic/claude-sonnet-4-6", effort: "medium" },
-        ],
-      },
-      "med-chat-triager": {
-        model: { id: "google/gemini-3-flash-preview", variant: "high" },
-        fallback_models: [
-          { model: "openai/gpt-5.4-mini", variant: "medium" },
-          { model: "anthropic/claude-haiku-4-5", effort: "high" },
-        ],
-      },
-      "med-publish-guard": {
-        model: { id: "google/gemini-3-flash-preview", variant: "high" },
-        fallback_models: [
-          { model: "openai/gpt-5.4-mini", variant: "medium" },
-          { model: "anthropic/claude-haiku-4-5", effort: "high" },
-        ],
-      },
-    },
-  },
-};
+function ogbStartupPluginSource(): string {
+  return UX_PROFILE_PRESET.files.startupPlugin || STARTUP_SYNC_PLUGIN_SOURCE;
+}
 
-const OGB_UX_WATCHER_IGNORE = [
-  ".git/**",
-  "node_modules/**",
-  "dist/**",
-  "build/**",
-  ".venv/**",
-  "__pycache__/**",
-  ".opencode/generated/**",
-];
+function ogbTuiSidebarPluginSource(): string {
+  return UX_PROFILE_PRESET.files.tuiSidebarPlugin || TUI_SIDEBAR_PLUGIN_SOURCE;
+}
 
 export interface SetupUxOptions {
   homeDir?: string;
@@ -206,7 +62,9 @@ export interface SetupUxOptions {
 
 export interface SetupUxWrite {
   path: string;
-  status: "created" | "updated" | "removed" | "unchanged" | "preview" | "conflict";
+  status: ProfileWriteStatus;
+  backup?: string;
+  reason?: ProfileWriteReason;
 }
 
 export interface SetupUxCommand {
@@ -317,6 +175,7 @@ function cleanDisabledUxConfig(current: Record<string, unknown>): { config: Reco
 function mergeGlobalConfig(current: Record<string, unknown>, defaultAgent = "agent", plugins = OGB_UX_SAFE_PLUGINS): Record<string, unknown> {
   const { provider: currentProvider, ...currentWithoutProvider } = current;
   const cleanedProvider = cleanManagedProviderOptions(currentProvider);
+  const preset = UX_PROFILE_PRESET.globalConfig;
   const agent = asRecord(current.agent);
   const buildAgent = asRecord(agent.build);
   const primaryAgent = asRecord(agent.agent);
@@ -324,91 +183,39 @@ function mergeGlobalConfig(current: Record<string, unknown>, defaultAgent = "age
 
   return {
     ...currentWithoutProvider,
-    $schema: "https://opencode.ai/config.json",
+    $schema: preset.schemaUrl,
     plugin: unique(plugins),
-    share: "manual",
-    autoupdate: "notify",
-    small_model: "openai/gpt-5.4-mini",
+    share: preset.share,
+    autoupdate: preset.autoupdate,
+    small_model: preset.smallModel,
     default_agent: defaultAgent,
     agent: {
       ...agent,
       build: {
         ...buildAgent,
-        disable: true,
+        ...preset.agent.build,
       },
       agent: {
         ...primaryAgent,
-        mode: "primary",
-        description: "Agente principal para conversar, editar e executar ferramentas conforme permissoes.",
+        ...preset.agent.agent,
         permission: {
           ...asRecord(primaryAgent.permission),
-          question: "allow",
-          plan_enter: "allow",
+          ...asRecord(preset.agent.agent.permission),
         },
       },
       compaction: {
         ...compactionAgent,
-        model: "openai/gpt-5.4-mini",
+        ...preset.agent.compaction,
       },
     },
     watcher: {
       ...asRecord(current.watcher),
       ignore: OGB_UX_WATCHER_IGNORE,
     },
-    tool_output: {
-      max_lines: 800,
-      max_bytes: 30_000,
-    },
+    tool_output: preset.toolOutput,
     ...(cleanedProvider ? { provider: cleanedProvider } : {}),
-    compaction: {
-      auto: true,
-      prune: true,
-      tail_turns: 4,
-      preserve_recent_tokens: 12_000,
-      reserved: 10_000,
-    },
-    permission: {
-      websearch: "allow",
-      bash: {
-        "*": "ask",
-        "git status*": "allow",
-        "git diff*": "allow",
-        "git log*": "allow",
-        "npm run dev*": "allow",
-        "npm run build*": "allow",
-        "npm test*": "allow",
-        "npm run test*": "allow",
-        "pnpm dev*": "allow",
-        "pnpm run dev*": "allow",
-        "pnpm test*": "allow",
-        "pnpm run test*": "allow",
-        "pnpm build*": "allow",
-        "pnpm run build*": "allow",
-        "yarn dev*": "allow",
-        "yarn run dev*": "allow",
-        "yarn test*": "allow",
-        "yarn run test*": "allow",
-        "yarn build*": "allow",
-        "yarn run build*": "allow",
-        "bun dev*": "allow",
-        "bun run dev*": "allow",
-        "bun test*": "allow",
-        "bun run test*": "allow",
-        "bun run build*": "allow",
-        "uv run *": "allow",
-        "pytest*": "allow",
-        "python -m pytest*": "allow",
-        "cargo watch*": "allow",
-        "cargo test*": "allow",
-        "make test*": "allow",
-        "git push*": "deny",
-        "git reset*": "deny",
-        "rm *": "deny",
-        "sudo *": "deny",
-        "terraform *": "deny",
-        "kubectl delete*": "deny",
-      },
-    },
+    compaction: preset.compaction,
+    permission: preset.permission,
   };
 }
 
@@ -424,10 +231,6 @@ function hasStaleWebsearchCitedConfig(current: Record<string, unknown>): boolean
 function hasDisabledUxPluginConfig(current: Record<string, unknown>): boolean {
   const plugins = Array.isArray(current.plugin) ? current.plugin : [];
   return plugins.some((plugin) => typeof plugin === "string" && isDisabledUxPlugin(plugin));
-}
-
-function yoloAgentContent(): string {
-  return BUILT_IN_AGENTS.find((agent) => agent.name === "YOLO")?.content ?? "";
 }
 
 function normalizeFallbackEntryForPlugin(entry: unknown): unknown | undefined {
@@ -483,30 +286,6 @@ function projectConfigText(): string {
   return `${JSON.stringify(OGB_UX_PROJECT_CONFIG, null, 2)}\n`;
 }
 
-function writeText(options: {
-  filePath: string;
-  text: string;
-  dryRun?: boolean;
-  force?: boolean;
-  conflictIfChanged?: boolean;
-}): SetupUxWrite {
-  const exists = fs.existsSync(options.filePath);
-  const current = exists ? fs.readFileSync(options.filePath, "utf8") : "";
-  if (current === options.text) return { path: options.filePath, status: "unchanged" };
-  if (exists && options.conflictIfChanged && options.force !== true) return { path: options.filePath, status: "conflict" };
-  if (options.dryRun) return { path: options.filePath, status: "preview" };
-  fs.mkdirSync(path.dirname(options.filePath), { recursive: true });
-  fs.writeFileSync(options.filePath, options.text, "utf8");
-  return { path: options.filePath, status: exists ? "updated" : "created" };
-}
-
-function removeFileIfExists(filePath: string, dryRun?: boolean): SetupUxWrite | undefined {
-  if (!fs.existsSync(filePath)) return undefined;
-  if (dryRun) return { path: filePath, status: "preview" };
-  fs.rmSync(filePath, { force: true });
-  return { path: filePath, status: "removed" };
-}
-
 function dependencyPackageJsonPath(root: string, dependency: string, pathApi: typeof path = path): string {
   return pathApi.join(root, "node_modules", ...dependency.split("/"), "package.json");
 }
@@ -548,18 +327,23 @@ function ensureGlobalTuiRuntime(options: {
   pathApi?: typeof path;
   dryRun?: boolean;
   install?: boolean;
+  profileWriter: ProfileWriter;
+  protectInstall?: boolean;
 }): { packageJson: SetupUxWrite; commands: SetupUxCommand[] } {
   const pathApi = options.pathApi ?? path;
   const packagePath = pathApi.join(options.configDir, "package.json");
-  const packageJson = writeText({
+  const packageJson = options.profileWriter.writeText({
     filePath: packagePath,
     text: globalTuiPackageText(readJsonc(packagePath)),
-    dryRun: options.dryRun,
   });
   const missing = missingGlobalTuiRuntimeDependencies(options.configDir, pathApi);
-  const commands = missing.length > 0 && options.install !== false
-    ? [runCommand(globalTuiRuntimeInstallCommand(), options.dryRun, options.configDir)]
-    : [];
+  let commands: SetupUxCommand[] = [];
+  if (missing.length > 0 && options.install !== false) {
+    const installCommand = globalTuiRuntimeInstallCommand();
+    commands = options.protectInstall && !options.dryRun
+      ? [{ command: installCommand, status: "skipped", message: "Skipped by local maintainer mode" }]
+      : [runCommand(installCommand, options.dryRun, options.configDir)];
+  }
 
   return { packageJson, commands };
 }
@@ -727,6 +511,18 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
       ? adapter.join(adapter.bridgeConfigDir, "ogb.config.jsonc")
       : adapter.join(projectRoot, ".opencode", "ogb.config.jsonc")
     : undefined;
+  const localRole = readLocalRole({ homeDir, platform: adapter.platform, env: adapter.env });
+  const profileWriter = createProfileWriter({
+    bridgeConfigDir: adapter.bridgeConfigDir,
+    profileRoot: root,
+    dryRun: options.dryRun,
+    maintainer: localRole.enabled,
+    pathApi: adapter.pathApi,
+    backupRoots: [
+      ...(legacyRoot ? [{ root: legacyRoot, prefix: "legacy-opencode" }] : []),
+      ...(projectRoot ? [{ root: projectRoot, prefix: "project" }] : []),
+    ],
+  });
   const writes: SetupUxWrite[] = [];
   const commands: SetupUxCommand[] = [];
   const warnings: string[] = [];
@@ -750,10 +546,9 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
   if (legacyConfigPath && hasLegacyConfig) {
     const cleanedLegacy = cleanDisabledUxConfig(legacyConfig);
     if (cleanedLegacy.changed) {
-      writes.push(writeText({
+      writes.push(profileWriter.writeText({
         filePath: legacyConfigPath,
         text: `${JSON.stringify(cleanedLegacy.config, null, 2)}\n`,
-        dryRun: options.dryRun,
       }));
     }
   }
@@ -772,96 +567,102 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
     ...OGB_UX_SAFE_PLUGINS,
     globalStartupPluginSpec(globalStartupPluginPath),
   ];
+  const startupPluginSourceText = ogbStartupPluginSource();
+  const tuiSidebarPluginSourceText = ogbTuiSidebarPluginSource();
   const installablePlugins = desiredPlugins.filter((plugin) => !isLocalPluginSpec(plugin));
   const merged = mergeGlobalConfig(baseConfig, OGB_UX_PROJECT_CONFIG.openCode?.defaultAgent, desiredPlugins);
-  writes.push(writeText({
+  writes.push(profileWriter.writeText({
     filePath: configPath,
     text: `${JSON.stringify(merged, null, 2)}\n`,
-    dryRun: options.dryRun,
   }));
-  writes.push(writeText({
+  writes.push(profileWriter.writeText({
     filePath: dcpConfigPath,
     text: `${JSON.stringify(DCP_CONFIG, null, 2)}\n`,
-    dryRun: options.dryRun,
   }));
-  writes.push(writeText({
+  writes.push(profileWriter.writeText({
     filePath: fallbackConfigPath,
-    text: `${JSON.stringify(fallbackConfigFromProfile(OGB_UX_PROJECT_CONFIG), null, 2)}\n`,
-    dryRun: options.dryRun,
+    text: `${JSON.stringify(UX_PROFILE_PRESET.fallbackConfig ?? fallbackConfigFromProfile(OGB_UX_PROJECT_CONFIG), null, 2)}\n`,
   }));
-  writes.push(writeText({
+  writes.push(profileWriter.writeText({
     filePath: globalStartupPluginPath,
-    text: STARTUP_SYNC_PLUGIN_SOURCE,
-    dryRun: options.dryRun,
+    text: startupPluginSourceText,
   }));
   const globalTuiRuntime = ensureGlobalTuiRuntime({
     configDir: root,
     pathApi: adapter.pathApi,
     dryRun: options.dryRun,
     install: options.installTuiDependencies,
+    profileWriter,
+    protectInstall: localRole.enabled,
   });
   writes.push(globalTuiRuntime.packageJson);
   commands.push(...globalTuiRuntime.commands);
   const globalTui = ensureGlobalTuiSidebar({
     configDir: root,
     dryRun: options.dryRun,
+    profileWriter,
+    pluginSource: tuiSidebarPluginSourceText,
+    configDefaults: UX_PROFILE_PRESET.tuiConfig,
   });
   writes.push(globalTui.plugin, globalTui.config);
   warnings.push(...globalTui.warnings);
-  writes.push(writeText({
+  writes.push(profileWriter.writeText({
     filePath: globalStartupConfigPath,
     text: startupConfigSource({
       command: startupCommand.command,
       baseArgs: startupCommand.baseArgs,
       syncArgs: ["startup-sync"],
     }),
-    dryRun: options.dryRun,
   }));
-  writes.push(writeText({
-    filePath: adapter.join(commandsDir, "research.md"),
-    text: RESEARCH_COMMAND,
-    dryRun: options.dryRun,
-  }));
+  for (const [command, content] of Object.entries(UX_PROFILE_PRESET.files.commands)) {
+    writes.push(profileWriter.writeText({
+      filePath: adapter.join(commandsDir, `${command}.md`),
+      text: content,
+    }));
+  }
   for (const command of REMOVED_GLOBAL_UX_COMMANDS) {
-    const removed = removeFileIfExists(adapter.join(commandsDir, `${command}.md`), options.dryRun);
+    const removed = profileWriter.removeFileIfExists(adapter.join(commandsDir, `${command}.md`));
     if (removed) writes.push(removed);
   }
-  writes.push(writeText({
-    filePath: adapter.join(commandsDir, "upgrade-ogb.md"),
-    text: globalBuiltInCommandContent("upgrade-ogb"),
-    dryRun: options.dryRun,
-  }));
-  writes.push(writeText({
-    filePath: adapter.join(agentsDir, "YOLO.md"),
-    text: yoloAgentContent(),
-    dryRun: options.dryRun,
-  }));
-  writes.push(writeText({
+  for (const [agent, content] of Object.entries(UX_PROFILE_PRESET.files.agents)) {
+    writes.push(profileWriter.writeText({
+      filePath: adapter.join(agentsDir, `${agent}.md`),
+      text: content,
+    }));
+  }
+  for (const [skill, files] of Object.entries(UX_PROFILE_PRESET.files.skills ?? {})) {
+    for (const [relPath, content] of Object.entries(files)) {
+      writes.push(profileWriter.writeText({
+        filePath: adapter.join(root, "skills", skill, ...relPath.split("/")),
+        text: content,
+      }));
+    }
+  }
+  writes.push(profileWriter.writeText({
     filePath: adapter.join(root, "AGENTS.md"),
-    text: GLOBAL_AGENTS_MD,
-    dryRun: options.dryRun,
+    text: UX_PROFILE_PRESET.files.globalAgentsMd,
   }));
 
   if (ogbConfigPath && options.writeProjectProfile !== false) {
-    writes.push(writeText({
+    writes.push(profileWriter.writeText({
       filePath: ogbConfigPath,
       text: projectConfigText(),
-      dryRun: options.dryRun,
       force: options.force,
-      conflictIfChanged: true,
     }));
   }
 
   if (options.installPlugins !== false) {
     const opencodeCommand = options.dryRun === true ? "opencode" : resolveCommand("opencode", { homeDir, platform: adapter.platform, env: adapter.env });
     for (const plugin of installablePlugins) {
-      if (!opencodeCommand) {
+      if (localRole.enabled && !options.dryRun) {
+        commands.push({ command: ["opencode", "plugin", plugin, "--global", "--force"], status: "skipped", message: "Skipped by local maintainer mode" });
+      } else if (!opencodeCommand) {
         commands.push({ command: ["opencode", "plugin", plugin, "--global", "--force"], status: "skipped", message: "OpenCode is not available" });
       } else {
         commands.push(runCommand([opencodeCommand, "plugin", plugin, "--global", "--force"], options.dryRun, commandCwd));
       }
     }
-    if (opencodeCommand) {
+    if (opencodeCommand && (!localRole.enabled || options.dryRun)) {
       const verification = runCommand([opencodeCommand, "debug", "info"], options.dryRun, commandCwd);
       if (verification.status === "ok") {
         const missing = missingPluginsFromDebugInfo(verification.message, desiredPlugins);
@@ -873,6 +674,8 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
       commands.push(verification);
       commands.push(runAuthProbe(opencodeCommand, "openai", options.dryRun, commandCwd));
       commands.push(runAuthProbe(opencodeCommand, "google", options.dryRun, commandCwd));
+    } else if (localRole.enabled && !options.dryRun) {
+      commands.push({ command: ["opencode", "debug", "info"], status: "skipped", message: "Skipped by local maintainer mode" });
     }
   }
 
@@ -880,7 +683,10 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
     if (command.status === "fail") warnings.push(`${command.command.join(" ")}: ${command.message}`);
     if (command.status === "skipped") warnings.push(`${command.command.join(" ")}: ${command.message}`);
   }
-  const pluginCheck = options.dryRun ? checkPluginSyntax() : checkPluginSyntax(globalStartupPluginPath);
+  const startupPluginWrite = writes.find((write) => write.path === globalStartupPluginPath);
+  const pluginCheck = options.dryRun || startupPluginWrite?.status === "protected"
+    ? checkPluginSyntax(undefined, startupPluginSourceText)
+    : checkPluginSyntax(globalStartupPluginPath);
   if (!pluginCheck.ok) warnings.push(pluginCheck.message);
   recoverStaleStartupStatus({
     statusPath: adapter.join(globalGeneratedDir, "ogb-plugin-status.json"),
@@ -891,7 +697,9 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
   });
   for (const write of writes) {
     if (write.status === "conflict") warnings.push(`${write.path} exists and differs; re-run setup-ux with --force to replace the OGB profile.`);
+    if (write.status === "protected") warnings.push(`${write.path} protegido pelo modo mantenedor local; arquivo mantido sem alteracao.`);
   }
+  warnings.push(...profileWriter.retention.warnings);
 
   return {
     version: OGB_VERSION,
@@ -905,7 +713,7 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
     ogbConfigPath,
     writes,
     commands,
-    warnings,
+    warnings: [...new Set(warnings)],
   };
 }
 
@@ -918,7 +726,7 @@ export function printSetupUxReport(report: SetupUxReport, json = false): void {
   console.log("OpenCode Gemini Bridge UX setup");
   console.log(`Home: ${report.homeDir}`);
   if (report.projectRoot) console.log(`Project: ${report.projectRoot}`);
-  for (const write of report.writes) console.log(`${write.status}: ${write.path}`);
+  for (const write of report.writes) console.log(`${write.status}: ${write.path}${write.backup ? ` (backup: ${write.backup})` : ""}`);
   for (const command of report.commands) console.log(`${command.status}: ${command.command.join(" ")}${command.message ? ` - ${command.message.split("\n")[0]}` : ""}`);
   if (report.warnings.length > 0) {
     console.log("Warnings:");

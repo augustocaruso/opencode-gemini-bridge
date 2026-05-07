@@ -1,6 +1,6 @@
 {
   "name": "opencode-gemini-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -29,6 +29,8 @@
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build": "npm run clean && tsc && node -e \"require('node:fs').chmodSync('dist/cli.js',0o755)\"",
     "dev": "tsx src/cli.ts",
+    "author:snapshot": "uv run --project authoring/ux-profile-author ogb-ux-profile-author",
+    "author:test": "uv run --project authoring/ux-profile-author pytest authoring/ux-profile-author/tests",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "lint": "echo add eslint later",
     "pack:local": "npm run build && npm pack",

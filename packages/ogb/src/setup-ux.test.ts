@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { parse as parseJsonc } from "jsonc-parser";
 import { GLOBAL_AGENTS_MD } from "./global-agents.js";
+import { enableMaintainerRole } from "./local-role.js";
 import {
   authProbeAvailableMethods,
   globalStartupPluginSpec,
@@ -105,7 +106,9 @@ test("setupUx writes global OpenCode UX profile and project fallback profile", (
   assert.equal(fs.existsSync(path.join(configDir, "commands", "research.md")), true);
   assert.equal(fs.existsSync(path.join(configDir, "commands", "dev-server.md")), false);
   assert.equal(fs.existsSync(path.join(configDir, "commands", "upgrade-ogb.md")), true);
-  assert.match(fs.readFileSync(path.join(configDir, "commands", "upgrade-ogb.md"), "utf8"), /ogb update --project/);
+  assert.match(fs.readFileSync(path.join(configDir, "commands", "upgrade-ogb.md"), "utf8"), /^ogb update$/m);
+  assert.doesNotMatch(fs.readFileSync(path.join(configDir, "commands", "upgrade-ogb.md"), "utf8"), /ogb update --project/);
+  assert.doesNotMatch(fs.readFileSync(path.join(configDir, "commands", "upgrade-ogb.md"), "utf8"), /ogb check --project/);
   assert.equal(fs.existsSync(path.join(configDir, "dcp.jsonc")), true);
   const packageJson = readJson(path.join(configDir, "package.json"));
   assert.equal(packageJson.type, "module");
@@ -174,7 +177,107 @@ test("setupUx removes the retired global dev-server command and overwrites globa
 
   assert.equal(fs.existsSync(path.join(configDir, "commands", "dev-server.md")), false);
   assert.equal(report.writes.some((write) => write.path.endsWith("commands/dev-server.md") && write.status === "removed"), true);
+  assert.equal(report.writes.some((write) => write.path.endsWith("commands/dev-server.md") && Boolean(write.backup)), true);
   assert.equal(fs.readFileSync(path.join(configDir, "AGENTS.md"), "utf8"), GLOBAL_AGENTS_MD);
+});
+
+test("setupUx protects differing OpenCode profile files when maintainer mode is enabled", () => {
+  const root = tempRoot();
+  const homeDir = path.join(root, "home");
+  const configDir = path.join(root, "config", "opencode");
+  const projectRoot = path.join(root, "project");
+  fs.mkdirSync(path.join(configDir, "commands"), { recursive: true });
+  fs.mkdirSync(projectRoot, { recursive: true });
+  enableMaintainerRole({ homeDir });
+
+  const agentsPath = path.join(configDir, "AGENTS.md");
+  const retiredCommandPath = path.join(configDir, "commands", "dev-server.md");
+  fs.writeFileSync(agentsPath, "Maintainer AGENTS\n", "utf8");
+  fs.writeFileSync(retiredCommandPath, "maintainer dev server command\n", "utf8");
+
+  const report = setupUx({
+    homeDir,
+    configDir,
+    projectRoot,
+    force: true,
+    installOpenCode: false,
+    installPlugins: false,
+  });
+
+  assert.equal(fs.readFileSync(agentsPath, "utf8"), "Maintainer AGENTS\n");
+  assert.equal(fs.readFileSync(retiredCommandPath, "utf8"), "maintainer dev server command\n");
+  assert.equal(report.writes.some((write) => write.path === agentsPath && write.status === "protected"), true);
+  assert.equal(report.writes.some((write) => write.path === retiredCommandPath && write.status === "protected"), true);
+  assert.equal(report.writes.some((write) => Boolean(write.backup)), false);
+  assert.equal(fs.existsSync(path.join(homeDir, ".config", "opencode-gemini-bridge", "backups")), false);
+  assert.equal(report.warnings.some((warning) => warning.includes("modo mantenedor local")), true);
+});
+
+test("setupUx overwrites user profile files with backups by default", () => {
+  const root = tempRoot();
+  const homeDir = path.join(root, "home");
+  const configDir = path.join(root, "config", "opencode");
+  const projectRoot = path.join(root, "project");
+  fs.mkdirSync(path.join(configDir, "commands"), { recursive: true });
+  fs.mkdirSync(projectRoot, { recursive: true });
+
+  const agentsPath = path.join(configDir, "AGENTS.md");
+  const retiredCommandPath = path.join(configDir, "commands", "dev-server.md");
+  fs.writeFileSync(agentsPath, "User AGENTS\n", "utf8");
+  fs.writeFileSync(retiredCommandPath, "old dev server command\n", "utf8");
+
+  const report = setupUx({
+    homeDir,
+    configDir,
+    projectRoot,
+    installOpenCode: false,
+    installPlugins: false,
+  });
+  const agentsWrite = report.writes.find((write) => write.path === agentsPath);
+  const removedWrite = report.writes.find((write) => write.path === retiredCommandPath);
+
+  assert.equal(fs.readFileSync(agentsPath, "utf8"), GLOBAL_AGENTS_MD);
+  assert.equal(fs.existsSync(retiredCommandPath), false);
+  assert.equal(agentsWrite?.status, "updated");
+  assert.ok(agentsWrite?.backup);
+  assert.equal(fs.readFileSync(agentsWrite.backup, "utf8"), "User AGENTS\n");
+  assert.equal(removedWrite?.status, "removed");
+  assert.ok(removedWrite?.backup);
+  assert.equal(fs.readFileSync(removedWrite.backup, "utf8"), "old dev server command\n");
+});
+
+test("setupUx lets OGB-managed opencode.json fields win while preserving unknown user fields and backup", () => {
+  const root = tempRoot();
+  const homeDir = path.join(root, "home");
+  const configDir = path.join(root, "config", "opencode");
+  const projectRoot = path.join(root, "project");
+  const configPath = path.join(configDir, "opencode.json");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.writeFileSync(configPath, JSON.stringify({
+    plugin: ["user-plugin@1.0.0"],
+    default_agent: "agent",
+    custom_user_field: { keep: true },
+  }, null, 2) + "\n", "utf8");
+
+  const report = setupUx({
+    homeDir,
+    configDir,
+    projectRoot,
+    installOpenCode: false,
+    installPlugins: false,
+  });
+  const write = report.writes.find((item) => item.path === configPath);
+  const globalConfig = readJson(configPath);
+
+  assert.equal(globalConfig.custom_user_field.keep, true);
+  assert.equal(globalConfig.default_agent, "YOLO");
+  assert.deepEqual(globalConfig.plugin, expectedGlobalPlugins(configDir));
+  assert.equal(write?.status, "updated");
+  assert.ok(write?.backup);
+  const backup = readJson(write.backup);
+  assert.deepEqual(backup.plugin, ["user-plugin@1.0.0"]);
+  assert.equal(backup.default_agent, "agent");
 });
 
 test("setupUx installs missing global TUI runtime dependencies", () => {
@@ -566,7 +669,7 @@ test("setupUx dry-run previews OpenCode install or update by default", () => {
   assert.equal(installCommand?.status, "preview");
 });
 
-test("setupUx preserves existing project profile unless forced", () => {
+test("setupUx overwrites existing project profile with backup by default", () => {
   const root = tempRoot();
   const configDir = path.join(root, "config", "opencode");
   const projectRoot = path.join(root, "project");
@@ -574,24 +677,16 @@ test("setupUx preserves existing project profile unless forced", () => {
   fs.mkdirSync(path.dirname(profilePath), { recursive: true });
   fs.writeFileSync(profilePath, "{ \"custom\": true }\n", "utf8");
 
-  const conflict = setupUx({
+  const report = setupUx({
     homeDir: path.join(root, "home"),
     configDir,
     projectRoot,
     installOpenCode: false,
     installPlugins: false,
   });
-  assert.equal(conflict.writes.some((write) => write.path === profilePath && write.status === "conflict"), true);
-  assert.match(fs.readFileSync(profilePath, "utf8"), /custom/);
-
-  const forced = setupUx({
-    homeDir: path.join(root, "home"),
-    configDir,
-    projectRoot,
-    installOpenCode: false,
-    installPlugins: false,
-    force: true,
-  });
-  assert.equal(forced.writes.some((write) => write.path === profilePath && write.status === "updated"), true);
+  const write = report.writes.find((item) => item.path === profilePath);
+  assert.equal(write?.status, "updated");
+  assert.ok(write?.backup);
+  assert.match(fs.readFileSync(write.backup, "utf8"), /custom/);
   assert.match(fs.readFileSync(profilePath, "utf8"), /med-chat-triager/);
 });

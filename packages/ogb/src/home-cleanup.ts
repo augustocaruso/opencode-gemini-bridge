@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parse as parseJsonc } from "jsonc-parser";
+import { bridgeConfigDirForHome, createBackupSession, type BackupRecord } from "./backup-policy.js";
 import { BUILT_IN_AGENTS, BUILT_IN_COMMANDS } from "./built-ins.js";
 import { OGB_VERSION } from "./types.js";
 
@@ -23,6 +24,7 @@ export interface HomeCleanupReport {
   version: string;
   homeDir: string;
   backupDir?: string;
+  backups: BackupRecord[];
   actions: HomeCleanupAction[];
   warnings: string[];
 }
@@ -155,16 +157,6 @@ function collectCandidates(homeDir: string, warnings: string[]): Candidate[] {
   return [...candidates.values()].sort((a, b) => a.relPath.localeCompare(b.relPath));
 }
 
-function backupPathFor(backupDir: string, relPath: string): string {
-  return path.join(backupDir, ...normalizeRelPath(relPath).split("/"));
-}
-
-function backupAndRemove(filePath: string, backupPath: string): void {
-  fs.mkdirSync(path.dirname(backupPath), { recursive: true });
-  fs.cpSync(filePath, backupPath, { recursive: true });
-  fs.rmSync(filePath, { recursive: true, force: true });
-}
-
 function pruneIfEmpty(dir: string): void {
   try {
     if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return;
@@ -206,22 +198,27 @@ export function cleanupHomeProjectArtifacts(options: HomeCleanupOptions = {}): H
   const warnings: string[] = [];
   const actions: HomeCleanupAction[] = [];
   const candidates = collectCandidates(homeDir, warnings);
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const backupDir = path.join(homeDir, ".config", "opencode-gemini-bridge", "backups", "home-cleanup", stamp);
+  const backupSession = createBackupSession({
+    bridgeConfigDir: bridgeConfigDirForHome(homeDir),
+    operation: "home-cleanup",
+    roots: [{ root: homeDir }],
+    dryRun: options.dryRun,
+  });
   let usedBackup = false;
 
   for (const candidate of candidates) {
     const filePath = path.join(homeDir, ...candidate.relPath.split("/"));
     if (!fs.existsSync(filePath)) continue;
-    const backup = backupPathFor(backupDir, candidate.relPath);
     if (options.dryRun) {
+      const backup = backupSession.backupExisting(filePath);
       actions.push({ path: filePath, relPath: candidate.relPath, status: "preview", backup, reason: candidate.reason });
       continue;
     }
 
     try {
-      backupAndRemove(filePath, backup);
-      usedBackup = true;
+      const backup = backupSession.backupExisting(filePath);
+      fs.rmSync(filePath, { recursive: true, force: true });
+      usedBackup = usedBackup || Boolean(backup);
       actions.push({ path: filePath, relPath: candidate.relPath, status: "removed", backup, reason: candidate.reason });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -235,9 +232,10 @@ export function cleanupHomeProjectArtifacts(options: HomeCleanupOptions = {}): H
   return {
     version: OGB_VERSION,
     homeDir,
-    backupDir: options.dryRun || usedBackup ? backupDir : undefined,
+    backupDir: options.dryRun || usedBackup ? backupSession.backupDir : undefined,
+    backups: backupSession.backups,
     actions,
-    warnings,
+    warnings: [...new Set([...warnings, ...backupSession.retention.warnings])],
   };
 }
 

@@ -174,11 +174,17 @@ ogb check
 ogb check --accept-hooks
 ogb check --force
 ogb check --json
+ogb check --progress-json
 ```
 
 O comando executa setup local, sync, doctor, validation, security-check e
 dashboard. `--accept-hooks` registra por hash os hooks Gemini revisados; se o
 arquivo mudar, o doctor volta a pedir revisão.
+
+Para automações que precisam de progresso em tempo real, `--progress-json`
+emite NDJSON versionado no stdout. Cada linha é um evento JSON do schema
+`ogb.progress.v1`; logs humanos ficam fora desse canal. `--progress-json` não
+pode ser combinado com `--json` ou `--plain`.
 
 Alias legado:
 
@@ -323,7 +329,8 @@ GEMINI.md / AGENTS.md do projeto
 ```
 
 Conflitos não são sobrescritos sem `--force`. Com `--force`, o OGB cria backup
-em `.opencode/backups/bidirectional-sync/`.
+em `~/.config/opencode-gemini-bridge/backups/bidirectional-sync/`. A retencao
+central mantem ate 5 sessoes por operacao e exclui sessoes com mais de 30 dias.
 
 ### `ogb validate`
 
@@ -349,6 +356,7 @@ ogb --project "$PWD" install
 ogb --project "$PWD" install --dry-run
 ogb --project "$PWD" install --force
 ogb --project "$PWD" install --reset-global
+ogb --project "$PWD" install --dry-run --progress-json
 ```
 
 Modelo mental:
@@ -376,6 +384,7 @@ ogb --project "$PWD" update
 ogb --project "$PWD" update --dry-run
 ogb --project "$PWD" update --release v0.0.33
 ogb --project "$PWD" update --no-setup
+ogb --project "$PWD" update --dry-run --progress-json
 ```
 
 Aliases legados:
@@ -430,6 +439,7 @@ ogb reset --yes
 ogb reset --no-install-opencode
 ogb reset --no-plugins
 ogb reset --json
+ogb reset --dry-run --yes --progress-json
 ```
 
 ### `ogb check-update`
@@ -592,6 +602,8 @@ ogb cleanup-home --json
 Deve:
 
 - fazer backup em `~/.config/opencode-gemini-bridge/backups/home-cleanup/`;
+- aplicar retencao central: ate 5 sessoes por operacao e remocao de sessoes com
+  mais de 30 dias;
 - remover `~/opencode.jsonc` quando ele parecer config de projeto gerenciada
   pelo OGB;
 - remover arquivos OGB conhecidos dentro de `~/.opencode`;
@@ -738,7 +750,6 @@ sem sobrescrever arquivos manuais.
 --project <path>
 --global
 --no-rulesync
---backup
 --force
 ```
 

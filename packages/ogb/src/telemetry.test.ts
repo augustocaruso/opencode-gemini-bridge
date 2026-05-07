@@ -288,6 +288,7 @@ test("outbox preserves envelopes when endpoint fails", async () => {
     const result = await sendTelemetry({
       homeDir,
       since: "7d",
+      includeAutomation: true,
       fetchImpl: async () => ({ ok: false, status: 500, text: async () => "server down" }),
     });
 
@@ -310,6 +311,7 @@ test("send uses Bearer token and marks runs as sent", async () => {
     const result = await sendTelemetry({
       homeDir,
       since: "7d",
+      includeAutomation: true,
       fetchImpl: async (_url, init) => {
         seen.authorization = init?.headers?.Authorization;
         seen.body = init?.body;
@@ -336,7 +338,7 @@ test("auto-send is suppressed in Codex and test automation contexts", async () =
       authToken: "bearer-secret",
     });
 
-    await safeRecordWorkflowRun({
+    const record = await safeRecordWorkflowRun({
       workflow: "doctor",
       source: "cli",
       status: "completed_with_warnings",
@@ -350,9 +352,89 @@ test("auto-send is suppressed in Codex and test automation contexts", async () =
     });
 
     assert.equal(calls, 0);
+    assert.ok(Array.isArray(record?.environmentContext.automationSignals));
+    assert.ok((record?.environmentContext.automationSignals as unknown[]).includes("codex"));
     assert.equal(telemetryStatus({ homeDir }).runCount, 1);
     assert.equal(telemetryStatus({ homeDir }).outboxCount, 0);
     assert.equal(telemetryStatus({ homeDir }).sentRunCount, 0);
+
+    const skipped = await sendTelemetry({
+      homeDir,
+      since: "7d",
+      fetchImpl: async () => {
+        calls += 1;
+        return { ok: true, status: 202, text: async () => "" };
+      },
+    });
+
+    assert.equal(skipped.ok, true);
+    assert.equal(skipped.sent, 0);
+    assert.equal(calls, 0);
+
+    const forced = await sendTelemetry({
+      homeDir,
+      since: "7d",
+      includeAutomation: true,
+      fetchImpl: async () => {
+        calls += 1;
+        return { ok: true, status: 202, text: async () => "" };
+      },
+    });
+
+    assert.equal(forced.ok, true);
+    assert.equal(forced.sent, 1);
+    assert.equal(calls, 1);
+  });
+});
+
+test("OGB development checkout records are skipped by default", async () => {
+  await withEnv({
+    CODEX_CI: undefined,
+    CODEX_SHELL: undefined,
+    CI: undefined,
+    NODE_ENV: undefined,
+    npm_lifecycle_event: undefined,
+    OGB_TELEMETRY_DEFAULTS_DISABLED: "1",
+    OGB_TELEMETRY_CONFIG: undefined,
+  }, async () => {
+    const homeDir = tempHome();
+    let calls = 0;
+    enableTelemetry({
+      homeDir,
+      endpointUrl: "https://telemetry.example.test/v1/telemetry/workflow-runs",
+      authToken: "bearer-secret",
+    });
+    recordWorkflowRun({
+      workflow: "doctor",
+      status: "completed_with_warnings",
+      projectRoot: path.join(homeDir, "opencode-gemini-bridge", "packages", "ogb"),
+      payload: { warnings: ["Missing built-in OpenCode commands: bridge"] },
+    }, { homeDir });
+
+    const skipped = await sendTelemetry({
+      homeDir,
+      since: "7d",
+      fetchImpl: async () => {
+        calls += 1;
+        return { ok: true, status: 202, text: async () => "" };
+      },
+    });
+
+    assert.equal(skipped.sent, 0);
+    assert.equal(calls, 0);
+
+    const forced = await sendTelemetry({
+      homeDir,
+      since: "7d",
+      includeAutomation: true,
+      fetchImpl: async () => {
+        calls += 1;
+        return { ok: true, status: 202, text: async () => "" };
+      },
+    });
+
+    assert.equal(forced.sent, 1);
+    assert.equal(calls, 1);
   });
 });
 
@@ -385,6 +467,7 @@ test("clean pass records stay local unless includePass is requested", async () =
       homeDir,
       since: "7d",
       includePass: true,
+      includeAutomation: true,
       fetchImpl: async () => {
         calls += 1;
         return { ok: true, status: 202, text: async () => "" };

@@ -57,6 +57,7 @@ test("rich ritual UI is opt-in to an interactive human terminal", () => {
   assert.equal(shouldUseRitualUi({ stdoutIsTTY: false, env: {} }), false);
   assert.equal(shouldUseRitualUi({ stdoutIsTTY: true, json: true, env: {} }), false);
   assert.equal(shouldUseRitualUi({ stdoutIsTTY: true, plain: true, env: {} }), false);
+  assert.equal(shouldUseRitualUi({ stdoutIsTTY: true, progressJson: true, env: {} }), false);
   assert.equal(shouldUseRitualUi({ stdoutIsTTY: true, env: { CI: "true" } }), false);
   assert.equal(shouldUseRitualUi({ stdoutIsTTY: true, env: { OGB_PLAIN: "1" } }), false);
   assert.equal(shouldUseRitualUi({ stdoutIsTTY: true, env: { OGB_UI: "0" } }), false);
@@ -67,17 +68,16 @@ test("Ink frame cleanup keeps the final rendered frame for transcript captures",
   assert.equal(cleanInkFrame(raw), "second frame");
 });
 
-test("live progress model starts full-width with every todo queued", () => {
+test("live progress model starts with every todo queued", () => {
   const model = createLiveRitualModel("check", projectRoot, [
     { stepId: "setup", label: "setup OpenCode plugin" },
     { stepId: "sync", label: "sync bridge assets" },
     { stepId: "doctor", label: "run doctor" },
-  ], { now: 1000, width: 132 });
+  ], { now: 1000 });
 
   assert.equal(model.title, "OGB check");
   assert.equal(model.subtitle, projectRoot);
   assert.equal(model.statusLabel, "RUN");
-  assert.equal(model.width, 132);
   assert.equal(model.currentStepId, "setup");
   assert.equal(model.final, false);
   assert.deepEqual(model.steps.map((step) => step.label), ["setup OpenCode plugin", "sync bridge assets", "run doctor"]);
@@ -88,7 +88,7 @@ test("live progress events update the active todo without creating a second repo
   let model = createLiveRitualModel("check", projectRoot, [
     { stepId: "setup", label: "setup OpenCode plugin", detail: "wire plugin" },
     { stepId: "sync", label: "sync bridge assets", detail: "project resources" },
-  ], { now: 1000, width: 100 });
+  ], { now: 1000 });
 
   model = applyRitualProgressEvent(model, {
     stepId: "setup",
@@ -125,7 +125,7 @@ test("finishing the live progress model turns the same todo list into the final 
     { stepId: "validate", label: "validate config" },
     { stepId: "security", label: "security guardrails" },
     { stepId: "dashboard", label: "dashboard summary" },
-  ], { now: 1000, width: 100 });
+  ], { now: 1000 });
   for (const step of model.steps) {
     model = applyRitualProgressEvent(model, { ...step, status: "pass" });
   }
@@ -149,7 +149,7 @@ test("finishing the live progress model turns the same todo list into the final 
 test("live progress model turns thrown errors into a visible failed todo", () => {
   const started = applyRitualProgressEvent(createLiveRitualModel("check", projectRoot, [
     { stepId: "setup", label: "setup OpenCode plugin" },
-  ], { now: 1000, width: 100 }), {
+  ], { now: 1000 }), {
     stepId: "setup",
     label: "setup OpenCode plugin",
     status: "running",
@@ -167,7 +167,7 @@ test("live progress model turns thrown errors into a visible failed todo", () =>
 test("unexpected command errors get PATH-specific next actions", () => {
   const started = applyRitualProgressEvent(createLiveRitualModel("update", projectRoot, [
     { stepId: "install", label: "apply installer" },
-  ], { now: 1000, width: 100 }), {
+  ], { now: 1000 }), {
     stepId: "install",
     label: "apply installer",
     status: "running",

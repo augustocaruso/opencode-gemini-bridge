@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { runInstall } from "./install.js";
+import { enableMaintainerRole } from "./local-role.js";
 import type { RitualProgressEvent } from "./ritual-progress.js";
 import { readStateRecord } from "./state-store.js";
 
@@ -90,4 +91,30 @@ test("runInstall applies the current install flow and finishes with check", () =
   const state = readStateRecord("install", { projectRoot, homeDir });
   assert.equal(state.exists, true);
   assert.equal(state.data?.outcome, report.outcome);
+});
+
+test("runInstall respects maintainer protection even with force", () => {
+  const root = tempRoot();
+  const homeDir = path.join(root, "home");
+  const projectRoot = path.join(root, "project");
+  const globalAgentsPath = path.join(homeDir, ".config", "opencode", "AGENTS.md");
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.mkdirSync(path.dirname(globalAgentsPath), { recursive: true });
+  fs.writeFileSync(globalAgentsPath, "Maintainer AGENTS\n", "utf8");
+  enableMaintainerRole({ homeDir });
+
+  const report = runInstall({
+    projectRoot,
+    homeDir,
+    force: true,
+    installOpenCode: false,
+    installPlugins: false,
+    installTuiDependencies: false,
+    check: false,
+  });
+
+  assert.equal(fs.readFileSync(globalAgentsPath, "utf8"), "Maintainer AGENTS\n");
+  assert.equal(report.setup?.writes.some((write) => write.path === globalAgentsPath && write.status === "protected"), true);
+  assert.equal(report.setup?.writes.some((write) => Boolean(write.backup)), false);
+  assert.equal(report.warnings.some((warning) => warning.includes("modo mantenedor local")), true);
 });

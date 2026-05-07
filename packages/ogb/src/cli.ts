@@ -17,6 +17,7 @@ import { printInstallReport, runInstall } from "./install.js";
 import { buildInventory, writeInventory } from "./inventory.js";
 import { formatLimits, refreshLimits } from "./limits.js";
 import { buildOpenCodeLaunchArgs } from "./launch.js";
+import { disableMaintainerRole, enableMaintainerRole, readLocalRole, type LocalRoleStatus } from "./local-role.js";
 import { readOgbConfig } from "./ogb-config.js";
 import { runPass } from "./pass.js";
 import { defaultGeminiInput, isHomeProject, resolveProjectPaths } from "./paths.js";
@@ -35,8 +36,19 @@ import { disableTelemetry, enableTelemetry, previewTelemetryEnvelope, printTelem
 import { runTrustExtension, runTrustReview } from "./trust.js";
 import { OGB_VERSION } from "./types.js";
 import { runValidation } from "./validation.js";
-import { runWithRitualUi, shouldUseRitualUi } from "./ritual-ui.js";
-import type { RitualProgressDefinition, RitualProgressSink } from "./ritual-progress.js";
+import { ritualViewModel, runWithRitualProcessUi, shouldUseRitualUi } from "./ritual-ui.js";
+import {
+  checkProgressSteps,
+  createRitualId,
+  installProgressSteps,
+  resetProgressSteps,
+  updateProgressSteps,
+  writeRitualProgressJsonEvent,
+  type RitualKind,
+  type RitualProgressDefinition,
+  type RitualProgressSink,
+  type RitualProgressSummary,
+} from "./ritual-progress.js";
 
 export const program = new Command();
 
@@ -57,6 +69,140 @@ function splitFeatures(value: string | undefined): string[] | undefined {
 
 function commonProjectOptions() {
   return program.opts<{ project?: string }>();
+}
+
+function structuredOutputConflict(opts: { json?: boolean; plain?: boolean; progressJson?: boolean }): boolean {
+  if (!opts.progressJson) return false;
+  if (!opts.json && !opts.plain) return false;
+  console.error("error: --progress-json cannot be combined with --json or --plain.");
+  process.exitCode = 1;
+  return true;
+}
+
+function currentCliInvocationWithProgressJson(): { command: string; args: string[] } {
+  const cliPath = fileURLToPath(import.meta.url);
+  const tsx = path.join(process.cwd(), "node_modules", "tsx", "dist", "cli.mjs");
+  const runnerArgs = cliPath.endsWith(".ts") && fs.existsSync(tsx) ? [tsx, cliPath] : [cliPath];
+  const args = process.argv.slice(2).includes("--progress-json") ? process.argv.slice(2) : [...process.argv.slice(2), "--progress-json"];
+  return { command: process.execPath, args: [...runnerArgs, ...args] };
+}
+
+function exitCodeForRitualReport(kind: RitualKind, report: any): number {
+  if (kind === "check") return report.outcome === "fail" ? 2 : report.outcome === "warn" ? 1 : 0;
+  if (kind === "install") return report.outcome === "fail" ? 2 : report.outcome === "warn" ? 1 : 0;
+  if (kind === "reset") {
+    if (report.outcome === "cancelled") return 1;
+    if (report.check?.outcome === "fail" || (report.doctor?.errors.length ?? 0) > 0) return 2;
+    return 0;
+  }
+  return report.status === "error" ? 2 : 0;
+}
+
+function outcomeForRitualReport(kind: RitualKind, report: any): string {
+  return kind === "update" ? report.status : report.outcome;
+}
+
+function progressSummaryForReport(kind: RitualKind, report: any): RitualProgressSummary {
+  const view = ritualViewModel(kind, report);
+  return {
+    title: view.title,
+    statusLabel: view.statusLabel,
+    metrics: view.metrics,
+    callouts: view.callouts,
+    next: view.next,
+  };
+}
+
+function filesForRitualReport(kind: RitualKind, report: any): string[] {
+  if (kind === "check") return [report.files.pass, report.files.dashboard].filter(Boolean);
+  if (kind === "install") return report.check ? [report.check.files.pass, report.check.files.dashboard].filter(Boolean) : [];
+  if (kind === "reset") return [report.globalConfigPath, report.check?.files.pass, report.check?.files.dashboard].filter(Boolean);
+  return [];
+}
+
+async function runRitualProgressJson<TReport>(options: {
+  kind: RitualKind;
+  steps: RitualProgressDefinition[];
+  run: (onProgress: RitualProgressSink) => TReport | Promise<TReport>;
+}): Promise<TReport | { error: string }> {
+  const startedAt = new Date();
+  const ritualId = createRitualId(options.kind, startedAt);
+  const base = () => ({
+    schemaVersion: "ogb.progress.v1" as const,
+    ritualId,
+    kind: options.kind,
+    timestamp: new Date().toISOString(),
+  });
+  writeRitualProgressJsonEvent({
+    ...base(),
+    type: "ritual.started",
+    steps: options.steps,
+  });
+  const sink: RitualProgressSink = (event) => {
+    writeRitualProgressJsonEvent({
+      ...base(),
+      type: "ritual.step",
+      ...event,
+    });
+  };
+  try {
+    const report = await options.run(sink);
+    const exitCode = exitCodeForRitualReport(options.kind, report);
+    writeRitualProgressJsonEvent({
+      ...base(),
+      type: "ritual.finished",
+      outcome: outcomeForRitualReport(options.kind, report),
+      exitCode,
+      summary: progressSummaryForReport(options.kind, report),
+      files: filesForRitualReport(options.kind, report),
+    });
+    process.exitCode = exitCode;
+    return report;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    writeRitualProgressJsonEvent({
+      ...base(),
+      type: "ritual.error",
+      exitCode: 2,
+      error: message,
+      summary: {
+        statusLabel: "FAIL",
+        callouts: [message],
+        next: [`Run \`ogb ${options.kind} --plain\` to inspect the classic logs.`],
+      },
+    });
+    process.exitCode = 2;
+    return { error: message };
+  }
+}
+
+async function runRitualProcessUi(kind: RitualKind, subtitle: string, steps: RitualProgressDefinition[]): Promise<void> {
+  const child = currentCliInvocationWithProgressJson();
+  const result = await runWithRitualProcessUi({
+    kind,
+    subtitle,
+    steps,
+    command: child.command,
+    args: child.args,
+    cwd: process.cwd(),
+  });
+  process.exitCode = result.exitCode;
+}
+
+function localRoleHomeOptions() {
+  const { project } = commonProjectOptions();
+  const paths = resolveProjectPaths(project);
+  return { homeDir: paths.homeDir };
+}
+
+function printLocalRoleStatus(status: LocalRoleStatus, json = false): void {
+  if (json) {
+    console.log(JSON.stringify(status, null, 2));
+    return;
+  }
+  console.log(`OGB maintainer mode: ${status.enabled ? "enabled" : "disabled"}`);
+  console.log(`Flag: ${status.path}`);
+  if (status.enabledAt) console.log(`Enabled at: ${status.enabledAt}`);
 }
 
 function runInteractiveHelpSelection(selection: InteractiveHelpSelection): void {
@@ -205,6 +351,7 @@ function warnLegacyCommand(message: string): void {
 type CheckCliOptions = {
   json?: boolean;
   plain?: boolean;
+  progressJson?: boolean;
   dryRun?: boolean;
   force?: boolean;
   acceptHooks?: boolean;
@@ -220,6 +367,7 @@ function addCheckOptions(command: Command): Command {
   return command
     .option("--json", "Print JSON report")
     .option("--plain", "Use the classic text report instead of the rich terminal UI")
+    .option("--progress-json", "Emit versioned NDJSON progress events for automation")
     .option("--dry-run", "Preview check actions without writing trust changes")
     .option("--force", "Overwrite files previously changed outside ogb management")
     .option("--accept-hooks", "Record current Gemini hooks as reviewed by hash")
@@ -235,26 +383,20 @@ function projectSubtitle(project: string | undefined): string {
   return resolveProjectPaths(project).projectRoot;
 }
 
-function checkProgressSteps(opts: CheckCliOptions): RitualProgressDefinition[] {
-  return [
-    ...(opts.setup === false ? [] : [{ stepId: "setup", label: "Ensure OpenCode startup sync is installed.", detail: "Checks the plugin file, global registration, and command wiring." }]),
-    ...(opts.sync === false ? [] : [{ stepId: "sync", label: "Sync Gemini resources into OpenCode.", detail: "Projects context, MCPs, agents, commands, and skills into the right scope." }]),
-    { stepId: "doctor", label: "Inspect the bridge inventory with doctor.", detail: "Looks for missing generated files, plugin state, extension risk, and stale status." },
-    ...(opts.acceptHooks ? [{ stepId: "hook-review", label: "Record reviewed Gemini hooks.", detail: "Stores trusted hook hashes when --accept-hooks is used." }] : []),
-    ...(opts.validation === false ? [] : [{ stepId: "validate", label: "Validate the resolved OpenCode configuration.", detail: opts.windows ? "Includes Windows command/path checks." : "Checks global/project config, instructions, MCPs, and plugin references." }]),
-    ...(opts.security === false ? [] : [{ stepId: "security", label: "Run the security guardrails.", detail: "Reviews YOLO permissions, secret patterns, MCP env, and extension trust surface." }]),
-    ...(opts.dashboard === false ? [] : [{ stepId: "dashboard", label: "Refresh the dashboard summary.", detail: "Writes the final status, warnings, next actions, and report paths." }]),
-  ];
-}
-
 async function runCheckCli(opts: CheckCliOptions, workflow: "check" | "pass", legacyWarning?: string): Promise<void> {
+  if (structuredOutputConflict(opts)) return;
   if (legacyWarning) warnLegacyCommand(legacyWarning);
-  const useUi = shouldUseRitualUi({ json: opts.json, plain: opts.plain });
+  const steps = checkProgressSteps(opts);
+  const useUi = shouldUseRitualUi({ json: opts.json, plain: opts.plain, progressJson: opts.progressJson });
+  if (useUi) {
+    await runRitualProcessUi("check", projectSubtitle(commonProjectOptions().project), steps);
+    return;
+  }
   await withWorkflowTelemetry(workflow, async () => {
     const { project } = commonProjectOptions();
     const run = (onProgress?: RitualProgressSink) => runPass({
       projectRoot: project,
-      json: opts.json,
+      json: opts.json && !opts.progressJson,
       dryRun: opts.dryRun,
       force: opts.force,
       acceptHooks: opts.acceptHooks,
@@ -264,17 +406,10 @@ async function runCheckCli(opts: CheckCliOptions, workflow: "check" | "pass", le
       skipValidation: opts.validation === false,
       skipSecurity: opts.security === false,
       skipDashboard: opts.dashboard === false,
-      silent: useUi,
+      silent: useUi || opts.progressJson,
       onProgress,
     });
-    const report = useUi
-      ? await runWithRitualUi({
-        kind: "check",
-        subtitle: projectSubtitle(project),
-        steps: checkProgressSteps(opts),
-        run,
-      })
-      : run();
+    const report = opts.progressJson ? await runRitualProgressJson({ kind: "check", steps, run }) : run();
     return report;
   });
 }
@@ -291,6 +426,7 @@ type UpdateCliOptions = {
   dryRun?: boolean;
   json?: boolean;
   plain?: boolean;
+  progressJson?: boolean;
 };
 
 function addUpdateOptions(command: Command): Command {
@@ -306,22 +442,20 @@ function addUpdateOptions(command: Command): Command {
     .option("--force", "Pass force to the bootstrap installer")
     .option("--dry-run", "Print the bootstrap command without running it")
     .option("--json", "Print JSON report")
-    .option("--plain", "Use the classic text report instead of the rich terminal UI");
-}
-
-function updateProgressSteps(opts: UpdateCliOptions): RitualProgressDefinition[] {
-  return [
-    { stepId: "resolve", label: "Resolve the requested release.", detail: opts.release && opts.release !== "latest" ? opts.release : "Uses the latest GitHub release." },
-    { stepId: "download", label: "Download the official release pack.", detail: "Runs the platform bootstrap script for this machine." },
-    { stepId: "install", label: "Apply the installer.", detail: opts.dryRun ? "Preview only; no files are changed." : "Replaces the OGB CLI and managed profile files." },
-    ...(opts.setup === false ? [] : [{ stepId: "post-check", label: "Run the full post-update check.", detail: opts.installOpencode === false ? "Verifies the bridge without installing OpenCode." : "Refreshes setup, sync, doctor, validation, security, and dashboard." }]),
-  ];
+    .option("--plain", "Use the classic text report instead of the rich terminal UI")
+    .option("--progress-json", "Emit versioned NDJSON progress events for automation");
 }
 
 async function runUpdateCli(opts: UpdateCliOptions, legacyWarning?: string): Promise<void> {
+  if (structuredOutputConflict(opts)) return;
   if (legacyWarning) warnLegacyCommand(legacyWarning);
   const { project } = commonProjectOptions();
-  const useUi = shouldUseRitualUi({ json: opts.json, plain: opts.plain });
+  const steps = updateProgressSteps(opts);
+  const useUi = shouldUseRitualUi({ json: opts.json, plain: opts.plain, progressJson: opts.progressJson });
+  if (useUi) {
+    await runRitualProcessUi("update", projectSubtitle(project), steps);
+    return;
+  }
   const run = (onProgress?: RitualProgressSink) => runSelfUpdate({
     repo: opts.repo,
     version: opts.release,
@@ -333,18 +467,12 @@ async function runUpdateCli(opts: UpdateCliOptions, legacyWarning?: string): Pro
     installOpenCode: opts.installOpencode,
     force: opts.force,
     dryRun: opts.dryRun,
-    stdio: useUi ? "pipe" : "inherit",
+    stdio: useUi || opts.progressJson ? "pipe" : "inherit",
     onProgress,
   });
-  const report = useUi
-    ? await runWithRitualUi({
-      kind: "update",
-      subtitle: projectSubtitle(project),
-      steps: updateProgressSteps(opts),
-      run,
-    })
-    : run();
-  if (!useUi) printSelfUpdateReport(report, opts.json);
+  const report = opts.progressJson ? await runRitualProgressJson({ kind: "update", steps, run }) : run();
+  if ("error" in report) return;
+  if (!opts.progressJson) printSelfUpdateReport(report, opts.json);
   if (report.status === "error") process.exitCode = 2;
 }
 
@@ -702,11 +830,12 @@ telemetry.command("send")
   .option("--since <duration>", "Include records since duration or date", "7d")
   .option("--limit <n>", "Maximum run records", (value) => Number.parseInt(value, 10))
   .option("--include-pass", "Also send clean pass records for manual debugging")
+  .option("--include-automation", "Also send records captured under CI/Codex/test automation")
   .option("--json", "Print JSON result")
   .action(async (opts) => {
     const { project } = commonProjectOptions();
     const paths = resolveProjectPaths(project);
-    const result = await sendTelemetry({ homeDir: paths.homeDir, since: opts.since, limit: opts.limit, includePass: opts.includePass });
+    const result = await sendTelemetry({ homeDir: paths.homeDir, since: opts.since, limit: opts.limit, includePass: opts.includePass, includeAutomation: opts.includeAutomation });
     printTelemetrySendResult(result, opts.json);
     if (!result.ok && result.reason !== "telemetry_not_enabled") process.exitCode = 1;
   });
@@ -747,6 +876,33 @@ telemetry.command("record")
       : await safeRecordWorkflowRun(input, { homeDir: paths.homeDir });
     if (opts.json) console.log(JSON.stringify(record, null, 2));
     else if (record) console.log(`Recorded telemetry run ${record.runId}`);
+  });
+
+const maintainer = program.command("maintainer")
+  .description("Manage the local maintainer protection flag");
+
+maintainer.command("enable")
+  .description("Protect local OpenCode profile files from OGB preset overwrites")
+  .option("--json", "Print JSON status")
+  .action((opts) => {
+    const status = enableMaintainerRole(localRoleHomeOptions());
+    printLocalRoleStatus(status, opts.json);
+  });
+
+maintainer.command("disable")
+  .description("Allow OGB preset writes on this machine again")
+  .option("--json", "Print JSON status")
+  .action((opts) => {
+    const status = disableMaintainerRole(localRoleHomeOptions());
+    printLocalRoleStatus(status, opts.json);
+  });
+
+maintainer.command("status")
+  .description("Show whether local maintainer protection is enabled")
+  .option("--json", "Print JSON status")
+  .action((opts) => {
+    const status = readLocalRole(localRoleHomeOptions());
+    printLocalRoleStatus(status, opts.json);
   });
 
 program.command("validate")
@@ -847,27 +1003,6 @@ program.command("launch")
     child.on("exit", (code) => process.exit(code ?? 0));
   });
 
-function installProgressSteps(opts: {
-  dryRun?: boolean;
-  ux?: boolean;
-  resetGlobal?: boolean;
-  installOpencode?: boolean;
-  plugins?: boolean;
-  projectProfile?: boolean;
-  cleanupHome?: boolean;
-  check?: boolean;
-  windows?: boolean;
-}): RitualProgressDefinition[] {
-  return [
-    { stepId: "cleanup", label: "Clean old home-project artifacts.", detail: opts.cleanupHome === false ? "Skipped by --no-cleanup-home." : "Backs up accidental home checkout files and removes empty leftovers." },
-    { stepId: "profile", label: "Apply the OpenCode profile.", detail: opts.ux === false ? "Skipped by --no-ux." : opts.resetGlobal ? "Overwrites global config from OGB defaults." : "Merges managed global settings without replacing user-owned fields." },
-    { stepId: "opencode", label: "Verify OpenCode is available.", detail: opts.installOpencode === false ? "Skipped by --no-install-opencode." : "Installs or updates OpenCode when the platform flow allows it." },
-    { stepId: "plugins", label: "Install global OpenCode plugins.", detail: opts.plugins === false ? "Skipped by --no-plugins." : "Covers auth, fallback, sidebar, and OGB startup sync integrations." },
-    { stepId: "project-profile", label: "Write the project profile when appropriate.", detail: opts.projectProfile === false ? "Skipped by --no-project-profile." : "Skipped automatically when the target is the home/global scope." },
-    { stepId: "check", label: "Run the full bridge check.", detail: opts.dryRun ? "Skipped in dry-run preview." : opts.windows ? "Includes Windows validation." : "Covers setup, sync, doctor, validation, security, and dashboard." },
-  ];
-}
-
 program.command("install")
   .description("Install or reinstall the OGB OpenCode profile and run the full check")
   .option("--dry-run", "Preview install actions without writing")
@@ -885,8 +1020,15 @@ program.command("install")
   .option("--windows", "Include Windows installer/static checks during the final check")
   .option("--json", "Print JSON report")
   .option("--plain", "Use the classic text report instead of the rich terminal UI")
+  .option("--progress-json", "Emit versioned NDJSON progress events for automation")
   .action(async (opts) => {
-    const useUi = shouldUseRitualUi({ json: opts.json, plain: opts.plain });
+    if (structuredOutputConflict(opts)) return;
+    const useUi = shouldUseRitualUi({ json: opts.json, plain: opts.plain, progressJson: opts.progressJson });
+    const steps = installProgressSteps(opts);
+    if (useUi) {
+      await runRitualProcessUi("install", projectSubtitle(commonProjectOptions().project), steps);
+      return;
+    }
     await withWorkflowTelemetry("install", async () => {
       const { project } = commonProjectOptions();
       const run = (onProgress?: RitualProgressSink) => runInstall({
@@ -905,16 +1047,10 @@ program.command("install")
         rulesyncMode: normalizeRulesyncMode(opts.rulesync),
         onProgress,
       });
-      const report = useUi
-        ? await runWithRitualUi({
-          kind: "install",
-          subtitle: projectSubtitle(project),
-          steps: installProgressSteps(opts),
-          run,
-        })
-        : run();
-      if (!useUi) printInstallReport(report, opts.json);
-      process.exitCode = report.outcome === "fail" ? 2 : report.outcome === "warn" ? 1 : 0;
+      const report = opts.progressJson ? await runRitualProgressJson({ kind: "install", steps, run }) : run();
+      if ("error" in report) return report;
+      if (!opts.progressJson) printInstallReport(report, opts.json);
+      process.exitCode = exitCodeForRitualReport("install", report);
       return report;
     });
   });
@@ -986,25 +1122,6 @@ program.command("cleanup-home")
     if (report.warnings.length > 0) process.exitCode = 1;
   });
 
-function resetProgressSteps(opts: {
-  yes?: boolean;
-  dryRun?: boolean;
-  installOpencode?: boolean;
-  plugins?: boolean;
-}): RitualProgressDefinition[] {
-  return [
-    { stepId: "confirm", label: "Confirm the home reset.", detail: opts.yes ? "--yes accepted." : opts.dryRun ? "Preview mode; no files are changed." : "Waits for the RESET confirmation prompt." },
-    { stepId: "env", label: "Configure OpenCode websearch support.", detail: "Persists OPENCODE_ENABLE_EXA=1 when the platform allows it." },
-    { stepId: "cleanup", label: "Clean old home-project artifacts.", detail: "Backs up accidental project files before removing them." },
-    { stepId: "setup", label: "Overwrite the global OpenCode profile.", detail: "Rebuilds global config, commands, agents, and sidebar files." },
-    { stepId: "opencode", label: "Verify OpenCode is available.", detail: opts.installOpencode === false ? "Skipped by --no-install-opencode." : "Installs or updates OpenCode when needed." },
-    { stepId: "plugins", label: "Install global OpenCode plugins.", detail: opts.plugins === false ? "Skipped by --no-plugins." : "Covers auth, fallback, sidebar, and startup sync integrations." },
-    { stepId: "sync", label: "Sync Gemini globals into OpenCode.", detail: "Projects context, MCPs, agents, commands, and skills into global scope." },
-    { stepId: "doctor", label: "Run doctor.", detail: "Performs compatibility checks after reset." },
-    { stepId: "check", label: "Run the full bridge check.", detail: "Verifies setup, sync, validation, security, and dashboard." },
-  ];
-}
-
 program.command("reset")
   .description("Reset the global OGB/OpenCode profile; only works when project is the home directory")
   .option("--yes", "Confirm the reset without the interactive prompt")
@@ -1014,13 +1131,29 @@ program.command("reset")
   .option("--no-plugins", "Do not run global OpenCode plugin installers")
   .option("--json", "Print JSON report")
   .option("--plain", "Use the classic text report instead of the rich terminal UI")
+  .option("--progress-json", "Emit versioned NDJSON progress events for automation")
   .action(async (opts) => {
-    const useUi = shouldUseRitualUi({ json: opts.json, plain: opts.plain });
+    if (structuredOutputConflict(opts)) return;
+    const useUi = shouldUseRitualUi({ json: opts.json, plain: opts.plain, progressJson: opts.progressJson });
+    const steps = resetProgressSteps(opts);
+    const { project } = commonProjectOptions();
+    const paths = resolveProjectPaths(project);
+    const canUseUi = useUi && paths.homeMode && (opts.yes || opts.dryRun);
+    if (canUseUi) {
+      await runRitualProcessUi("reset", paths.homeDir, steps);
+      return;
+    }
     await withWorkflowTelemetry("reset", async () => {
-      const { project } = commonProjectOptions();
       try {
-        const paths = resolveProjectPaths(project);
-        const canUseUi = useUi && paths.homeMode && (opts.yes || opts.dryRun);
+        if (opts.progressJson && !opts.yes && !opts.dryRun) {
+          return runRitualProgressJson({
+            kind: "reset",
+            steps,
+            run: () => {
+              throw new ResetConfirmationError("ogb reset --progress-json precisa de --yes ou --dry-run para manter stdout como NDJSON puro.");
+            },
+          });
+        }
         const run = (onProgress?: RitualProgressSink) => runReset({
           projectRoot: project,
           yes: opts.yes,
@@ -1030,19 +1163,18 @@ program.command("reset")
           installPlugins: opts.plugins,
           onProgress,
         });
-        const report = canUseUi
-          ? await runWithRitualUi({
-            kind: "reset",
-            subtitle: paths.homeDir,
-            steps: resetProgressSteps(opts),
-            run,
-          })
-          : await run();
-        if (!canUseUi) printResetReport(report, opts.json);
+        const report = opts.progressJson ? await runRitualProgressJson({ kind: "reset", steps, run }) : await run();
+        if (!opts.progressJson) printResetReport(report as any, opts.json);
+        if ("error" in report) return report;
         if (report.outcome === "cancelled") process.exitCode = 1;
         else if (report.check?.outcome === "fail" || (report.doctor?.errors.length ?? 0) > 0) process.exitCode = 2;
         return report;
       } catch (error) {
+        if (opts.progressJson) {
+          const message = error instanceof Error ? error.message : String(error);
+          process.exitCode = 2;
+          return { error: message };
+        }
         const expected = error instanceof ResetNotHomeError || error instanceof ResetConfirmationError;
         console.error(error instanceof Error ? error.message : String(error));
         process.exitCode = expected ? 1 : 2;

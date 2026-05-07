@@ -13,7 +13,7 @@ import { hookTrustKey, readTrustFile, writeTrustFile } from "./trust.js";
 import { OGB_VERSION } from "./types.js";
 import { runValidation, type ValidationReport } from "./validation.js";
 import type { RulesyncMode } from "./rulesync.js";
-import { emitRitualProgress, progressStatusFromFindings, progressStatusFromOutcome, type RitualProgressSink } from "./ritual-progress.js";
+import { CHECK_PROGRESS_STEPS, emitRitualProgress, progressStatusFromFindings, progressStatusFromOutcome, type RitualProgressSink } from "./ritual-progress.js";
 import { writeStateRecord } from "./state-store.js";
 
 export interface PassOptions {
@@ -204,45 +204,7 @@ function syncSummaryLine(sync: PassSyncSummary): string {
   return parts.length > 0 ? parts.join(", ") : "sem arquivos projetados";
 }
 
-const CHECK_PROGRESS = {
-  setup: {
-    stepId: "setup",
-    label: "Ensure OpenCode startup sync is installed.",
-    detail: "Checks the plugin file, global registration, and command wiring.",
-  },
-  sync: {
-    stepId: "sync",
-    label: "Sync Gemini resources into OpenCode.",
-    detail: "Projects context, MCPs, agents, commands, and skills into the right scope.",
-  },
-  doctor: {
-    stepId: "doctor",
-    label: "Inspect the bridge inventory with doctor.",
-    detail: "Looks for missing generated files, plugin state, extension risk, and stale status.",
-  },
-  hooks: {
-    stepId: "hook-review",
-    label: "Record reviewed Gemini hooks.",
-    detail: "Stores trusted hook hashes when --accept-hooks is used.",
-  },
-  validation: {
-    stepId: "validate",
-    label: "Validate the resolved OpenCode configuration.",
-    detail: "Checks global/project config, instructions, MCPs, and plugin references.",
-  },
-  security: {
-    stepId: "security",
-    label: "Run the security guardrails.",
-    detail: "Reviews YOLO permissions, secret patterns, MCP env, and extension trust surface.",
-  },
-  dashboard: {
-    stepId: "dashboard",
-    label: "Refresh the dashboard summary.",
-    detail: "Writes the final status, warnings, next actions, and report paths.",
-  },
-} as const;
-
-type CheckProgressKey = keyof typeof CHECK_PROGRESS;
+type CheckProgressKey = keyof typeof CHECK_PROGRESS_STEPS;
 
 function emitCheckProgress(
   sink: RitualProgressSink | undefined,
@@ -250,7 +212,7 @@ function emitCheckProgress(
   status: Parameters<typeof emitRitualProgress>[1]["status"],
   message?: string,
 ): void {
-  const step = CHECK_PROGRESS[key];
+  const step = CHECK_PROGRESS_STEPS[key];
   emitRitualProgress(sink, { ...step, status, message });
 }
 
@@ -421,14 +383,14 @@ export function runPass(options: PassOptions = {}): PassReport {
 
   let acceptedHooks: string[] = [];
   if (options.acceptHooks) {
-    emitCheckProgress(options.onProgress, "hooks", "running");
+    emitCheckProgress(options.onProgress, "hookReview", "running");
     try {
       acceptedHooks = acceptCurrentHooks(paths.projectRoot, paths.homeDir, options.dryRun);
     } catch (error) {
-      emitCheckProgress(options.onProgress, "hooks", "fail", error instanceof Error ? error.message : String(error));
+      emitCheckProgress(options.onProgress, "hookReview", "fail", error instanceof Error ? error.message : String(error));
       throw error;
     }
-    emitCheckProgress(options.onProgress, "hooks", "pass", `${acceptedHooks.length} hook(s) accepted.`);
+    emitCheckProgress(options.onProgress, "hookReview", "pass", `${acceptedHooks.length} hook(s) accepted.`);
   }
   if (acceptedHooks.length > 0) {
     emitCheckProgress(options.onProgress, "doctor", "running", "Rechecking after hook trust update.");
@@ -447,16 +409,16 @@ export function runPass(options: PassOptions = {}): PassReport {
   }
 
   if (!options.skipValidation) {
-    emitCheckProgress(options.onProgress, "validation", "running");
+    emitCheckProgress(options.onProgress, "validate", "running");
     try {
       validation = runValidation({ projectRoot: paths.projectRoot, homeDir: paths.homeDir, silent: true, windows: options.windows });
     } catch (error) {
-      emitCheckProgress(options.onProgress, "validation", "fail", error instanceof Error ? error.message : String(error));
+      emitCheckProgress(options.onProgress, "validate", "fail", error instanceof Error ? error.message : String(error));
       throw error;
     }
     emitCheckProgress(
       options.onProgress,
-      "validation",
+      "validate",
       progressStatusFromOutcome(validation.outcome),
       validation.outcome === "pass" ? "Validation is clean." : firstValidationIssue(validation, validation.outcome) ?? `Validation outcome: ${validation.outcome}.`,
     );

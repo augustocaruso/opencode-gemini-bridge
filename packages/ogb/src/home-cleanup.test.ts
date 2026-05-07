@@ -16,6 +16,9 @@ function writeFile(filePath: string, content: string): void {
 
 test("cleanupHomeProjectArtifacts backs up and removes old home project files", () => {
   const homeDir = tempHome();
+  const staleBackup = path.join(homeDir, ".config", "opencode-gemini-bridge", "backups", "home-cleanup", "2000-01-01T00-00-00-000Z");
+  fs.mkdirSync(staleBackup, { recursive: true });
+  fs.writeFileSync(path.join(staleBackup, "old.txt"), "old backup\n", "utf8");
   writeFile(path.join(homeDir, "opencode.jsonc"), JSON.stringify({
     instructions: [".opencode/generated/GEMINI.expanded.md"],
   }, null, 2));
@@ -48,8 +51,11 @@ test("cleanupHomeProjectArtifacts backs up and removes old home project files", 
   assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "bin", "opencode")), true);
   assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "notes.txt")), true);
   assert.ok(report.backupDir);
+  assert.ok(report.backupDir.startsWith(path.join(homeDir, ".config", "opencode-gemini-bridge", "backups", "home-cleanup")));
+  assert.ok(report.backups.length > 0);
   assert.equal(fs.existsSync(path.join(report.backupDir!, "opencode.jsonc")), true);
   assert.equal(fs.existsSync(path.join(report.backupDir!, ".opencode", "commands", "custom.md")), true);
+  assert.equal(fs.existsSync(staleBackup), false);
 });
 
 test("cleanupHomeProjectArtifacts dry-run leaves files in place", () => {
@@ -63,4 +69,6 @@ test("cleanupHomeProjectArtifacts dry-run leaves files in place", () => {
   assert.ok(report.actions.some((action) => action.relPath === "opencode.jsonc" && action.status === "preview"));
   assert.equal(fs.existsSync(path.join(homeDir, "opencode.jsonc")), true);
   assert.ok(report.backupDir);
+  assert.equal(report.backups[0]?.dryRun, true);
+  assert.equal(fs.existsSync(report.actions.find((action) => action.relPath === "opencode.jsonc")?.backup ?? ""), false);
 });

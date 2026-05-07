@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createBackupSession, type BackupRecord, type BackupSession } from "./backup-policy.js";
 import { sha256Text } from "./file-hash.js";
 import { resolveProjectPaths } from "./paths.js";
 import { OGB_VERSION } from "./types.js";
@@ -27,6 +28,7 @@ export interface BidirectionalSyncReport {
   mode: "rules-only";
   dryRun: boolean;
   force: boolean;
+  backups: BackupRecord[];
   changes: BidirectionalSyncChange[];
   warnings: string[];
 }
@@ -47,19 +49,11 @@ function readText(filePath: string): string | undefined {
   }
 }
 
-function backupFile(projectRoot: string, target: string): string {
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const rel = path.relative(projectRoot, target).split(path.sep).join("__");
-  const backupPath = path.join(projectRoot, ".opencode", "backups", "bidirectional-sync", stamp, rel || path.basename(target));
-  fs.mkdirSync(path.dirname(backupPath), { recursive: true });
-  fs.copyFileSync(target, backupPath);
-  return backupPath;
-}
-
 function syncGroup(options: {
   group: BidirectionalSyncChange["group"];
   files: string[];
   projectRoot: string;
+  backupSession: BackupSession;
   dryRun?: boolean;
   force?: boolean;
 }): BidirectionalSyncChange[] {
@@ -108,7 +102,7 @@ function syncGroup(options: {
     }
 
     let backup: string | undefined;
-    if (current !== undefined) backup = backupFile(options.projectRoot, target);
+    if (current !== undefined) backup = options.backupSession.backupExisting(target);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, sourceText, "utf8");
     changes.push({
@@ -126,10 +120,20 @@ function syncGroup(options: {
 
 export function runBidirectionalSync(options: BidirectionalSyncOptions = {}): BidirectionalSyncReport {
   const paths = resolveProjectPaths(options.projectRoot, options.homeDir);
+  const backupSession = createBackupSession({
+    bridgeConfigDir: paths.bridgeConfigDir,
+    operation: "bidirectional-sync",
+    roots: [
+      { root: paths.projectRoot, prefix: "project" },
+      { root: paths.homeDir, prefix: "home" },
+    ],
+    dryRun: options.dryRun,
+  });
   const changes = [
     ...syncGroup({
       group: "project-rules",
       projectRoot: paths.projectRoot,
+      backupSession,
       dryRun: options.dryRun,
       force: options.force,
       files: [
@@ -140,6 +144,7 @@ export function runBidirectionalSync(options: BidirectionalSyncOptions = {}): Bi
     ...syncGroup({
       group: "global-rules",
       projectRoot: paths.projectRoot,
+      backupSession,
       dryRun: options.dryRun,
       force: options.force,
       files: [
@@ -158,8 +163,9 @@ export function runBidirectionalSync(options: BidirectionalSyncOptions = {}): Bi
     mode: "rules-only",
     dryRun: Boolean(options.dryRun),
     force: Boolean(options.force),
+    backups: backupSession.backups,
     changes,
-    warnings,
+    warnings: [...new Set([...warnings, ...backupSession.retention.warnings])],
   };
 
   fs.mkdirSync(path.dirname(paths.bidirectionalSyncPath), { recursive: true });

@@ -329,6 +329,23 @@ test("syncToOpenCode does not overwrite manually edited YOLO agent without force
   assert.ok(report.warnings.some((warning) => warning.includes("Agent conflict: .opencode/agents/YOLO.md")));
 });
 
+test("syncToOpenCode force overwrites built-in files with central backup", () => {
+  const projectRoot = tempProject();
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));
+  const yoloPath = path.join(projectRoot, ".opencode", "agents", "YOLO.md");
+
+  syncToOpenCode({ projectRoot, homeDir, rulesyncMode: "off" });
+  fs.writeFileSync(yoloPath, "manual yolo\n", "utf8");
+
+  const report = syncToOpenCode({ projectRoot, homeDir, rulesyncMode: "off", force: true });
+  const yoloBackup = report.backups.find((backup) => fs.existsSync(backup.backup) && fs.readFileSync(backup.backup, "utf8") === "manual yolo\n");
+
+  assert.ok(yoloBackup);
+  assert.ok(yoloBackup.backup.startsWith(path.join(homeDir, ".config", "opencode-gemini-bridge", "backups", "sync")));
+  assert.equal(fs.readFileSync(yoloBackup.backup, "utf8"), "manual yolo\n");
+  assert.notEqual(fs.readFileSync(yoloPath, "utf8"), "manual yolo\n");
+});
+
 test("syncToOpenCode projects built-in OpenCode commands", () => {
   const projectRoot = tempProject();
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));

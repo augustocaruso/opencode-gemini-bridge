@@ -144,6 +144,7 @@ export interface TelemetrySendOptions extends TelemetryOptions {
   since?: string;
   limit?: number;
   includePass?: boolean;
+  includeAutomation?: boolean;
 }
 
 export interface TelemetrySendResult {
@@ -364,14 +365,36 @@ function envFlag(name: string): boolean {
   return Boolean(value && value !== "0" && value.toLowerCase() !== "false");
 }
 
+function currentAutomationSignals(): string[] {
+  const signals: string[] = [];
+  if (envFlag("CODEX_CI") || envFlag("CODEX_SHELL")) signals.push("codex");
+  if (envFlag("CI")) signals.push("ci");
+  if (process.env.NODE_ENV === "test") signals.push("node_env_test");
+  if (/^test(:|$)|(^|:)test(:|$)/.test(process.env.npm_lifecycle_event ?? "")) signals.push("npm_test");
+  return [...new Set(signals)];
+}
+
+function looksLikeAutomationProject(label: string): boolean {
+  const normalized = label.replace(/\\/g, "/");
+  return /(^|\/)(tmp|T)\/(tmp[._-]|ogb-)/i.test(normalized)
+    || /^tmp\/ogb-/i.test(normalized)
+    || /(^|\/)opencode-gemini-bridge(\/packages\/ogb)?$/i.test(normalized);
+}
+
+function isAutomationTelemetryRecord(record: WorkflowRunRecord | Record<string, unknown>): boolean {
+  const value = record as Record<string, unknown>;
+  if (value.source === "test") return true;
+  const environment = payloadRecord(value.environmentContext);
+  const signals = environment.automationSignals;
+  if (Array.isArray(signals) && signals.length > 0) return true;
+  const project = payloadRecord(value.project);
+  return looksLikeAutomationProject(String(project.label ?? ""));
+}
+
 function shouldSuppressAutoSend(record: WorkflowRunRecord): boolean {
   if (envFlag("OGB_TELEMETRY_AUTO_SEND_DISABLED")) return true;
   if (envFlag("OGB_TELEMETRY_AUTO_SEND_FORCE")) return false;
-  if (record.source === "test") return true;
-  if (envFlag("CODEX_CI") || envFlag("CODEX_SHELL")) return true;
-  if (envFlag("CI") || process.env.NODE_ENV === "test") return true;
-  if (/^test(:|$)|(^|:)test(:|$)/.test(process.env.npm_lifecycle_event ?? "")) return true;
-  return false;
+  return isAutomationTelemetryRecord(record);
 }
 
 export function enableTelemetry(options: {
@@ -812,6 +835,9 @@ export function recordWorkflowRun(input: WorkflowRecordInput, options: Telemetry
   const summary = summarizePayload(payload);
   const status = normalizeStatus(input.status ?? input.outcome ?? payloadStatus(payload));
   const outcome = input.outcome ?? outcomeFrom(status, payload);
+  const automationSignals = input.source === "test"
+    ? [...new Set(["source_test", ...currentAutomationSignals()])]
+    : currentAutomationSignals();
   const record: WorkflowRunRecord = {
     schema: TELEMETRY_RUN_RECORD_SCHEMA,
     runId: crypto.randomUUID(),
@@ -833,6 +859,7 @@ export function recordWorkflowRun(input: WorkflowRecordInput, options: Telemetry
     environmentContext: {
       appVersion: OGB_VERSION,
       platform: process.platform,
+      ...(automationSignals.length > 0 ? { automationSignals } : {}),
     },
     diagnosticSnippets: (input.snippets ?? []).slice(0, 5).map((item) => redactSnippet(item)),
     extra: redactObject(input.extra ?? {}) as Record<string, unknown>,
@@ -985,6 +1012,12 @@ function bumpAttempt(filePath: string): void {
   }
 }
 
+function isSendableTelemetryRecord(record: WorkflowRunRecord | Record<string, unknown>, options: Pick<TelemetrySendOptions, "includePass" | "includeAutomation"> = {}): boolean {
+  if (!options.includeAutomation && isAutomationTelemetryRecord(record)) return false;
+  if (options.includePass) return true;
+  return isActionableTelemetryRecord(record);
+}
+
 async function postEnvelope(envelope: TelemetryEnvelope, config: TelemetryConfig, options: TelemetryOptions = {}): Promise<void> {
   const body = JSON.stringify(envelope);
   if (Buffer.byteLength(body, "utf8") > config.maxEnvelopeBytes) throw new Error("telemetry envelope exceeds maxEnvelopeBytes");
@@ -1035,7 +1068,7 @@ export async function flushTelemetryOutbox(options: TelemetrySendOptions = {}): 
       continue;
     }
     const records = Array.isArray(envelope.records) ? envelope.records : [];
-    const sendableRecords = options.includePass ? records : records.filter(isActionableTelemetryRecord);
+    const sendableRecords = records.filter((record) => isSendableTelemetryRecord(record, options));
     if (sendableRecords.length === 0) {
       try { fs.unlinkSync(filePath); } catch {}
       continue;
@@ -1066,7 +1099,7 @@ export async function sendTelemetry(options: TelemetrySendOptions = {}): Promise
   }
   const first = await flushTelemetryOutbox(options);
   if (first.failed > 0) return first;
-  const records = unsentRecords(options).filter((record) => options.includePass || isActionableTelemetryRecord(record));
+  const records = unsentRecords(options).filter((record) => isSendableTelemetryRecord(record, options));
   let queued = 0;
   if (records.length > 0) {
     enqueueEnvelope(buildTelemetryEnvelope(records, options), options);

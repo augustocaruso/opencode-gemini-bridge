@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { createBackupSession, type BackupRecord, type BackupRetentionReport, type BackupSession } from "./backup-policy.js";
 import { sha256File } from "./file-hash.js";
 import { resolveProjectPaths, toPosixRelative } from "./paths.js";
 import { spawnCommandSync } from "./process.js";
@@ -34,6 +35,8 @@ export interface RulesyncProjectionResult {
   stderr?: string;
   promoted: string[];
   conflicts: string[];
+  backups: BackupRecord[];
+  retention?: BackupRetentionReport;
   skippedReason?: string;
 }
 
@@ -168,7 +171,7 @@ function prepareStage(projectRoot: string, homeDir: string): string {
   return stageRoot;
 }
 
-function promoteFromStage(projectRoot: string, stageRoot: string, files: string[], state: SyncState, force: boolean): { promoted: string[]; conflicts: string[] } {
+function promoteFromStage(projectRoot: string, stageRoot: string, files: string[], state: SyncState, force: boolean, backupSession: BackupSession): { promoted: string[]; conflicts: string[] } {
   const promoted: string[] = [];
   const conflicts: string[] = [];
 
@@ -180,6 +183,17 @@ function promoteFromStage(projectRoot: string, stageRoot: string, files: string[
     const destinationPath = path.join(projectRoot, relPath);
     const oldManagedHash = managedHashFor(state, relPath, "rulesync");
     const destinationExists = fileExists(destinationPath);
+    const sourceHash = sha256File(sourcePath);
+
+    if (destinationExists && sha256File(destinationPath) === sourceHash) {
+      upsertManagedFile(state, {
+        path: relPath,
+        sha256: sourceHash,
+        source: "rulesync",
+      });
+      promoted.push(relPath);
+      continue;
+    }
 
     if (destinationExists && !force) {
       const currentHash = sha256File(destinationPath);
@@ -189,11 +203,12 @@ function promoteFromStage(projectRoot: string, stageRoot: string, files: string[
       }
     }
 
+    if (destinationExists) backupSession.backupExisting(destinationPath);
     fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
     fs.copyFileSync(sourcePath, destinationPath);
     upsertManagedFile(state, {
       path: relPath,
-      sha256: sha256File(destinationPath),
+      sha256: sourceHash,
       source: "rulesync",
     });
     promoted.push(relPath);
@@ -221,11 +236,21 @@ export function projectHasGeminiSource(projectRoot: string): boolean {
 export function projectRulesyncProjection(options: RulesyncProjectionOptions = {}): RulesyncProjectionResult {
   const projectRoot = path.resolve(options.projectRoot ?? process.cwd());
   const homeDir = path.resolve(options.homeDir ?? os.homedir());
+  const paths = resolveProjectPaths(projectRoot, homeDir);
   const mode = options.mode ?? "auto";
   const force = options.force ?? false;
   const features = options.features?.length ? options.features : DEFAULT_RULESYNC_FEATURES;
   const promoted: string[] = [];
   const conflicts: string[] = [];
+  const backupSession = createBackupSession({
+    bridgeConfigDir: paths.bridgeConfigDir,
+    operation: "rulesync",
+    roots: [
+      { root: projectRoot, prefix: "project" },
+      { root: homeDir, prefix: "home" },
+    ],
+    dryRun: options.dryRun,
+  });
 
   if (mode === "off") {
     return {
@@ -233,6 +258,8 @@ export function projectRulesyncProjection(options: RulesyncProjectionOptions = {
       available: false,
       promoted,
       conflicts,
+      backups: backupSession.backups,
+      retention: backupSession.retention,
       skippedReason: "Rulesync disabled",
     };
   }
@@ -241,9 +268,9 @@ export function projectRulesyncProjection(options: RulesyncProjectionOptions = {
   if (!command) {
     const skippedReason = "Rulesync is not installed. Install with npm install or npm install -g rulesync.";
     if (mode === "require") {
-      return { status: "error", available: false, promoted, conflicts, skippedReason };
+      return { status: "error", available: false, promoted, conflicts, backups: backupSession.backups, retention: backupSession.retention, skippedReason };
     }
-    return { status: "skipped", available: false, promoted, conflicts, skippedReason };
+    return { status: "skipped", available: false, promoted, conflicts, backups: backupSession.backups, retention: backupSession.retention, skippedReason };
   }
 
   if (!projectHasGeminiSource(projectRoot) && !projectHasGeminiSource(homeDir)) {
@@ -253,6 +280,8 @@ export function projectRulesyncProjection(options: RulesyncProjectionOptions = {
       command: [command.command, ...command.argsPrefix],
       promoted,
       conflicts,
+      backups: backupSession.backups,
+      retention: backupSession.retention,
       skippedReason: "No project or global Gemini source found",
     };
   }
@@ -300,6 +329,8 @@ export function projectRulesyncProjection(options: RulesyncProjectionOptions = {
       stderr: stderr || `Rulesync failed for all features: ${failedFeatures.join(", ")}`,
       promoted,
       conflicts,
+      backups: backupSession.backups,
+      retention: backupSession.retention,
     };
   }
 
@@ -313,13 +344,15 @@ export function projectRulesyncProjection(options: RulesyncProjectionOptions = {
       stderr,
       promoted,
       conflicts,
+      backups: backupSession.backups,
+      retention: backupSession.retention,
     };
   }
 
   const previousState = readSyncState(projectRoot);
   const state = previousState ?? emptySyncState(OGB_VERSION);
   const generatedFiles = listFiles(stageRoot).filter((filePath) => isPromotableRulesyncOutput(toPosixRelative(stageRoot, filePath)));
-  const promotion = promoteFromStage(projectRoot, stageRoot, generatedFiles, state, force);
+  const promotion = promoteFromStage(projectRoot, stageRoot, generatedFiles, state, force, backupSession);
   fs.rmSync(stageRoot, { recursive: true, force: true });
 
   state.lastRulesync = {
@@ -338,6 +371,8 @@ export function projectRulesyncProjection(options: RulesyncProjectionOptions = {
     stderr,
     promoted: promotion.promoted,
     conflicts: promotion.conflicts,
+    backups: backupSession.backups,
+    retention: backupSession.retention,
   };
 }
 

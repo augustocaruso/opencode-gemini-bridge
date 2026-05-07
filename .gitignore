@@ -19,6 +19,9 @@ opencode.jsonc
 node_modules/
 dist/
 coverage/
+__pycache__/
+.venv/
+.pytest_cache/
 
 # Package manager/editor caches
 .npm/

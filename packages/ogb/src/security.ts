@@ -144,17 +144,34 @@ function readJsonc(filePath: string): any {
   }
 }
 
+export function isSecretLikeRelPath(relPath: string): boolean {
+  const base = path.posix.basename(relPath);
+  if (/^\.env(\.|$)/.test(base) && !/\.(example|sample|template)$/i.test(base)) return true;
+  if (base === ".npmrc") return true;
+  if (/^(auth|credentials|service-account|token)\.json$/i.test(base)) return true;
+  if (/^id_(rsa|ed25519|ecdsa)$/i.test(base)) return true;
+  return /\.(pem|p12|pfx|key)$/i.test(base);
+}
+
+export const HIGH_CONFIDENCE_SECRET_PATTERNS: Array<[string, RegExp]> = [
+  ["private key", /-----BEGIN [A-Z ]*PRIVATE KEY-----/],
+  ["OpenAI key", /sk-[A-Za-z0-9_-]{32,}/],
+  ["Google API key", /AIza[0-9A-Za-z_-]{35}/],
+  ["GitHub token", /(ghp|gho|ghu|ghs|github_pat)_[A-Za-z0-9_]{30,}/],
+  ["Slack token", /xox[baprs]-[A-Za-z0-9-]{20,}/],
+  ["npm token", /_authToken\s*=\s*[A-Za-z0-9_-]{20,}/],
+];
+
+export function secretPatternLabels(text: string): string[] {
+  return HIGH_CONFIDENCE_SECRET_PATTERNS
+    .filter(([, pattern]) => pattern.test(text))
+    .map(([label]) => label);
+}
+
 function findSecretFiles(projectRoot: string, files: string[]): SecurityFinding {
   const suspicious = files
     .map((filePath) => toPosix(path.relative(projectRoot, filePath)))
-    .filter((relPath) => {
-      const base = path.posix.basename(relPath);
-      if (/^\.env(\.|$)/.test(base) && !/\.(example|sample|template)$/i.test(base)) return true;
-      if (base === ".npmrc") return true;
-      if (/^(auth|credentials|service-account|token)\.json$/i.test(base)) return true;
-      if (/^id_(rsa|ed25519|ecdsa)$/i.test(base)) return true;
-      return /\.(pem|p12|pfx|key)$/i.test(base);
-    });
+    .filter(isSecretLikeRelPath);
 
   return {
     name: "Secret-like files",
@@ -165,25 +182,13 @@ function findSecretFiles(projectRoot: string, files: string[]): SecurityFinding 
 }
 
 function findSecretPatterns(projectRoot: string, files: string[]): SecurityFinding {
-  const patterns: Array<[string, RegExp]> = [
-    ["private key", /-----BEGIN [A-Z ]*PRIVATE KEY-----/],
-    ["OpenAI key", /sk-[A-Za-z0-9_-]{32,}/],
-    ["Google API key", /AIza[0-9A-Za-z_-]{35}/],
-    ["GitHub token", /(ghp|gho|ghu|ghs|github_pat)_[A-Za-z0-9_]{30,}/],
-    ["Slack token", /xox[baprs]-[A-Za-z0-9-]{20,}/],
-    ["npm token", /_authToken\s*=\s*[A-Za-z0-9_-]{20,}/],
-  ];
   const hits: string[] = [];
 
   for (const filePath of files) {
     const text = readTextMaybe(filePath);
     if (!text) continue;
-    for (const [label, pattern] of patterns) {
-      if (pattern.test(text)) {
-        hits.push(`${toPosix(path.relative(projectRoot, filePath))} (${label})`);
-        break;
-      }
-    }
+    const labels = secretPatternLabels(text);
+    if (labels.length > 0) hits.push(`${toPosix(path.relative(projectRoot, filePath))} (${labels[0]})`);
   }
 
   return {

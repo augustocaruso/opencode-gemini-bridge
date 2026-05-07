@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { GLOBAL_AGENTS_MD } from "./global-agents.js";
+import { enableMaintainerRole } from "./local-role.js";
 import { runReset } from "./reset.js";
 import type { RitualProgressEvent } from "./ritual-progress.js";
 import { globalStartupPluginSpec } from "./setup-ux.js";
@@ -212,4 +213,37 @@ test("runReset cleans home project artifacts and recreates global config", async
   assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "plugins", "ogb-startup-sync.js")), false);
   assert.match(fs.readFileSync(path.join(homeDir, ".config", "zsh", ".zshrc"), "utf8"), /OPENCODE_ENABLE_EXA=1/);
   assert.equal(report.doctor?.warnings.some((warning) => warning.includes("Last OpenCode startup sync failed")), false);
+});
+
+test("runReset respects maintainer protection even though it rebuilds with force", async () => {
+  const root = tempRoot();
+  const homeDir = path.join(root, "home");
+  const globalConfigPath = path.join(homeDir, ".config", "opencode", "opencode.json");
+  const globalAgentsPath = path.join(homeDir, ".config", "opencode", "AGENTS.md");
+  fs.mkdirSync(homeDir, { recursive: true });
+  writeFile(globalConfigPath, JSON.stringify({
+    plugin: ["maintainer-plugin@1.0.0"],
+    default_agent: "agent",
+    maintainerOnly: true,
+  }, null, 2) + "\n");
+  writeFile(globalAgentsPath, "Maintainer AGENTS\n");
+  enableMaintainerRole({ homeDir });
+
+  const report = await runReset({
+    homeDir,
+    projectRoot: homeDir,
+    yes: true,
+    installOpenCode: false,
+    installPlugins: false,
+    installTuiDependencies: false,
+    rulesyncMode: "off",
+  });
+
+  assert.equal(report.outcome, "pass");
+  assert.equal(fs.readFileSync(globalAgentsPath, "utf8"), "Maintainer AGENTS\n");
+  assert.deepEqual(readJson(globalConfigPath).plugin, ["maintainer-plugin@1.0.0"]);
+  assert.equal(report.setup?.writes.some((write) => write.path === globalConfigPath && write.status === "protected"), true);
+  assert.equal(report.setup?.writes.some((write) => write.path === globalAgentsPath && write.status === "protected"), true);
+  assert.equal(report.setup?.writes.some((write) => Boolean(write.backup)), false);
+  assert.equal(report.warnings.some((warning) => warning.includes("modo mantenedor local")), true);
 });

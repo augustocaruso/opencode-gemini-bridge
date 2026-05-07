@@ -53,3 +53,20 @@ test("ensureProjectConfig includes external plugin specs when configured", () =>
   const parsed = JSON.parse(fs.readFileSync(path.join(projectRoot, "opencode.jsonc"), "utf8"));
   assert.deepEqual(parsed.plugin, ["opencode-auto-fallback", "@slkiser/opencode-quota"]);
 });
+
+test("ensureProjectConfig creates a central backup before forced overwrite", () => {
+  const projectRoot = tempProject();
+  const homeDir = tempProject();
+  const configPath = path.join(projectRoot, "opencode.jsonc");
+  fs.writeFileSync(configPath, "{ \"manual\": true }\n", "utf8");
+
+  const conflict = ensureProjectConfig({ projectRoot, homeDir });
+  assert.equal(conflict.status, "conflict");
+  assert.equal(conflict.backups?.length ?? 0, 0);
+
+  const forced = ensureProjectConfig({ projectRoot, homeDir, force: true });
+  assert.equal(forced.status, "updated");
+  assert.ok(forced.backup);
+  assert.ok(forced.backup.startsWith(path.join(homeDir, ".config", "opencode-gemini-bridge", "backups", "project-config")));
+  assert.equal(fs.readFileSync(forced.backup, "utf8"), "{ \"manual\": true }\n");
+});

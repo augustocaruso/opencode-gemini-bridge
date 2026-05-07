@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { parse as parseJsonc } from "jsonc-parser";
+import { createBackupSession, type BackupRecord, type BackupRetentionReport } from "./backup-policy.js";
 import { sha256Text } from "./file-hash.js";
 import { resolveProjectPaths } from "./paths.js";
 import { emptySyncState, managedHashFor, readSyncState, upsertManagedFile, writeSyncState } from "./sync-state.js";
@@ -9,6 +10,9 @@ import { OGB_VERSION } from "./types.js";
 export interface ProjectConfigResult {
   path: string;
   status: "created" | "updated" | "unchanged" | "preview" | "conflict";
+  backup?: string;
+  backups?: BackupRecord[];
+  retention?: BackupRetentionReport;
   message?: string;
 }
 
@@ -16,6 +20,7 @@ export interface ProjectConfigOptions {
   projectRoot?: string;
   dryRun?: boolean;
   force?: boolean;
+  homeDir?: string;
   mcp?: Record<string, unknown>;
   plugins?: string[];
   defaultAgent?: string;
@@ -65,11 +70,18 @@ export function projectConfigText(options: { mcp?: Record<string, unknown>; plug
 }
 
 export function ensureProjectConfig(options: ProjectConfigOptions = {}): ProjectConfigResult {
-  const projectRoot = path.resolve(options.projectRoot ?? process.cwd());
+  const paths = resolveProjectPaths(options.projectRoot, options.homeDir);
+  const projectRoot = paths.projectRoot;
   const configPath = path.join(projectRoot, "opencode.jsonc");
   const relPath = "opencode.jsonc";
   const desiredText = projectConfigText({ mcp: options.mcp, plugins: options.plugins, defaultAgent: options.defaultAgent });
   const desiredHash = sha256Text(desiredText);
+  const backupSession = createBackupSession({
+    bridgeConfigDir: paths.bridgeConfigDir,
+    operation: "project-config",
+    roots: [{ root: projectRoot, prefix: "project" }],
+    dryRun: options.dryRun,
+  });
 
   if (options.dryRun) {
     return {
@@ -109,6 +121,7 @@ export function ensureProjectConfig(options: ProjectConfigOptions = {}): Project
     };
   }
 
+  const backup = existed ? backupSession.backupExisting(configPath) : undefined;
   fs.writeFileSync(configPath, desiredText, "utf8");
   upsertManagedFile(state, {
     path: relPath,
@@ -120,6 +133,9 @@ export function ensureProjectConfig(options: ProjectConfigOptions = {}): Project
   return {
     path: configPath,
     status: existed ? "updated" : "created",
+    backup,
+    backups: backupSession.backups,
+    retention: backupSession.retention,
     message: existed ? "Updated opencode.jsonc" : "Created opencode.jsonc",
   };
 }

@@ -1,0 +1,18 @@
+{
+  "schema": "opencode-gemini-bridge.ux-profile-authoring.manifest.v1",
+  "version": "0.1.1",
+  "presetSchema": "opencode-gemini-bridge.ux-profile.v1",
+  "selected": [
+    {
+      "id": "tui:mouse",
+      "category": "tui.json",
+      "kind": "config-field",
+      "source": ".config/opencode/tui.json#mouse",
+      "target": "tui:mouse",
+      "status": "unchanged",
+      "warnings": []
+    }
+  ],
+  "excluded": [],
+  "warnings": []
+}

@@ -88,8 +88,10 @@ test("setupOpenCode skips project files when project root is home", () => {
 
 test("setupOpenCode refuses to overwrite a manually changed startup plugin without force", () => {
   const projectRoot = tempProject();
+  const homeDir = tempProject();
   setupOpenCode({
     projectRoot,
+    homeDir,
     skipDoctor: true,
     skipCommandCheck: true,
     command: "ogb",
@@ -100,6 +102,7 @@ test("setupOpenCode refuses to overwrite a manually changed startup plugin witho
 
   const conflict = setupOpenCode({
     projectRoot,
+    homeDir,
     skipDoctor: true,
     skipCommandCheck: true,
     command: "ogb",
@@ -110,6 +113,7 @@ test("setupOpenCode refuses to overwrite a manually changed startup plugin witho
 
   const forced = setupOpenCode({
     projectRoot,
+    homeDir,
     force: true,
     skipDoctor: true,
     skipCommandCheck: true,
@@ -117,6 +121,9 @@ test("setupOpenCode refuses to overwrite a manually changed startup plugin witho
   });
 
   assert.equal(forced.plugin.status, "updated");
+  assert.ok(forced.plugin.backup);
+  assert.ok(forced.plugin.backup.startsWith(path.join(homeDir, ".config", "opencode-gemini-bridge", "backups", "setup-opencode")));
+  assert.match(fs.readFileSync(forced.plugin.backup, "utf8"), /ManualPlugin/);
   assert.match(fs.readFileSync(pluginPath, "utf8"), /OgbStartupSync/);
 });
 

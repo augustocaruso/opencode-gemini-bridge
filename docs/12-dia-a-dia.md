@@ -57,7 +57,8 @@ do OpenCode.
 Instalacoes novas rodam `ogb cleanup-home` antes de reaplicar o perfil global.
 Esse comando faz backup em
 `~/.config/opencode-gemini-bridge/backups/home-cleanup/` e remove apenas
-artefatos OGB de projeto que ficaram na home por engano.
+artefatos OGB de projeto que ficaram na home por engano. A retencao central
+mantem ate 5 sessoes por operacao e exclui sessoes com mais de 30 dias.
 
 Quando o instalador recebe `--project ~`, ele tambem roda o sync global depois
 do `setup-ux`, para deixar o expanded Gemini ja ligado no config global.
@@ -173,8 +174,8 @@ Use o comando:
 /upgrade-ogb
 ```
 
-Ele roda `ogb self-update --project "$PWD"` e depois `ogb doctor --project
-"$PWD"`.
+Ele roda `ogb update`. O proprio `ogb update` roda o check final, entao nao
+precisa chamar `ogb check` manualmente depois.
 
 ## Antes de publicar ou entregar
 

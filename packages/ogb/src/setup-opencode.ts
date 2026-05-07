@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseJsonc } from "jsonc-parser";
+import { createBackupSession, type BackupRecord, type BackupSession } from "./backup-policy.js";
 import { runDoctor, type DoctorReport } from "./doctor.js";
 import { externalOpenCodePlugins, externalTuiPlugins } from "./external-integrations.js";
 import { sha256Text } from "./file-hash.js";
@@ -1078,7 +1079,8 @@ export interface SetupOpenCodeOptions {
 export interface ManagedWriteResult {
   path: string;
   relPath: string;
-  status: "created" | "updated" | "unchanged" | "preview" | "conflict";
+  status: "created" | "updated" | "unchanged" | "preview" | "conflict" | "protected";
+  backup?: string;
   message: string;
 }
 
@@ -1091,6 +1093,7 @@ export interface SetupOpenCodeReport {
   startupConfig: ManagedWriteResult;
   sidebarPlugin: ManagedWriteResult;
   tuiConfig: ManagedWriteResult;
+  backups: BackupRecord[];
   commandPlan: SetupCommandPlan;
   commandCheck: {
     skipped: boolean;
@@ -1165,6 +1168,7 @@ function writeManagedText(options: {
   content: string;
   dryRun?: boolean;
   force?: boolean;
+  backupSession: BackupSession;
 }): ManagedWriteResult {
   const absPath = path.join(options.projectRoot, ...options.relPath.split("/"));
   const desiredHash = sha256Text(options.content);
@@ -1204,6 +1208,7 @@ function writeManagedText(options: {
     };
   }
 
+  const backup = exists ? options.backupSession.backupExisting(absPath) : undefined;
   fs.mkdirSync(path.dirname(absPath), { recursive: true });
   fs.writeFileSync(absPath, options.content, "utf8");
   upsertManagedFile(state, { path: options.relPath, sha256: desiredHash, source: "ogb" });
@@ -1213,6 +1218,7 @@ function writeManagedText(options: {
     path: absPath,
     relPath: options.relPath,
     status: exists ? "updated" : "created",
+    backup,
     message: `${exists ? "Updated" : "Created"} ${options.relPath}`,
   };
 }
@@ -1248,14 +1254,14 @@ function checkCommand(plan: SetupCommandPlan): SetupOpenCodeReport["commandCheck
   };
 }
 
-export function checkPluginSyntax(pluginPath?: string): SetupOpenCodeReport["pluginCheck"] {
+export function checkPluginSyntax(pluginPath?: string, source = STARTUP_SYNC_PLUGIN_SOURCE): SetupOpenCodeReport["pluginCheck"] {
   let target = pluginPath;
   let tempDir: string | undefined;
 
   if (!target) {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-plugin-check-"));
     target = path.join(tempDir, "ogb-startup-sync.js");
-    fs.writeFileSync(target, STARTUP_SYNC_PLUGIN_SOURCE, "utf8");
+    fs.writeFileSync(target, source, "utf8");
   }
 
   const result = runNativeCommand({
@@ -1338,6 +1344,7 @@ export function setupOpenCode(options: SetupOpenCodeOptions = {}): SetupOpenCode
       startupConfig: skippedWrite(STARTUP_SYNC_CONFIG_PATH),
       sidebarPlugin: skippedWrite(".opencode/tui-plugins/ogb-sidebar.js"),
       tuiConfig: skippedWrite(".opencode/tui.jsonc"),
+      backups: [],
       commandPlan: plan,
       commandCheck: {
         skipped: true,
@@ -1356,9 +1363,16 @@ export function setupOpenCode(options: SetupOpenCodeOptions = {}): SetupOpenCode
     };
   }
   const ogbConfig = readOgbConfig(paths.projectRoot, paths.homeDir);
+  const backupSession = createBackupSession({
+    bridgeConfigDir: paths.bridgeConfigDir,
+    operation: "setup-opencode",
+    roots: [{ root: paths.projectRoot, prefix: "project" }],
+    dryRun: options.dryRun,
+  });
 
   const opencodeConfig = ensureProjectConfig({
     projectRoot: paths.projectRoot,
+    homeDir: paths.homeDir,
     dryRun: options.dryRun,
     force: options.force,
     mcp: currentMcpConfig(paths.projectRoot),
@@ -1373,6 +1387,7 @@ export function setupOpenCode(options: SetupOpenCodeOptions = {}): SetupOpenCode
     content: STARTUP_SYNC_PLUGIN_SOURCE,
     dryRun: options.dryRun,
     force: options.force,
+    backupSession,
   });
   if (plugin.status === "conflict") warnings.push(plugin.message);
 
@@ -1382,6 +1397,7 @@ export function setupOpenCode(options: SetupOpenCodeOptions = {}): SetupOpenCode
     content: startupConfigSource(plan),
     dryRun: options.dryRun,
     force: options.force,
+    backupSession,
   });
   if (startupConfig.status === "conflict") warnings.push(startupConfig.message);
 
@@ -1390,6 +1406,7 @@ export function setupOpenCode(options: SetupOpenCodeOptions = {}): SetupOpenCode
     dryRun: options.dryRun,
     force: options.force,
     extraPlugins: externalTuiPlugins(ogbConfig),
+    backupSession,
   });
   warnings.push(...sidebar.warnings);
 
@@ -1422,12 +1439,20 @@ export function setupOpenCode(options: SetupOpenCodeOptions = {}): SetupOpenCode
     startupConfig,
     sidebarPlugin: sidebar.plugin,
     tuiConfig: sidebar.config,
+    backups: [
+      ...(opencodeConfig.backups ?? []),
+      ...backupSession.backups,
+    ],
     commandPlan: plan,
     commandCheck,
     pluginCheck,
     sidebarPluginCheck: sidebar.pluginCheck,
     doctor,
-    warnings,
+    warnings: [...new Set([
+      ...warnings,
+      ...(opencodeConfig.retention?.warnings ?? []),
+      ...backupSession.retention.warnings,
+    ])],
   };
 }
 

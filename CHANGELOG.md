@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1 - Progresso publico e perfil seguro
+
+- Estabiliza `--progress-json` como contrato publico NDJSON para `install`, `update`, `check`, `reset` e aliases legados.
+- Faz a UI rica consumir eventos de um processo filho, mantendo spinner e resize responsivos durante etapas longas.
+- Centraliza backups do perfil OpenCode/OGB com retencao, dry-run e protecao de mantenedor local.
+- Reorganiza `setup-ux` para escrever o perfil a partir do preset gerado, preservando campos desconhecidos e backup antes de overwrite.
+- Ajusta telemetria para separar execucoes humanas de automacao/CI/Codex e manter autoenvio fail-open.
+- Adiciona skill `ogb-operator` para orientar usuarios e agentes sobre install, update, check, reset e debug do OGB.
+
 ## 0.1.0 - Release 2 do instalador cargo-like
 
 - Consolida a API publica em `ogb install`, `ogb update`, `ogb check` e `ogb reset`, mantendo aliases antigos com aviso.

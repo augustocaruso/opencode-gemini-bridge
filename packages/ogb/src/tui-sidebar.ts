@@ -3,7 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { applyEdits, modify, parse as parseJsonc } from "jsonc-parser";
+import { createBackupSession, type BackupRecord, type BackupSession } from "./backup-policy.js";
 import { sha256Text } from "./file-hash.js";
+import { resolveProjectPaths } from "./paths.js";
+import type { ProfileWriteReason, ProfileWriteStatus, ProfileWriter } from "./profile-writer.js";
 import { emptySyncState, managedHashFor, readSyncState, upsertManagedFile, writeSyncState } from "./sync-state.js";
 import { OGB_VERSION } from "./types.js";
 
@@ -1019,23 +1022,30 @@ export default {
 };
 `;
 
+type TuiWriteStatus = Exclude<ProfileWriteStatus, "removed">;
+
 export interface TuiSidebarResult {
   plugin: {
     path: string;
     relPath: string;
-    status: "created" | "updated" | "unchanged" | "preview" | "conflict";
+    status: TuiWriteStatus;
     message: string;
+    backup?: string;
+    reason?: ProfileWriteReason;
   };
   config: {
     path: string;
     relPath: string;
-    status: "created" | "updated" | "unchanged" | "preview" | "conflict";
+    status: TuiWriteStatus;
     message: string;
+    backup?: string;
+    reason?: ProfileWriteReason;
   };
   pluginCheck: {
     ok: boolean;
     message: string;
   };
+  backups: BackupRecord[];
   warnings: string[];
 }
 
@@ -1045,6 +1055,7 @@ function writeManagedText(options: {
   content: string;
   dryRun?: boolean;
   force?: boolean;
+  backupSession: BackupSession;
 }): TuiSidebarResult["plugin"] {
   const absPath = path.join(options.projectRoot, ...options.relPath.split("/"));
   const desiredHash = sha256Text(options.content);
@@ -1084,6 +1095,7 @@ function writeManagedText(options: {
     };
   }
 
+  const backup = exists ? options.backupSession.backupExisting(absPath) : undefined;
   fs.mkdirSync(path.dirname(absPath), { recursive: true });
   fs.writeFileSync(absPath, options.content, "utf8");
   upsertManagedFile(state, { path: options.relPath, sha256: desiredHash, source: "ogb" });
@@ -1093,6 +1105,7 @@ function writeManagedText(options: {
     path: absPath,
     relPath: options.relPath,
     status: exists ? "updated" : "created",
+    backup,
     message: `${exists ? "Updated" : "Created"} ${options.relPath}`,
   };
 }
@@ -1102,7 +1115,30 @@ function writeUnmanagedText(options: {
   relPath: string;
   content: string;
   dryRun?: boolean;
+  backupSession?: BackupSession;
+  profileWriter?: Pick<ProfileWriter, "writeText">;
 }): TuiSidebarResult["plugin"] {
+  if (options.profileWriter) {
+    const write = options.profileWriter.writeText({
+      filePath: options.filePath,
+      text: options.content,
+    });
+    return {
+      path: write.path,
+      relPath: options.relPath,
+      status: write.status as TuiWriteStatus,
+      message: write.status === "protected"
+        ? `Protected ${options.relPath} by local maintainer mode`
+        : write.status === "unchanged"
+          ? `${options.relPath} already installed`
+          : write.status === "preview"
+            ? `Would ${fs.existsSync(options.filePath) ? "update" : "create"} ${options.relPath}`
+            : `${write.status === "updated" ? "Updated" : "Created"} ${options.relPath}`,
+      backup: write.backup,
+      reason: write.reason,
+    };
+  }
+
   const exists = fs.existsSync(options.filePath);
   const current = exists ? fs.readFileSync(options.filePath, "utf8") : "";
   if (current === options.content) {
@@ -1122,12 +1158,14 @@ function writeUnmanagedText(options: {
     };
   }
 
+  const backup = exists ? options.backupSession?.backupExisting(options.filePath) : undefined;
   fs.mkdirSync(path.dirname(options.filePath), { recursive: true });
   fs.writeFileSync(options.filePath, options.content, "utf8");
   return {
     path: options.filePath,
     relPath: options.relPath,
     status: exists ? "updated" : "created",
+    backup,
     message: `${exists ? "Updated" : "Created"} ${options.relPath}`,
   };
 }
@@ -1139,20 +1177,24 @@ function pluginSpecs(value: unknown): string[] {
     .filter((item): item is string => typeof item === "string");
 }
 
-function requiredTuiPluginSpecs(extraPlugins: string[] | undefined): string[] {
-  return [...new Set([...(extraPlugins ?? []), TUI_SIDEBAR_PLUGIN_SPEC].map((item) => item.trim()).filter(Boolean))];
+function requiredTuiPluginSpecs(extraPlugins: string[] | undefined, basePlugins = [TUI_SIDEBAR_PLUGIN_SPEC]): string[] {
+  return [...new Set([...(extraPlugins ?? []), ...basePlugins].map((item) => item.trim()).filter(Boolean))];
 }
 
-function tuiConfigTextWithPlugin(currentText: string | undefined, extraPlugins?: string[]): { text?: string; changed: boolean; error?: string } {
-  const requiredPlugins = requiredTuiPluginSpecs(extraPlugins);
+function tuiConfigTextWithPlugin(currentText: string | undefined, extraPlugins?: string[], defaults?: Record<string, unknown>): { text?: string; changed: boolean; error?: string } {
+  const basePlugins = pluginSpecs(defaults?.plugin);
+  const requiredPlugins = requiredTuiPluginSpecs(extraPlugins, basePlugins.length > 0 ? basePlugins : [TUI_SIDEBAR_PLUGIN_SPEC]);
+  const defaultConfig = defaults
+    ? { ...defaults, plugin: requiredPlugins }
+    : {
+      $schema: "https://opencode.ai/tui.json",
+      plugin: requiredPlugins,
+    };
 
   if (!currentText) {
     return {
       changed: true,
-      text: `${JSON.stringify({
-        $schema: "https://opencode.ai/tui.json",
-        plugin: requiredPlugins,
-      }, null, 2)}\n`,
+      text: `${JSON.stringify(defaultConfig, null, 2)}\n`,
     };
   }
 
@@ -1171,6 +1213,12 @@ function tuiConfigTextWithPlugin(currentText: string | undefined, extraPlugins?:
 
   if (parsed.plugin !== undefined && !Array.isArray(parsed.plugin)) {
     return { changed: false, error: "TUI config plugin field is not an array" };
+  }
+
+  if (defaults) {
+    const nextConfig = { ...parsed, ...defaultConfig };
+    const nextText = `${JSON.stringify(nextConfig, null, 2)}\n`;
+    return { changed: nextText !== currentText, text: nextText };
   }
 
   const existingPlugins = pluginSpecs(parsed.plugin);
@@ -1211,12 +1259,15 @@ function ensureTuiConfigFile(options: {
   relPath: string;
   dryRun?: boolean;
   extraPlugins?: string[];
+  configDefaults?: Record<string, unknown>;
   stateProjectRoot?: string;
+  backupSession?: BackupSession;
+  profileWriter?: Pick<ProfileWriter, "writeText">;
 }): TuiSidebarResult["config"] {
   const absPath = options.configPath;
   const exists = fs.existsSync(absPath);
   const currentText = exists ? fs.readFileSync(absPath, "utf8") : undefined;
-  const next = tuiConfigTextWithPlugin(currentText, options.extraPlugins);
+  const next = tuiConfigTextWithPlugin(currentText, options.extraPlugins, options.configDefaults);
 
   if (next.error) {
     return {
@@ -1259,6 +1310,28 @@ function ensureTuiConfigFile(options: {
     };
   }
 
+  if (options.profileWriter) {
+    const write = options.profileWriter.writeText({
+      filePath: absPath,
+      text: next.text,
+    });
+    return {
+      path: write.path,
+      relPath: options.relPath,
+      status: write.status as TuiWriteStatus,
+      message: write.status === "protected"
+        ? `Protected ${options.relPath} by local maintainer mode`
+        : write.status === "unchanged"
+          ? `${options.relPath} already references ${TUI_SIDEBAR_PLUGIN_SPEC}`
+          : write.status === "preview"
+            ? `Would ${exists ? "update" : "create"} ${options.relPath}`
+            : `${write.status === "updated" ? "Updated" : "Created"} ${options.relPath}`,
+      backup: write.backup,
+      reason: write.reason,
+    };
+  }
+
+  const backup = exists ? options.backupSession?.backupExisting(absPath) : undefined;
   fs.mkdirSync(path.dirname(absPath), { recursive: true });
   fs.writeFileSync(absPath, next.text, "utf8");
   if (options.stateProjectRoot) {
@@ -1271,28 +1344,30 @@ function ensureTuiConfigFile(options: {
     path: absPath,
     relPath: options.relPath,
     status: exists ? "updated" : "created",
+    backup,
     message: `${exists ? "Updated" : "Created"} ${options.relPath}`,
   };
 }
 
-function ensureTuiConfig(options: { projectRoot: string; dryRun?: boolean; extraPlugins?: string[] }): TuiSidebarResult["config"] {
+function ensureTuiConfig(options: { projectRoot: string; dryRun?: boolean; extraPlugins?: string[]; backupSession: BackupSession }): TuiSidebarResult["config"] {
   return ensureTuiConfigFile({
     configPath: path.join(options.projectRoot, ...TUI_CONFIG_PATH.split("/")),
     relPath: TUI_CONFIG_PATH,
     dryRun: options.dryRun,
     extraPlugins: options.extraPlugins,
     stateProjectRoot: options.projectRoot,
+    backupSession: options.backupSession,
   });
 }
 
-export function checkTuiSidebarPluginSyntax(pluginPath?: string): TuiSidebarResult["pluginCheck"] {
+export function checkTuiSidebarPluginSyntax(pluginPath?: string, source = TUI_SIDEBAR_PLUGIN_SOURCE): TuiSidebarResult["pluginCheck"] {
   let target = pluginPath;
   let tempDir: string | undefined;
 
   if (!target) {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-sidebar-check-"));
     target = path.join(tempDir, "ogb-sidebar.js");
-    fs.writeFileSync(target, TUI_SIDEBAR_PLUGIN_SOURCE, "utf8");
+    fs.writeFileSync(target, source, "utf8");
   }
 
   const result = spawnSync(process.execPath, ["--check", target], {
@@ -1323,8 +1398,15 @@ export function checkTuiSidebarPluginSyntax(pluginPath?: string): TuiSidebarResu
   };
 }
 
-export function ensureTuiSidebar(options: { projectRoot?: string; dryRun?: boolean; force?: boolean; extraPlugins?: string[] } = {}): TuiSidebarResult {
-  const projectRoot = path.resolve(options.projectRoot ?? process.cwd());
+export function ensureTuiSidebar(options: { projectRoot?: string; homeDir?: string; dryRun?: boolean; force?: boolean; extraPlugins?: string[]; backupSession?: BackupSession } = {}): TuiSidebarResult {
+  const paths = resolveProjectPaths(options.projectRoot, options.homeDir);
+  const projectRoot = paths.projectRoot;
+  const backupSession = options.backupSession ?? createBackupSession({
+    bridgeConfigDir: paths.bridgeConfigDir,
+    operation: "tui-sidebar",
+    roots: [{ root: projectRoot, prefix: "project" }],
+    dryRun: options.dryRun,
+  });
   const warnings: string[] = [];
   const plugin = writeManagedText({
     projectRoot,
@@ -1332,10 +1414,11 @@ export function ensureTuiSidebar(options: { projectRoot?: string; dryRun?: boole
     content: TUI_SIDEBAR_PLUGIN_SOURCE,
     dryRun: options.dryRun,
     force: options.force,
+    backupSession,
   });
   if (plugin.status === "conflict") warnings.push(plugin.message);
 
-  const config = ensureTuiConfig({ projectRoot, dryRun: options.dryRun, extraPlugins: options.extraPlugins });
+  const config = ensureTuiConfig({ projectRoot, dryRun: options.dryRun, extraPlugins: options.extraPlugins, backupSession });
   if (config.status === "conflict") warnings.push(config.message);
 
   const pluginCheck = options.dryRun || plugin.status === "conflict"
@@ -1347,19 +1430,23 @@ export function ensureTuiSidebar(options: { projectRoot?: string; dryRun?: boole
     plugin,
     config,
     pluginCheck,
-    warnings,
+    backups: backupSession.backups,
+    warnings: [...new Set([...warnings, ...backupSession.retention.warnings])],
   };
 }
 
-export function ensureGlobalTuiSidebar(options: { configDir: string; dryRun?: boolean; extraPlugins?: string[] }): TuiSidebarResult {
+export function ensureGlobalTuiSidebar(options: { configDir: string; dryRun?: boolean; extraPlugins?: string[]; profileWriter?: Pick<ProfileWriter, "writeText">; backupSession?: BackupSession; pluginSource?: string; configDefaults?: Record<string, unknown> }): TuiSidebarResult {
   const configDir = path.resolve(options.configDir);
   const warnings: string[] = [];
   const pluginPath = path.join(configDir, ...GLOBAL_TUI_SIDEBAR_PLUGIN_PATH.split("/"));
+  const pluginSource = options.pluginSource ?? TUI_SIDEBAR_PLUGIN_SOURCE;
   const plugin = writeUnmanagedText({
     filePath: pluginPath,
     relPath: GLOBAL_TUI_SIDEBAR_PLUGIN_PATH,
-    content: TUI_SIDEBAR_PLUGIN_SOURCE,
+    content: pluginSource,
     dryRun: options.dryRun,
+    backupSession: options.backupSession,
+    profileWriter: options.profileWriter,
   });
 
   const config = ensureTuiConfigFile({
@@ -1367,11 +1454,14 @@ export function ensureGlobalTuiSidebar(options: { configDir: string; dryRun?: bo
     relPath: GLOBAL_TUI_CONFIG_PATH,
     dryRun: options.dryRun,
     extraPlugins: options.extraPlugins,
+    configDefaults: options.configDefaults,
+    backupSession: options.backupSession,
+    profileWriter: options.profileWriter,
   });
   if (config.status === "conflict") warnings.push(config.message);
 
-  const pluginCheck = options.dryRun
-    ? checkTuiSidebarPluginSyntax()
+  const pluginCheck = options.dryRun || plugin.status === "protected"
+    ? checkTuiSidebarPluginSyntax(undefined, pluginSource)
     : checkTuiSidebarPluginSyntax(plugin.path);
   if (!pluginCheck.ok) warnings.push(pluginCheck.message);
 
@@ -1379,6 +1469,7 @@ export function ensureGlobalTuiSidebar(options: { configDir: string; dryRun?: bo
     plugin,
     config,
     pluginCheck,
-    warnings,
+    backups: options.backupSession?.backups ?? [],
+    warnings: [...new Set([...warnings, ...(options.backupSession?.retention.warnings ?? [])])],
   };
 }

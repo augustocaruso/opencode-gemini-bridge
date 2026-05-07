@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Box, Text, render, type Instance } from "ink";
+import { Box, Text, render, type Instance, useStdout } from "ink";
 import type { InstallReport } from "./install.js";
 import type { PassReport } from "./pass.js";
 import type { ResetReport } from "./reset.js";
-import type { RitualProgressDefinition, RitualProgressEvent, RitualProgressSink, RitualProgressStatus } from "./ritual-progress.js";
+import { RITUAL_PROGRESS_SCHEMA_VERSION, type RitualFinishedJsonEvent, type RitualProgressDefinition, type RitualProgressEvent, type RitualProgressJsonEvent, type RitualProgressSink, type RitualProgressStatus } from "./ritual-progress.js";
 import type { SelfUpdateReport } from "./self-update.js";
+import { spawnCommand } from "./process.js";
 
 export type RitualKind = "install" | "check" | "reset" | "update";
 export type RitualTone = "pass" | "warn" | "fail" | "preview" | "neutral";
@@ -53,12 +54,12 @@ export interface LiveRitualModel {
   next: string[];
   files: string[];
   final: boolean;
-  width: number;
 }
 
 export interface RitualUiOptions {
   json?: boolean;
   plain?: boolean;
+  progressJson?: boolean;
   stdoutIsTTY?: boolean;
   env?: NodeJS.ProcessEnv;
 }
@@ -70,7 +71,22 @@ export interface RunWithRitualUiOptions<TReport extends InstallReport | PassRepo
   run: (sink: RitualProgressSink) => TReport | Promise<TReport>;
 }
 
-function titleForKind(kind: RitualKind): string {
+export interface RunWithRitualProcessUiOptions {
+  kind: RitualKind;
+  subtitle: string;
+  steps: RitualProgressDefinition[];
+  command: string;
+  args: string[];
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+export interface RitualProcessUiResult {
+  exitCode: number;
+  signal?: NodeJS.Signals | null;
+}
+
+export function titleForKind(kind: RitualKind): string {
   if (kind === "install") return "OGB install";
   if (kind === "update") return "OGB update";
   if (kind === "reset") return "OGB reset";
@@ -107,10 +123,6 @@ function toneFromProgress(status: RitualProgressStatus): RitualTone {
   if (status === "fail") return "fail";
   if (status === "skipped") return "preview";
   return "neutral";
-}
-
-function frameWidth(): number {
-  return Math.max(20, process.stdout.columns ?? 100);
 }
 
 function countChangedWrites(report: InstallReport | ResetReport): number | undefined {
@@ -311,7 +323,7 @@ export function createLiveRitualModel(
   kind: RitualKind,
   subtitle: string,
   steps: RitualProgressDefinition[],
-  options: { now?: number; width?: number } = {},
+  options: { now?: number } = {},
 ): LiveRitualModel {
   return {
     kind,
@@ -330,7 +342,6 @@ export function createLiveRitualModel(
     next: [],
     files: [],
     final: false,
-    width: options.width ?? frameWidth(),
   };
 }
 
@@ -402,6 +413,29 @@ export function finishLiveRitualModel(
   };
 }
 
+export function finishLiveRitualModelFromProgressEvent(
+  model: LiveRitualModel,
+  event: RitualFinishedJsonEvent,
+  options: { now?: number } = {},
+): LiveRitualModel {
+  const tone = toneFromOutcome(event.outcome);
+  return {
+    ...model,
+    statusLabel: event.summary?.statusLabel ?? labelFromTone(tone),
+    tone,
+    finishedAt: options.now ?? Date.now(),
+    currentStepId: undefined,
+    steps: model.steps.map((step) => step.status === "queued" || step.status === "running"
+      ? { ...step, status: step.status === "running" ? progressStatusFromTone(tone) : "skipped" }
+      : step),
+    metrics: event.summary?.metrics ?? [],
+    callouts: event.summary?.callouts ?? [],
+    next: event.summary?.next ?? [],
+    files: event.files ?? [],
+    final: true,
+  };
+}
+
 export function failLiveRitualModel(model: LiveRitualModel, error: unknown, options: { now?: number } = {}): LiveRitualModel {
   const message = error instanceof Error ? error.message : String(error);
   const steps = model.steps.map((step) => step.stepId === model.currentStepId || step.status === "running"
@@ -419,8 +453,16 @@ export function failLiveRitualModel(model: LiveRitualModel, error: unknown, opti
   };
 }
 
+function progressStatusFromTone(tone: RitualTone): RitualProgressStatus {
+  if (tone === "pass") return "pass";
+  if (tone === "warn") return "warn";
+  if (tone === "fail") return "fail";
+  if (tone === "preview") return "skipped";
+  return "pass";
+}
+
 export function shouldUseRitualUi(options: RitualUiOptions = {}): boolean {
-  if (options.json || options.plain) return false;
+  if (options.json || options.plain || options.progressJson) return false;
   const env = options.env ?? process.env;
   if (env.CI || env.OGB_PLAIN === "1" || env.OGB_UI === "0") return false;
   return options.stdoutIsTTY ?? process.stdout.isTTY ?? false;
@@ -513,8 +555,26 @@ function useTicker(final: boolean): number {
   return tick;
 }
 
+function useTerminalWidth(): number {
+  const { stdout } = useStdout();
+  const readWidth = () => Math.max(20, stdout.columns ?? process.stdout.columns ?? 100);
+  const [width, setWidth] = useState(readWidth);
+  useEffect(() => {
+    const onResize = () => setWidth(readWidth());
+    stdout.on?.("resize", onResize);
+    process.stdout.on?.("resize", onResize);
+    onResize();
+    return () => {
+      stdout.off?.("resize", onResize);
+      process.stdout.off?.("resize", onResize);
+    };
+  }, [stdout]);
+  return width;
+}
+
 function RitualPanel(props: { model: LiveRitualModel }) {
   const model = props.model;
+  const width = useTerminalWidth();
   const tick = useTicker(model.final);
   const spinnerFrames = useMemo(() => ["◐", "◓", "◑", "◒"], []);
   const spinner = spinnerFrames[Math.floor(tick / 160) % spinnerFrames.length];
@@ -530,7 +590,7 @@ function RitualPanel(props: { model: LiveRitualModel }) {
 
   return React.createElement(
     Box,
-    { borderStyle: "round", borderColor, paddingX: 1, paddingY: 0, flexDirection: "column", width: model.width },
+    { borderStyle: "round", borderColor, paddingX: 1, paddingY: 0, flexDirection: "column", width },
     React.createElement(
       Box,
       { flexDirection: "row", justifyContent: "space-between" },
@@ -612,4 +672,106 @@ export async function runWithRitualUi<TReport extends InstallReport | PassReport
     instance?.unmount();
     instance?.cleanup();
   }
+}
+
+function parseProgressLine(line: string): RitualProgressJsonEvent | undefined {
+  const trimmed = line.trim();
+  if (!trimmed) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed) as Partial<RitualProgressJsonEvent>;
+    if (parsed.schemaVersion !== RITUAL_PROGRESS_SCHEMA_VERSION || typeof parsed.type !== "string") return undefined;
+    return parsed as RitualProgressJsonEvent;
+  } catch {
+    return undefined;
+  }
+}
+
+function tailText(text: string, maxLines = 6): string {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-maxLines)
+    .join("\n");
+}
+
+export async function runWithRitualProcessUi(options: RunWithRitualProcessUiOptions): Promise<RitualProcessUiResult> {
+  let model = createLiveRitualModel(options.kind, options.subtitle, options.steps);
+  let instance: Instance | undefined;
+  let stdoutBuffer = "";
+  let stderrBuffer = "";
+  let finalReceived = false;
+  instance = renderModel(instance, model);
+  await delay(25);
+
+  const child = spawnCommand(options.command, options.args, {
+    cwd: options.cwd ?? process.cwd(),
+    env: { ...process.env, ...options.env },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  child.stdout?.setEncoding("utf8");
+  child.stderr?.setEncoding("utf8");
+
+  child.stdout?.on("data", (chunk: string) => {
+    stdoutBuffer += chunk;
+    const lines = stdoutBuffer.split(/\r?\n/);
+    stdoutBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const event = parseProgressLine(line);
+      if (!event) {
+        stderrBuffer += `${line}\n`;
+        continue;
+      }
+      if (event.type === "ritual.started") {
+        model = { ...model, steps: event.steps.map((step) => ({ ...step, status: "queued" })) };
+      } else if (event.type === "ritual.step") {
+        model = applyRitualProgressEvent(model, event);
+      } else if (event.type === "ritual.finished") {
+        finalReceived = true;
+        model = finishLiveRitualModelFromProgressEvent(model, event);
+      } else if (event.type === "ritual.error") {
+        finalReceived = true;
+        model = failLiveRitualModel(model, new Error(event.error));
+        model = { ...model, next: event.summary?.next ?? model.next };
+      }
+      instance = renderModel(instance, model);
+    }
+  });
+
+  child.stderr?.on("data", (chunk: string) => {
+    stderrBuffer += chunk;
+  });
+
+  const result = await new Promise<RitualProcessUiResult>((resolve) => {
+    child.on("error", (error) => {
+      model = failLiveRitualModel(model, error);
+      instance = renderModel(instance, model);
+      resolve({ exitCode: 2 });
+    });
+    child.on("exit", (code, signal) => {
+      if (stdoutBuffer.trim()) {
+        const event = parseProgressLine(stdoutBuffer);
+        if (event?.type === "ritual.finished") {
+          finalReceived = true;
+          model = finishLiveRitualModelFromProgressEvent(model, event);
+        } else if (event?.type === "ritual.error") {
+          finalReceived = true;
+          model = failLiveRitualModel(model, new Error(event.error));
+        }
+      }
+      const exitCode = typeof code === "number" ? code : signal ? 1 : 0;
+      if (!finalReceived) {
+        const tail = tailText(stderrBuffer) || `Ritual process exited with code ${exitCode}.`;
+        model = failLiveRitualModel(model, new Error(tail));
+      }
+      instance = renderModel(instance, model);
+      resolve({ exitCode, signal });
+    });
+  });
+
+  await delay(40);
+  instance?.unmount();
+  instance?.cleanup();
+  return result;
 }

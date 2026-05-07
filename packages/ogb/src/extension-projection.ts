@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createBackupSession, type BackupRecord, type BackupSession } from "./backup-policy.js";
 import { BUILT_IN_COMMANDS } from "./built-ins.js";
-import { sha256File } from "./file-hash.js";
+import { sha256File, sha256Text } from "./file-hash.js";
 import {
   readOgbConfig,
   resolveAgentFallback,
@@ -96,6 +97,7 @@ export interface ProjectExtensionCommandsResult {
   removedCommands: string[];
   removedAgents: string[];
   map: GeminiExtensionProjectionMap;
+  backups: BackupRecord[];
   warnings: string[];
 }
 
@@ -448,6 +450,7 @@ function removeStaleExtensionCommands(options: {
   projectRoot: string;
   state: ReturnType<typeof emptySyncState>;
   keep: Set<string>;
+  backupSession: BackupSession;
   force?: boolean;
 }): { removed: string[]; warnings: string[] } {
   const removed: string[] = [];
@@ -468,6 +471,7 @@ function removeStaleExtensionCommands(options: {
       continue;
     }
 
+    options.backupSession.backupExisting(targetPath);
     fs.rmSync(targetPath, { force: true });
     options.state.managedFiles = options.state.managedFiles.filter((item) => !(item.path === file.path && item.source === file.source));
     removed.push(file.path);
@@ -480,6 +484,7 @@ function removeStaleExtensionAgents(options: {
   projectRoot: string;
   state: ReturnType<typeof emptySyncState>;
   keep: Set<string>;
+  backupSession: BackupSession;
   force?: boolean;
 }): { removed: string[]; warnings: string[] } {
   const removed: string[] = [];
@@ -500,6 +505,7 @@ function removeStaleExtensionAgents(options: {
       continue;
     }
 
+    options.backupSession.backupExisting(targetPath);
     fs.rmSync(targetPath, { force: true });
     options.state.managedFiles = options.state.managedFiles.filter((item) => !(item.path === file.path && item.source === file.source));
     removed.push(file.path);
@@ -513,6 +519,7 @@ function writeOrRemoveOhMyOpenAgentConfig(options: {
   targetPath: string;
   state: ReturnType<typeof emptySyncState>;
   content?: string;
+  backupSession: BackupSession;
   force?: boolean;
   dryRun?: boolean;
 }): { projected?: string; warning?: string } {
@@ -528,6 +535,7 @@ function writeOrRemoveOhMyOpenAgentConfig(options: {
       return { warning: `${relPath} was edited manually; leaving stale Oh My OpenAgent config in place` };
     }
     if (previousHash || options.force) {
+      options.backupSession.backupExisting(options.targetPath);
       fs.rmSync(options.targetPath, { force: true });
       options.state.managedFiles = options.state.managedFiles.filter((file) => !(file.path === relPath && file.source === "ogb"));
     }
@@ -541,6 +549,7 @@ function writeOrRemoveOhMyOpenAgentConfig(options: {
     }
   }
 
+  if (exists) options.backupSession.backupExisting(options.targetPath);
   fs.mkdirSync(path.dirname(options.targetPath), { recursive: true });
   fs.writeFileSync(options.targetPath, options.content, "utf8");
   upsertManagedFile(options.state, {
@@ -553,6 +562,15 @@ function writeOrRemoveOhMyOpenAgentConfig(options: {
 
 export function projectGeminiExtensionCommands(options: ExtensionProjectionOptions = {}): ProjectExtensionCommandsResult {
   const paths = resolveProjectPaths(options.projectRoot, options.homeDir);
+  const backupSession = createBackupSession({
+    bridgeConfigDir: paths.bridgeConfigDir,
+    operation: "extension-projection",
+    roots: [
+      { root: paths.projectRoot, prefix: "project" },
+      { root: paths.homeDir, prefix: "home" },
+    ],
+    dryRun: options.dryRun,
+  });
   const roots = uniqueExtensionRoots(paths.projectRoot, paths.homeDir);
   const ogbConfig = readOgbConfig(paths.projectRoot, paths.homeDir);
   const routing = createModelRoutingContext({
@@ -610,6 +628,16 @@ export function projectGeminiExtensionCommands(options: ExtensionProjectionOptio
         prompt: parsed.prompt,
       });
       const previousHash = managedHashFor(state, relPath, "ogb");
+      const contentHash = sha256Text(content);
+      if (fileExists(targetPath) && sha256File(targetPath) === contentHash) {
+        upsertManagedFile(state, {
+          path: relPath,
+          sha256: contentHash,
+          source: "ogb",
+        });
+        projectedCommands.push(relPath);
+        continue;
+      }
       if (fileExists(targetPath) && !options.force) {
         const currentHash = sha256File(targetPath);
         if (previousHash !== currentHash) {
@@ -620,11 +648,12 @@ export function projectGeminiExtensionCommands(options: ExtensionProjectionOptio
         }
       }
 
+      if (fileExists(targetPath)) backupSession.backupExisting(targetPath);
       fs.mkdirSync(path.dirname(targetPath), { recursive: true });
       fs.writeFileSync(targetPath, content, "utf8");
       upsertManagedFile(state, {
         path: relPath,
-        sha256: sha256File(targetPath),
+        sha256: contentHash,
         source: "ogb",
       });
       projectedCommands.push(relPath);
@@ -680,6 +709,16 @@ export function projectGeminiExtensionCommands(options: ExtensionProjectionOptio
         routing: routingDecision,
       });
       const previousHash = managedHashFor(state, relPath, "ogb");
+      const contentHash = sha256Text(content);
+      if (fileExists(targetPath) && sha256File(targetPath) === contentHash) {
+        upsertManagedFile(state, {
+          path: relPath,
+          sha256: contentHash,
+          source: "ogb",
+        });
+        projectedAgents.push(relPath);
+        continue;
+      }
       if (fileExists(targetPath) && !options.force) {
         const currentHash = sha256File(targetPath);
         if (previousHash !== currentHash) {
@@ -693,11 +732,12 @@ export function projectGeminiExtensionCommands(options: ExtensionProjectionOptio
         }
       }
 
+      if (fileExists(targetPath)) backupSession.backupExisting(targetPath);
       fs.mkdirSync(path.dirname(targetPath), { recursive: true });
       fs.writeFileSync(targetPath, content, "utf8");
       upsertManagedFile(state, {
         path: relPath,
-        sha256: sha256File(targetPath),
+        sha256: contentHash,
         source: "ogb",
       });
       projectedAgents.push(relPath);
@@ -710,11 +750,11 @@ export function projectGeminiExtensionCommands(options: ExtensionProjectionOptio
 
   const stale = options.dryRun
     ? { removed: [], warnings: [] }
-    : removeStaleExtensionCommands({ projectRoot: paths.projectRoot, state, keep, force: options.force });
+    : removeStaleExtensionCommands({ projectRoot: paths.projectRoot, state, keep, backupSession, force: options.force });
   warnings.push(...stale.warnings);
   const staleAgents = options.dryRun
     ? { removed: [], warnings: [] }
-    : removeStaleExtensionAgents({ projectRoot: paths.projectRoot, state, keep: keepAgents, force: options.force });
+    : removeStaleExtensionAgents({ projectRoot: paths.projectRoot, state, keep: keepAgents, backupSession, force: options.force });
   warnings.push(...staleAgents.warnings);
 
   const ohMyConfig = writeOrRemoveOhMyOpenAgentConfig({
@@ -722,11 +762,14 @@ export function projectGeminiExtensionCommands(options: ExtensionProjectionOptio
     targetPath: paths.ohMyOpenAgentConfigPath,
     state,
     content: undefined,
+    backupSession,
     force: options.force,
     dryRun: options.dryRun,
   });
   if (ohMyConfig.warning) warnings.push(ohMyConfig.warning);
   if (routing.report.warnings.length > 0) warnings.push(...routing.report.warnings.map((warning) => `Model routing: ${warning}`));
+  warnings.push(...backupSession.retention.warnings);
+  const reportWarnings = [...new Set(warnings)];
 
   const map: GeminiExtensionProjectionMap = {
     _generated: {
@@ -742,7 +785,7 @@ export function projectGeminiExtensionCommands(options: ExtensionProjectionOptio
     modelFallbacks,
     removedCommands: stale.removed,
     removedAgents: staleAgents.removed,
-    warnings,
+    warnings: reportWarnings,
   };
 
   if (!options.dryRun) {
@@ -770,6 +813,7 @@ export function projectGeminiExtensionCommands(options: ExtensionProjectionOptio
     projectedModelFallbackConfig: ohMyConfig.projected,
     projectedModelRoutingConfig: options.dryRun ? ".opencode/generated/ogb-model-routing.json" : ".opencode/generated/ogb-model-routing.json",
     map,
-    warnings,
+    backups: backupSession.backups,
+    warnings: reportWarnings,
   };
 }

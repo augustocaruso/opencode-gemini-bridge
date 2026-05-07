@@ -30,6 +30,10 @@
 - `15-sources.md`
 - `../checklists/*.md`
 
+## Artefatos para agentes
+
+- `../skills/ogb-operator/SKILL.md` — skill portátil para orientar agentes sobre instalação, update, check, reset, debug e release do OGB.
+
 ## Arquivo morto
 
 - `archive/00-HANDOFF-FOR-CODEX.md`

@@ -56,7 +56,9 @@ de projeto que versões antigas possam ter criado por engano no home, instalam o
 OpenCode se ele ainda não existir e aplicam o perfil OGB do OpenCode
 globalmente. A limpeza faz backup em
 `~/.config/opencode-gemini-bridge/backups/home-cleanup/` antes de remover
-`~/opencode.jsonc` ou arquivos OGB dentro de `~/.opencode`. Esse perfil inclui
+`~/opencode.jsonc` ou arquivos OGB dentro de `~/.opencode`. A pasta central
+mantem ate 5 sessoes por operacao e exclui sessoes com mais de 30 dias. Esse
+perfil inclui
 plugins, `/research`, `/upgrade-ogb`, DCP, websearch, PTY, auto-fallback, YOLO,
 o preset global `AGENTS.md` e a cadeia de fallback dos subagentes. O conteúdo
 próprio do Gemini CLI de cada pessoa não é copiado; ele é lido e projetado
@@ -128,7 +130,7 @@ Update depois que o `ogb` ja esta instalado:
 ```bash
 ogb --project "$PWD" update
 ogb --project "$PWD" update --dry-run
-ogb --project "$PWD" update --release v0.1.0
+ogb --project "$PWD" update --release v0.1.1
 ogb --project "$PWD" check-update
 ogb --project "$PWD" auto-update
 ```
@@ -322,7 +324,9 @@ ogb sync --bidirectional --dry-run
 ```
 
 Nesta fase ele sincroniza apenas regras Markdown de usuario entre Gemini,
-OpenCode e Codex, com conflito por padrao e backup antes de sobrescrever.
+OpenCode e Codex, com conflito por padrao e backup central em
+`~/.config/opencode-gemini-bridge/backups/` antes de sobrescrever. A retencao
+automatica mantem ate 5 sessoes por operacao e remove sessoes com mais de 30 dias.
 
 Setup OpenCode com sync no startup:
 
