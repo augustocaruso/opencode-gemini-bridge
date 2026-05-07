@@ -23,3 +23,9 @@ test("legacy installer API verbs stay available with explicit warnings", () => {
   assert.equal(LEGACY_SELF_UPDATE_WARNING, "warning: ogb self-update is deprecated; use ogb update.");
   assert.equal(LEGACY_UPGRADE_WARNING, "warning: ogb upgrade-ogb is deprecated; use ogb update.");
 });
+
+test("user-facing installer verbs keep a stable plain output escape hatch", () => {
+  for (const name of ["install", "check", "pass", "update", "self-update", "upgrade-ogb", "reset"]) {
+    assert.ok(command(name).options.some((option) => option.long === "--plain"), `expected ogb ${name} to support --plain`);
+  }
+});

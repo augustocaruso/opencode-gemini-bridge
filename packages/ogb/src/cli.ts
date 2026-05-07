@@ -33,6 +33,7 @@ import { disableTelemetry, enableTelemetry, previewTelemetryEnvelope, printTelem
 import { runTrustExtension, runTrustReview } from "./trust.js";
 import { OGB_VERSION } from "./types.js";
 import { runValidation } from "./validation.js";
+import { renderRitualReport, shouldUseRitualUi } from "./ritual-ui.js";
 
 export const program = new Command();
 
@@ -175,6 +176,7 @@ function warnLegacyCommand(message: string): void {
 
 type CheckCliOptions = {
   json?: boolean;
+  plain?: boolean;
   dryRun?: boolean;
   force?: boolean;
   acceptHooks?: boolean;
@@ -189,6 +191,7 @@ type CheckCliOptions = {
 function addCheckOptions(command: Command): Command {
   return command
     .option("--json", "Print JSON report")
+    .option("--plain", "Use the classic text report instead of the rich terminal UI")
     .option("--dry-run", "Preview check actions without writing trust changes")
     .option("--force", "Overwrite files previously changed outside ogb management")
     .option("--accept-hooks", "Record current Gemini hooks as reviewed by hash")
@@ -202,9 +205,10 @@ function addCheckOptions(command: Command): Command {
 
 async function runCheckCli(opts: CheckCliOptions, workflow: "check" | "pass", legacyWarning?: string): Promise<void> {
   if (legacyWarning) warnLegacyCommand(legacyWarning);
-  await withWorkflowTelemetry(workflow, () => {
+  const useUi = shouldUseRitualUi({ json: opts.json, plain: opts.plain });
+  await withWorkflowTelemetry(workflow, async () => {
     const { project } = commonProjectOptions();
-    return runPass({
+    const report = runPass({
       projectRoot: project,
       json: opts.json,
       dryRun: opts.dryRun,
@@ -216,7 +220,10 @@ async function runCheckCli(opts: CheckCliOptions, workflow: "check" | "pass", le
       skipValidation: opts.validation === false,
       skipSecurity: opts.security === false,
       skipDashboard: opts.dashboard === false,
+      silent: useUi,
     });
+    if (useUi) await renderRitualReport("check", report);
+    return report;
   });
 }
 
@@ -231,6 +238,7 @@ type UpdateCliOptions = {
   force?: boolean;
   dryRun?: boolean;
   json?: boolean;
+  plain?: boolean;
 };
 
 function addUpdateOptions(command: Command): Command {
@@ -245,12 +253,14 @@ function addUpdateOptions(command: Command): Command {
     .option("--no-install-opencode", "Do not install OpenCode when it is missing")
     .option("--force", "Pass force to the bootstrap installer")
     .option("--dry-run", "Print the bootstrap command without running it")
-    .option("--json", "Print JSON report");
+    .option("--json", "Print JSON report")
+    .option("--plain", "Use the classic text report instead of the rich terminal UI");
 }
 
-function runUpdateCli(opts: UpdateCliOptions, legacyWarning?: string): void {
+async function runUpdateCli(opts: UpdateCliOptions, legacyWarning?: string): Promise<void> {
   if (legacyWarning) warnLegacyCommand(legacyWarning);
   const { project } = commonProjectOptions();
+  const useUi = shouldUseRitualUi({ json: opts.json, plain: opts.plain });
   const report = runSelfUpdate({
     repo: opts.repo,
     version: opts.release,
@@ -263,7 +273,8 @@ function runUpdateCli(opts: UpdateCliOptions, legacyWarning?: string): void {
     force: opts.force,
     dryRun: opts.dryRun,
   });
-  printSelfUpdateReport(report, opts.json);
+  if (useUi) await renderRitualReport("update", report);
+  else printSelfUpdateReport(report, opts.json);
   if (report.status === "error") process.exitCode = 2;
 }
 
@@ -744,8 +755,10 @@ program.command("install")
   .option("--accept-hooks", "Record current Gemini hooks as reviewed during the final check")
   .option("--windows", "Include Windows installer/static checks during the final check")
   .option("--json", "Print JSON report")
+  .option("--plain", "Use the classic text report instead of the rich terminal UI")
   .action(async (opts) => {
-    await withWorkflowTelemetry("install", () => {
+    const useUi = shouldUseRitualUi({ json: opts.json, plain: opts.plain });
+    await withWorkflowTelemetry("install", async () => {
       const { project } = commonProjectOptions();
       const report = runInstall({
         projectRoot: project,
@@ -762,7 +775,8 @@ program.command("install")
         windows: opts.windows,
         rulesyncMode: normalizeRulesyncMode(opts.rulesync),
       });
-      printInstallReport(report, opts.json);
+      if (useUi) await renderRitualReport("install", report);
+      else printInstallReport(report, opts.json);
       process.exitCode = report.outcome === "fail" ? 2 : report.outcome === "warn" ? 1 : 0;
       return report;
     });
@@ -843,7 +857,9 @@ program.command("reset")
   .option("--no-install-opencode", "Do not install OpenCode when it is missing")
   .option("--no-plugins", "Do not run global OpenCode plugin installers")
   .option("--json", "Print JSON report")
+  .option("--plain", "Use the classic text report instead of the rich terminal UI")
   .action(async (opts) => {
+    const useUi = shouldUseRitualUi({ json: opts.json, plain: opts.plain });
     await withWorkflowTelemetry("reset", async () => {
       const { project } = commonProjectOptions();
       try {
@@ -855,7 +871,8 @@ program.command("reset")
           installOpenCode: opts.installOpencode,
           installPlugins: opts.plugins,
         });
-        printResetReport(report, opts.json);
+        if (useUi) await renderRitualReport("reset", report);
+        else printResetReport(report, opts.json);
         if (report.outcome === "cancelled") process.exitCode = 1;
         else if (report.check?.outcome === "fail" || (report.doctor?.errors.length ?? 0) > 0) process.exitCode = 2;
         return report;
@@ -869,20 +886,20 @@ program.command("reset")
   });
 
 addUpdateOptions(program.command("update"))
-  .action((opts) => {
-    runUpdateCli(opts);
+  .action(async (opts) => {
+    await runUpdateCli(opts);
   });
 
 addUpdateOptions(program.command("self-update"))
   .description("Deprecated alias for update")
-  .action((opts) => {
-    runUpdateCli(opts, LEGACY_SELF_UPDATE_WARNING);
+  .action(async (opts) => {
+    await runUpdateCli(opts, LEGACY_SELF_UPDATE_WARNING);
   });
 
 addUpdateOptions(program.command("upgrade-ogb"))
   .description("Deprecated alias for update")
-  .action((opts) => {
-    runUpdateCli(opts, LEGACY_UPGRADE_WARNING);
+  .action(async (opts) => {
+    await runUpdateCli(opts, LEGACY_UPGRADE_WARNING);
   });
 
 program.command("check-update")

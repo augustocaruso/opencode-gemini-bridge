@@ -36,7 +36,9 @@
   },
   "dependencies": {
     "commander": "^12.1.0",
+    "ink": "^6.3.1",
     "jsonc-parser": "^3.3.1",
+    "react": "^19.2.6",
     "rulesync": "^8.15.0",
     "yaml": "^2.5.1"
   },
@@ -45,6 +47,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
+    "@types/react": "^19.2.14",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }
