@@ -1,6 +1,6 @@
 {
   "schema": "opencode-gemini-bridge.ux-profile-authoring.manifest.v1",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "presetSchema": "opencode-gemini-bridge.ux-profile.v1",
   "selected": [
     {
@@ -425,11 +425,6 @@
     {
       "scope": "opencode",
       "relPath": "package-lock.json",
-      "reason": "outside_snapshot_allowlist"
-    },
-    {
-      "scope": "opencode",
-      "relPath": "plugins/macos-notifications.js",
       "reason": "outside_snapshot_allowlist"
     },
     {

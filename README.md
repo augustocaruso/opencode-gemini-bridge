@@ -130,7 +130,7 @@ Update depois que o `ogb` ja esta instalado:
 ```bash
 ogb --project "$PWD" update
 ogb --project "$PWD" update --dry-run
-ogb --project "$PWD" update --release v0.1.12
+ogb --project "$PWD" update --release v0.1.13
 ogb --project "$PWD" check-update
 ogb --project "$PWD" auto-update
 ```

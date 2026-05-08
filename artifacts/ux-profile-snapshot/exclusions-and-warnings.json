@@ -206,11 +206,6 @@
     },
     {
       "scope": "opencode",
-      "relPath": "plugins/macos-notifications.js",
-      "reason": "outside_snapshot_allowlist"
-    },
-    {
-      "scope": "opencode",
       "relPath": "plugins/ogb-startup-sync.js",
       "reason": "provided_by_ogb_runtime",
       "detail": "local startup sync plugin differs; repository source remains authoritative"

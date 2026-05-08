@@ -39,6 +39,8 @@ jobs:
       - name: Test
         working-directory: packages/ogb
         run: npm test
+      - name: Restore tracked release sources
+        run: git checkout -- .
       - name: Create npm tarball
         working-directory: packages/ogb
         run: npm pack

@@ -79,7 +79,6 @@
 - .config/opencode/opencode.json#instructions: unknown_or_sensitive_config_field
 - .config/opencode/opencode.json#mcp: unknown_or_sensitive_config_field
 - .config/opencode/package-lock.json: outside_snapshot_allowlist
-- .config/opencode/plugins/macos-notifications.js: outside_snapshot_allowlist
 - .config/opencode/plugins/ogb-startup-sync.js: provided_by_ogb_runtime (local startup sync plugin differs; repository source remains authoritative)
 - .config/opencode/plugins/opencodeBar.disabled-20260504/.git/config: outside_snapshot_allowlist
 - .config/opencode/plugins/opencodeBar.disabled-20260504/.git/description: outside_snapshot_allowlist

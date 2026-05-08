@@ -9,6 +9,7 @@ export const UX_PROFILE_PRESET = {
     "@ex-machina/opencode-anthropic-auth@1.8.0",
     "opencode-update-notifier@0.1.0",
     "opencode-auto-fallback@0.4.3",
+    "opencode-notify",
     "@tarquinen/opencode-dcp@3.1.9",
     "opencode-pty@0.3.4"
   ],
