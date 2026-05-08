@@ -114,6 +114,28 @@ if (!input.includes("y")) process.exit(7);
   assert.match(report.stderrTail ?? "", /stderr ok/);
 });
 
+test("updateGeminiExtensions skips Gemini when scoped inventory has no extensions", () => {
+  const homeDir = tempDir();
+  const marker = path.join(homeDir, "gemini-ran.txt");
+  const fakeGemini = writeExecutable(homeDir, `
+const fs = require("node:fs");
+fs.writeFileSync(${JSON.stringify(marker)}, "ran");
+process.exit(9);
+`);
+
+  const report = updateGeminiExtensions({
+    geminiBin: fakeGemini,
+    autoConsent: true,
+    projectRoot: homeDir,
+    homeDir,
+  });
+
+  assert.equal(report.status, "applied");
+  assert.deepEqual(report.beforeExtensions, []);
+  assert.deepEqual(report.afterExtensions, []);
+  assert.equal(fs.existsSync(marker), false);
+});
+
 test("updateGeminiExtensions runs per-extension pre-update patches before invoking Gemini", () => {
   const homeDir = tempDir();
   const extensionPath = path.join(homeDir, ".gemini", "extensions", "demo-ext");
@@ -129,6 +151,8 @@ console.log("updated after patch");
     id: "demo-pre-update",
     title: "Demo pre-update",
     description: "Records that the extension patch ran first.",
+    category: "guardrail",
+    reason: "Exercise extension pre-update patch ordering.",
     introducedIn: "0.0.0-test",
     phase: "before-gemini-extension-update",
     required: true,
@@ -167,6 +191,8 @@ fs.writeFileSync(${JSON.stringify(marker)}, "ran");
     id: "demo-pre-update-failure",
     title: "Demo pre-update failure",
     description: "Blocks the update.",
+    category: "guardrail",
+    reason: "Exercise required extension patch blocking.",
     introducedIn: "0.0.0-test",
     phase: "before-gemini-extension-update",
     required: true,

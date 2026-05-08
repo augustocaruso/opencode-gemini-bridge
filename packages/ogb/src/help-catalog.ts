@@ -155,6 +155,31 @@ export const HELP_COMMANDS: HelpCommand[] = [
     ],
   },
   {
+    name: "patches",
+    category: "Inspect",
+    summary: "Inspect OGB repair patch lifecycle and applied state.",
+    description: "Shows registered versioned patches, why each exists, when cleanup/migration patches should retire, and what has already been applied on this machine.",
+    usage: "ogb patches [status|list] [--json]",
+    examples: ["ogb patches", "ogb patches status", "ogb patches list --json"],
+    actions: [
+      {
+        label: "Show patch lifecycle status",
+        description: "Prints patch health, retirement warnings, and applied state.",
+        args: ["patches"],
+      },
+      {
+        label: "Show patch status explicitly",
+        description: "Same report as the default patches command.",
+        args: ["patches", "status"],
+      },
+      {
+        label: "Print patch metadata JSON",
+        description: "Prints registry, lifecycle, warnings, and applied state as machine-readable JSON.",
+        args: ["patches", "list", "--json"],
+      },
+    ],
+  },
+  {
     name: "doctor",
     category: "Inspect",
     summary: "Inspect inventory and compatibility state.",

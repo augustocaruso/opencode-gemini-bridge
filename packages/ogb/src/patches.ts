@@ -31,11 +31,20 @@ export type PatchPhase =
 
 export type PatchRunStatus = "applied" | "preview" | "skipped" | "warning" | "failed";
 export type PatchPlatform = SupportedInstallerPlatform | "all";
+export type PatchCategory = "cleanup" | "compatibility" | "guardrail" | "migration" | "security";
+export type PatchLifecycleStatus = "active" | "retirement-due" | "superseded";
+
+export const PATCH_LIFECYCLE_SCHEMA = "opencode-gemini-bridge.patch-lifecycle.v1";
 
 export interface PatchStateEntry {
   id: string;
   phase: PatchPhase;
+  category?: PatchCategory;
+  reason?: string;
   introducedIn: string;
+  retireAfter?: string;
+  removalCondition?: string;
+  supersededBy?: string;
   appliedAt: string;
   status: "applied";
   message: string;
@@ -106,7 +115,12 @@ export interface OgbPatch {
   id: string;
   title: string;
   description: string;
+  category: PatchCategory;
+  reason: string;
   introducedIn: string;
+  retireAfter?: string;
+  removalCondition?: string;
+  supersededBy?: string;
   phase: PatchPhase;
   platforms?: PatchPlatform[];
   runOnce?: boolean;
@@ -123,8 +137,13 @@ export interface PatchRunResult extends PatchResult {
   stateKey: string;
   title: string;
   description: string;
+  category: PatchCategory;
+  reason: string;
   phase: PatchPhase;
   introducedIn: string;
+  retireAfter?: string;
+  removalCondition?: string;
+  supersededBy?: string;
   required: boolean;
   runOnce: boolean;
   destructive: boolean;
@@ -170,6 +189,54 @@ export interface NativeScriptPatchOptions extends Omit<OgbPatch, "run"> {
   failureMessage?: string;
 }
 
+export interface PatchLifecycleItem {
+  id: string;
+  title: string;
+  description: string;
+  category: PatchCategory;
+  reason: string;
+  phase: PatchPhase;
+  platforms: PatchPlatform[];
+  introducedIn: string;
+  retireAfter?: string;
+  removalCondition?: string;
+  supersededBy?: string;
+  lifecycleStatus: PatchLifecycleStatus;
+  required: boolean;
+  runOnce: boolean;
+  destructive: boolean;
+  needsBackup: boolean;
+  applied: PatchStateEntry[];
+  lastAppliedAt?: string;
+  policyWarnings: string[];
+}
+
+export interface PatchLifecycleReport {
+  schema: typeof PATCH_LIFECYCLE_SCHEMA;
+  version: string;
+  generatedAt: string;
+  projectRoot: string;
+  homeDir: string;
+  homeMode: boolean;
+  statePath: string;
+  outcome: "pass" | "warn";
+  registered: number;
+  active: number;
+  retirementDue: number;
+  superseded: number;
+  warnings: string[];
+  patches: PatchLifecycleItem[];
+}
+
+export interface InspectPatchesOptions {
+  projectRoot?: string;
+  homeDir?: string;
+  registry?: readonly OgbPatch[];
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  now?: Date;
+}
+
 const PATCH_PROGRESS_BY_PHASE: Record<PatchPhase, RitualProgressDefinition | undefined> = {
   "pre-install": undefined,
   "post-install": undefined,
@@ -199,7 +266,7 @@ function textTail(value: string | undefined, maxChars = 1200): string | undefine
   return text.length > maxChars ? text.slice(-maxChars) : text;
 }
 
-function currentPlatform(options: RunPatchesOptions, homeDir: string): PlatformAdapter {
+function currentPlatform(options: Pick<RunPatchesOptions, "platform" | "env">, homeDir: string): PlatformAdapter {
   return createPlatformAdapter({ homeDir, platform: options.platform ?? process.platform, env: options.env });
 }
 
@@ -207,7 +274,7 @@ function patchSupportsPlatform(patch: OgbPatch, platform: SupportedInstallerPlat
   return !patch.platforms || patch.platforms.includes("all") || patch.platforms.includes(platform);
 }
 
-function readPatchState(options: RunPatchesOptions, now = new Date()): PatchState {
+function readPatchState(options: Pick<RunPatchesOptions, "projectRoot" | "homeDir">, now = new Date()): PatchState {
   const record = readStateRecord<Record<string, unknown>>("patches", options);
   const data = record.data;
   if (
@@ -231,6 +298,63 @@ function readPatchState(options: RunPatchesOptions, now = new Date()): PatchStat
 
 function patchStateKey(patch: OgbPatch, context: PatchContext): string {
   return context.extension ? `${patch.id}::${context.extension.name}` : patch.id;
+}
+
+function parseVersionParts(value: string | undefined): number[] | undefined {
+  const normalized = value?.trim().replace(/^v/i, "");
+  if (!normalized) return undefined;
+  const parts = normalized.split(".").map((part) => {
+    const match = /^(\d+)/.exec(part);
+    return match ? Number.parseInt(match[1], 10) : Number.NaN;
+  });
+  if (parts.some((part) => !Number.isFinite(part))) return undefined;
+  while (parts.length < 3) parts.push(0);
+  return parts;
+}
+
+function compareVersions(a: string | undefined, b: string | undefined): number {
+  const left = parseVersionParts(a);
+  const right = parseVersionParts(b);
+  if (!left || !right) return 0;
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const delta = (left[index] ?? 0) - (right[index] ?? 0);
+    if (delta !== 0) return delta;
+  }
+  return 0;
+}
+
+function patchLifecycleStatus(patch: OgbPatch, currentVersion = OGB_VERSION): PatchLifecycleStatus {
+  if (patch.supersededBy) return "superseded";
+  if (patch.retireAfter && compareVersions(currentVersion, patch.retireAfter) >= 0) return "retirement-due";
+  return "active";
+}
+
+function duplicatePatchIds(registry: readonly OgbPatch[]): Set<string> {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const patch of registry) {
+    if (seen.has(patch.id)) duplicates.add(patch.id);
+    seen.add(patch.id);
+  }
+  return duplicates;
+}
+
+function patchPolicyWarnings(patch: OgbPatch, duplicates: Set<string>, currentVersion = OGB_VERSION): string[] {
+  const warnings: string[] = [];
+  if (duplicates.has(patch.id)) warnings.push("Patch id is duplicated in the registry.");
+  if ((patch.category === "cleanup" || patch.category === "migration") && !patch.retireAfter) {
+    warnings.push("Cleanup and migration patches must declare retireAfter.");
+  }
+  if ((patch.category === "cleanup" || patch.category === "migration") && !patch.removalCondition) {
+    warnings.push("Cleanup and migration patches must declare removalCondition.");
+  }
+  if (patch.retireAfter && patchLifecycleStatus(patch, currentVersion) === "retirement-due") {
+    warnings.push(`Patch is due for retirement since ${patch.retireAfter}.`);
+  }
+  if (patch.supersededBy) warnings.push(`Patch is superseded by ${patch.supersededBy}.`);
+  if (patch.destructive && !patch.needsBackup) warnings.push("Destructive patches must opt into central backups.");
+  return warnings;
 }
 
 function writePatchState(state: PatchState, options: RunPatchesOptions): void {
@@ -293,8 +417,13 @@ function resultFromPatchError(patch: OgbPatch, error: unknown, context?: PatchCo
     stateKey: context ? patchStateKey(patch, context) : patch.id,
     title: patch.title,
     description: patch.description,
+    category: patch.category,
+    reason: patch.reason,
     phase: patch.phase,
     introducedIn: patch.introducedIn,
+    retireAfter: patch.retireAfter,
+    removalCondition: patch.removalCondition,
+    supersededBy: patch.supersededBy,
     required: Boolean(patch.required),
     runOnce: Boolean(patch.runOnce),
     destructive: Boolean(patch.destructive),
@@ -312,8 +441,13 @@ function normalizePatchResult(patch: OgbPatch, result: PatchResult, context?: Pa
     stateKey: context ? patchStateKey(patch, context) : patch.id,
     title: patch.title,
     description: patch.description,
+    category: patch.category,
+    reason: patch.reason,
     phase: patch.phase,
     introducedIn: patch.introducedIn,
+    retireAfter: patch.retireAfter,
+    removalCondition: patch.removalCondition,
+    supersededBy: patch.supersededBy,
     required: Boolean(patch.required),
     runOnce: Boolean(patch.runOnce),
     destructive: Boolean(patch.destructive),
@@ -339,7 +473,12 @@ function updateStateAfterRun(state: PatchState, report: PatchRunReport, now: Dat
     next.applied[result.stateKey] = {
       id: result.id,
       phase: result.phase,
+      category: result.category,
+      reason: result.reason,
       introducedIn: result.introducedIn,
+      retireAfter: result.retireAfter,
+      removalCondition: result.removalCondition,
+      supersededBy: result.supersededBy,
       appliedAt: now.toISOString(),
       status: "applied",
       message: result.message,
@@ -400,6 +539,107 @@ export function defineNativeScriptPatch(options: NativeScriptPatchOptions): OgbP
       });
     },
   };
+}
+
+function appliedEntriesForPatch(state: PatchState, patch: OgbPatch): PatchStateEntry[] {
+  return Object.entries(state.applied)
+    .filter(([stateKey, entry]) => stateKey === patch.id || stateKey.startsWith(`${patch.id}::`) || entry.id === patch.id)
+    .map(([, entry]) => entry)
+    .sort((a, b) => String(b.appliedAt).localeCompare(String(a.appliedAt)));
+}
+
+export function inspectPatches(options: InspectPatchesOptions = {}): PatchLifecycleReport {
+  const now = options.now ?? new Date();
+  const paths = resolveProjectPaths(options.projectRoot, options.homeDir);
+  const adapter = currentPlatform(options, paths.homeDir);
+  const registry = options.registry ?? OGB_PATCHES;
+  const state = readPatchState({ projectRoot: paths.projectRoot, homeDir: paths.homeDir }, now);
+  const duplicates = duplicatePatchIds(registry);
+
+  const patches = registry.map((patch): PatchLifecycleItem => {
+    const applied = appliedEntriesForPatch(state, patch);
+    return {
+      id: patch.id,
+      title: patch.title,
+      description: patch.description,
+      category: patch.category,
+      reason: patch.reason,
+      phase: patch.phase,
+      platforms: patch.platforms ?? ["all"],
+      introducedIn: patch.introducedIn,
+      retireAfter: patch.retireAfter,
+      removalCondition: patch.removalCondition,
+      supersededBy: patch.supersededBy,
+      lifecycleStatus: patchLifecycleStatus(patch),
+      required: Boolean(patch.required),
+      runOnce: Boolean(patch.runOnce),
+      destructive: Boolean(patch.destructive),
+      needsBackup: Boolean(patch.needsBackup),
+      applied,
+      lastAppliedAt: applied[0]?.appliedAt,
+      policyWarnings: patchPolicyWarnings(patch, duplicates),
+    };
+  }).sort((a, b) => a.phase.localeCompare(b.phase) || a.id.localeCompare(b.id));
+
+  const supported = patches.filter((patch) => patch.platforms.includes("all") || patch.platforms.includes(adapter.platform));
+  const warnings = supported.flatMap((patch) => patch.policyWarnings.map((warning) => `${patch.id}: ${warning}`));
+  return {
+    schema: PATCH_LIFECYCLE_SCHEMA,
+    version: OGB_VERSION,
+    generatedAt: now.toISOString(),
+    projectRoot: paths.projectRoot,
+    homeDir: paths.homeDir,
+    homeMode: paths.homeMode,
+    statePath: stateRecordPath("patches", { projectRoot: paths.projectRoot, homeDir: paths.homeDir }),
+    outcome: warnings.length > 0 ? "warn" : "pass",
+    registered: supported.length,
+    active: supported.filter((patch) => patch.lifecycleStatus === "active").length,
+    retirementDue: supported.filter((patch) => patch.lifecycleStatus === "retirement-due").length,
+    superseded: supported.filter((patch) => patch.lifecycleStatus === "superseded").length,
+    warnings,
+    patches: supported,
+  };
+}
+
+function lifecycleBadge(status: PatchLifecycleStatus): string {
+  if (status === "retirement-due") return "RETIRE";
+  if (status === "superseded") return "SUPERSEDED";
+  return "ACTIVE";
+}
+
+export function formatPatchLifecycleReport(report: PatchLifecycleReport): string {
+  const lines = [
+    "OGB patches",
+    `Project: ${report.projectRoot}`,
+    `Outcome: ${report.outcome.toUpperCase()}`,
+    "",
+    `Registry: ${report.registered} patch(es), ${report.active} active, ${report.retirementDue} due for retirement, ${report.superseded} superseded`,
+    `State: ${report.statePath}`,
+  ];
+
+  if (report.warnings.length > 0) {
+    lines.push("", "Warnings:");
+    for (const warning of report.warnings) lines.push(`- ${warning}`);
+  }
+
+  lines.push("", "Patches:");
+  for (const patch of report.patches) {
+    lines.push(`- [${lifecycleBadge(patch.lifecycleStatus)}] ${patch.id}`);
+    lines.push(`  ${patch.title}`);
+    lines.push(`  phase=${patch.phase} category=${patch.category} introduced=${patch.introducedIn}`);
+    lines.push(`  reason: ${patch.reason}`);
+    if (patch.retireAfter) lines.push(`  retire after: ${patch.retireAfter}`);
+    if (patch.removalCondition) lines.push(`  removal: ${patch.removalCondition}`);
+    if (patch.supersededBy) lines.push(`  superseded by: ${patch.supersededBy}`);
+    if (patch.lastAppliedAt) lines.push(`  last applied: ${patch.lastAppliedAt}`);
+    if (patch.policyWarnings.length > 0) {
+      for (const warning of patch.policyWarnings) lines.push(`  warning: ${warning}`);
+    }
+  }
+
+  if (report.patches.length === 0) lines.push("- no patches registered for this platform");
+  lines.push("", "Rule: patches repair legacy state or guard risky transitions; normal features belong in the core flow.");
+  return `${lines.join("\n")}\n`;
 }
 
 export function runPatchesForPhase(options: RunPatchesOptions): PatchRunReport {
@@ -809,7 +1049,10 @@ export const OGB_PATCHES: readonly OgbPatch[] = [
     id: "medical-notes-workbench-pre-update-snapshot",
     title: "Snapshot Medical Notes Workbench drift before extension update",
     description: "Captures tracked, staged and untracked git diffs before Gemini CLI updates the medical-notes-workbench extension.",
-    introducedIn: OGB_VERSION,
+    category: "guardrail",
+    reason: "Protect user and agent edits inside the installed Medical Notes Workbench extension before Gemini CLI replaces extension files.",
+    introducedIn: "0.1.8",
+    removalCondition: "Remove only when Gemini CLI or the extension provides equivalent pre-update drift snapshotting.",
     phase: "before-gemini-extension-update",
     platforms: ["all"],
     runOnce: false,
@@ -826,7 +1069,11 @@ export const OGB_PATCHES: readonly OgbPatch[] = [
     id: "cleanup-legacy-home-startup-lock",
     title: "Remove legacy home startup lock",
     description: "Removes the old startup-sync lock that a previous Windows/home bug could leave under ~/.opencode/generated.",
-    introducedIn: OGB_VERSION,
+    category: "cleanup",
+    reason: "Repair legacy home/global startup lock state left by the Windows quoted-path and home-project bugs.",
+    introducedIn: "0.1.8",
+    retireAfter: "0.2.0",
+    removalCondition: "Remove after two stable releases show no telemetry/status hits for the legacy ~/.opencode/generated lock.",
     phase: "pre-extension-update",
     platforms: ["all"],
     destructive: true,
@@ -854,7 +1101,10 @@ export const OGB_PATCHES: readonly OgbPatch[] = [
     id: "ensure-mcp-env-store-private",
     title: "Harden MCP env store permissions",
     description: "Keeps the OGB MCP environment store private after sync writes sensitive local values.",
-    introducedIn: OGB_VERSION,
+    category: "security",
+    reason: "Ensure locally materialized MCP environment values stay private on POSIX systems after sync.",
+    introducedIn: "0.1.8",
+    removalCondition: "Keep while OGB can persist sensitive MCP env values locally.",
     phase: "post-sync",
     platforms: ["darwin", "linux"],
     runOnce: false,

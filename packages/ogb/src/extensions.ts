@@ -347,6 +347,15 @@ export function updateGeminiExtensions(options: ExtensionUpdateOptions = {}): Ex
   }
 
   if (options.dryRun) return { status: "preview", command, beforeExtensions: preUpdate.beforeExtensions, patches: preUpdate.patches };
+  if ((options.projectRoot || options.homeDir) && preUpdate.beforeExtensions.length === 0) {
+    return {
+      status: "applied",
+      command,
+      beforeExtensions: preUpdate.beforeExtensions,
+      afterExtensions: [],
+      patches: preUpdate.patches,
+    };
+  }
   if (options.autoConsent) {
     const report = runGeminiCaptured(geminiBin, command.slice(1), options);
     return {

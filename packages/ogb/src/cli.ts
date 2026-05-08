@@ -21,6 +21,7 @@ import { disableMaintainerRole, enableMaintainerRole, readLocalRole, type LocalR
 import { readMcpEnvValues } from "./mcp-env-store.js";
 import { readOgbConfig } from "./ogb-config.js";
 import { runPass } from "./pass.js";
+import { formatPatchLifecycleReport, inspectPatches } from "./patches.js";
 import { defaultGeminiInput, isHomeProject, resolveProjectPaths } from "./paths.js";
 import { spawnCommand, spawnCommandSync } from "./process.js";
 import { ensureProjectConfig } from "./project-config.js";
@@ -722,6 +723,28 @@ program.command("dashboard")
         strict: opts.strict,
       });
     });
+  });
+
+function printPatchesReport(opts: { json?: boolean } = {}): void {
+  const { project } = commonProjectOptions();
+  const report = inspectPatches({ projectRoot: project });
+  if (opts.json) console.log(JSON.stringify(report, null, 2));
+  else console.log(formatPatchLifecycleReport(report).trimEnd());
+  if (report.outcome === "warn") process.exitCode = 1;
+}
+
+program.command("patches")
+  .description("Inspect versioned OGB repair patches and lifecycle policy")
+  .argument("[action]", "Optional action: status or list")
+  .option("--json", "Print JSON report")
+  .action((action: string | undefined, opts) => {
+    if (action && action !== "status" && action !== "list") {
+      console.error(`Unknown patches action: ${action}`);
+      console.error("Use `ogb patches`, `ogb patches status`, or `ogb patches list --json`.");
+      process.exitCode = 1;
+      return;
+    }
+    printPatchesReport(opts);
   });
 
 program.command("limits")

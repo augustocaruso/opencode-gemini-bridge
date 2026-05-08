@@ -6,7 +6,8 @@ A patch API e o caminho seguro para rodar correcoes pontuais versionadas no comp
 
 O modelo mental:
 
-- um patch declara metadata, fase, plataformas e risco;
+- um patch declara metadata, fase, plataformas, risco e motivo;
+- patches de cleanup/migration declaram quando devem ser aposentados;
 - o runner decide se ele se aplica;
 - o patch roda com acesso a backup central, paths normalizados e native runner;
 - o resultado vira progresso, warning/error do `ogb check` e estado persistido.
@@ -18,6 +19,7 @@ As fases sao strings estaveis e ordenaveis:
 - `pre-install`
 - `post-install`
 - `pre-extension-update`
+- `before-gemini-extension-update`
 - `post-extension-update`
 - `pre-sync`
 - `post-sync`
@@ -79,7 +81,12 @@ export interface OgbPatch {
   id: string;
   title: string;
   description: string;
+  category: "cleanup" | "compatibility" | "guardrail" | "migration" | "security";
+  reason: string;
   introducedIn: string;
+  retireAfter?: string;
+  removalCondition?: string;
+  supersededBy?: string;
   phase: PatchPhase;
   platforms?: PatchPlatform[];
   runOnce?: boolean;
@@ -95,7 +102,16 @@ export interface OgbPatch {
 Regras:
 
 - `id` deve ser unico e estavel.
-- `introducedIn` deve apontar a versao que introduziu o patch.
+- `introducedIn` deve apontar a versao literal que introduziu o patch. Nao use
+  `OGB_VERSION`, porque isso muda a historia do patch a cada release.
+- `category` separa patch temporario (`cleanup`, `migration`) de guardrail
+  duradouro (`guardrail`, `security`, `compatibility`).
+- `reason` explica por que esse patch existe e qual estado legado/transicao ele
+  protege.
+- `retireAfter` e `removalCondition` sao obrigatorios na pratica para
+  `cleanup` e `migration`; sem isso o patch tende a ficar para sempre.
+- `supersededBy` marca substituicao explicita quando outro patch ou core flow
+  assumiu a responsabilidade.
 - `runOnce` pula execucoes futuras depois de um `applied`, exceto com `force`.
 - `required` transforma falha em erro de check; patch opcional vira warning.
 - `destructive` e `needsBackup` devem ser verdadeiros quando o patch remove ou sobrescreve arquivo.
@@ -131,6 +147,27 @@ O arquivo guarda:
 - outcome por fase.
 
 O `PassReport` tambem ganha `patches`, com fases, contadores e path do estado.
+
+Para inspecionar a saude do registry e o estado aplicado em uma maquina:
+
+```sh
+ogb patches
+ogb patches status
+ogb patches list --json
+```
+
+Esse relatorio mostra:
+
+- patches ativos;
+- patches `retirement-due`;
+- patches `superseded`;
+- ultimo `applied` salvo em `ogb-patches.json`;
+- warnings de politica, como cleanup sem `retireAfter` ou patch destrutivo sem
+  backup central.
+
+Se `ogb patches` retorna `WARN`, isso nao significa necessariamente que o
+usuario esteja quebrado. Significa que o mantenedor precisa aposentar,
+substituir ou justificar algum patch.
 
 ## Progresso
 
@@ -218,12 +255,35 @@ Checklist minimo:
 
 1. Adicione o patch em `OGB_PATCHES`.
 2. Escolha a fase mais estreita possivel.
-3. Marque `platforms` se o patch nao for universal.
-4. Use `backupSession` antes de qualquer overwrite/remove.
-5. Retorne `preview` em `dryRun`.
-6. Adicione teste unitario em `patches.test.ts`.
-7. Se o patch influencia o check, adicione teste em `pass.test.ts`.
-8. Rode `npm run typecheck` e `npm test` em `packages/ogb`.
+3. Declare `category`, `reason` e uma `introducedIn` literal.
+4. Para `cleanup` ou `migration`, declare `retireAfter` e
+   `removalCondition`.
+5. Marque `platforms` se o patch nao for universal.
+6. Use `backupSession` antes de qualquer overwrite/remove.
+7. Retorne `preview` em `dryRun`.
+8. Adicione teste unitario em `patches.test.ts`.
+9. Se o patch influencia o check, adicione teste em `pass.test.ts`.
+10. Rode `ogb patches`, `npm run typecheck` e `npm test` em `packages/ogb`.
+
+## Quando empacotar e quando aposentar
+
+Empacote um patch no mesmo release que corrige o bug de core quando usuarios ja
+podem ter estado quebrado no disco. O core flow corrige o futuro; o patch repara
+ou protege o passado.
+
+Nao crie patch para feature nova, preferencia de UX ou diagnostico puro. Nesses
+casos, implemente no core, no `check`, no `validate` ou no `dashboard`.
+
+Politica sugerida:
+
+- cleanup/migration simples: `retireAfter` em 2 releases menores ou no proximo
+  marco planejado;
+- hotfix critico de Windows/Mac: manter 3 a 5 releases, desde que haja
+  `removalCondition`;
+- guardrail antes de update externo: pode ficar sem `retireAfter`, mas precisa
+  explicar a condicao externa que permitiria remocao;
+- patch superseded: marcar `supersededBy` e remover no ciclo seguinte, depois
+  que os testes provarem que o substituto cobre o caso.
 
 ## Exemplo
 
@@ -232,7 +292,11 @@ Checklist minimo:
   id: "cleanup-legacy-home-startup-lock",
   title: "Remove legacy home startup lock",
   description: "Removes an old lock from a previous home/global startup bug.",
-  introducedIn: OGB_VERSION,
+  category: "cleanup",
+  reason: "Repair legacy home/global startup lock state left by an old bug.",
+  introducedIn: "0.1.8",
+  retireAfter: "0.2.0",
+  removalCondition: "Remove after telemetry/status shows no legacy lock hits for two stable releases.",
   phase: "pre-extension-update",
   platforms: ["all"],
   destructive: true,

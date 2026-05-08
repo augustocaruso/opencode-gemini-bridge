@@ -5,9 +5,12 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import {
+  PATCH_LIFECYCLE_SCHEMA,
   PATCH_STATE_SCHEMA,
   OGB_PATCHES,
   defineNativeScriptPatch,
+  formatPatchLifecycleReport,
+  inspectPatches,
   runPatchesForPhase,
   runBeforeGeminiExtensionUpdatePatches,
   type OgbPatch,
@@ -40,6 +43,8 @@ function patch(overrides: Partial<OgbPatch> & Pick<OgbPatch, "id" | "phase" | "r
   return {
     title: overrides.id,
     description: `Test patch ${overrides.id}`,
+    category: "compatibility",
+    reason: "Exercise the patch runner contract in tests.",
     introducedIn: "0.0.0-test",
     applies: () => true,
     ...overrides,
@@ -168,6 +173,8 @@ test("native script patches run through the shared native command runner", () =>
       id: "native-node",
       title: "Run node",
       description: "Uses the native runner contract",
+      category: "compatibility",
+      reason: "Exercise native command execution through the patch API.",
       introducedIn: "0.0.0-test",
       phase: "pre-sync",
       applies: () => true,
@@ -184,6 +191,63 @@ test("native script patches run through the shared native command runner", () =>
   assert.equal(report.outcome, "pass");
   assert.equal(report.results[0]?.status, "applied");
   assert.match(report.results[0]?.stdoutTail ?? "", /native ok/);
+});
+
+test("inspectPatches reports lifecycle metadata, state and retirement warnings", () => {
+  const homeDir = tempRoot();
+  const registry = [
+    patch({
+      id: "old-cleanup",
+      title: "Old cleanup",
+      description: "A cleanup patch whose retention window ended.",
+      category: "cleanup",
+      reason: "Clean legacy files in a fixture.",
+      introducedIn: "0.0.1",
+      retireAfter: "0.0.2",
+      removalCondition: "Remove after the fixture proves retirement warnings.",
+      phase: "pre-sync",
+      runOnce: true,
+      run() {
+        return { status: "applied", message: "cleaned" };
+      },
+    }),
+    patch({
+      id: "ongoing-guardrail",
+      title: "Ongoing guardrail",
+      description: "A permanent safety guardrail.",
+      category: "guardrail",
+      reason: "Protect a risky transition in a fixture.",
+      introducedIn: "0.0.1",
+      phase: "post-sync",
+      run() {
+        return { status: "skipped", message: "not needed" };
+      },
+    }),
+  ];
+
+  runPatchesForPhase({ phase: "pre-sync", projectRoot: homeDir, homeDir, registry });
+  const report = inspectPatches({ projectRoot: homeDir, homeDir, registry, now: new Date("2026-05-08T00:00:00.000Z") });
+  const formatted = formatPatchLifecycleReport(report);
+
+  assert.equal(report.schema, PATCH_LIFECYCLE_SCHEMA);
+  assert.equal(report.outcome, "warn");
+  assert.equal(report.registered, 2);
+  assert.equal(report.retirementDue, 1);
+  assert.equal(report.patches.find((item) => item.id === "old-cleanup")?.lastAppliedAt !== undefined, true);
+  assert.match(report.warnings.join("\n"), /old-cleanup: Patch is due for retirement since 0\.0\.2/);
+  assert.match(formatted, /OGB patches/);
+  assert.match(formatted, /\[RETIRE\] old-cleanup/);
+  assert.match(formatted, /Rule: patches repair legacy state/);
+});
+
+test("built-in patches declare lifecycle policy metadata", () => {
+  const homeDir = tempRoot();
+  const report = inspectPatches({ projectRoot: homeDir, homeDir, registry: OGB_PATCHES, now: new Date("2026-05-08T00:00:00.000Z") });
+
+  assert.equal(report.outcome, "pass");
+  assert.equal(report.warnings.length, 0);
+  assert.equal(report.patches.every((item) => item.category && item.reason && item.introducedIn), true);
+  assert.equal(report.patches.some((item) => item.category === "cleanup" && item.retireAfter), true);
 });
 
 test("medical notes pre-update snapshot ignores installer metadata drift", { skip: !hasGit() }, () => {

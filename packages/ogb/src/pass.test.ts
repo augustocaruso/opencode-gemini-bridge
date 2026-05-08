@@ -117,6 +117,8 @@ test("runPass turns patch warnings into check blockers without stopping doctor",
     id: "warn-after-check",
     title: "Warn after check",
     description: "Test warning patch",
+    category: "compatibility",
+    reason: "Exercise check blocker rendering for patch warnings.",
     introducedIn: "0.0.0-test",
     phase: "post-check",
     applies: () => true,
@@ -203,9 +205,15 @@ test("trusted Gemini hooks require review again after settings change", () => {
 
 test("runPass treats Gemini extension update failure as warning and still syncs", () => {
   const projectRoot = tempRoot();
+  const extensionPath = path.join(projectRoot, ".gemini", "extensions", "failing-extension");
   const oldExitCode = process.exitCode;
   const oldGeminiBin = process.env.GEMINI_BIN;
   const events: RitualProgressEvent[] = [];
+  fs.mkdirSync(extensionPath, { recursive: true });
+  fs.writeFileSync(path.join(extensionPath, "gemini-extension.json"), JSON.stringify({
+    name: "failing-extension",
+    version: "1.0.0",
+  }), "utf8");
   process.env.GEMINI_BIN = writeFakeGemini(projectRoot, `
 console.error("extension update failed");
 process.exit(9);
