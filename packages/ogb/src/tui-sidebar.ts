@@ -904,8 +904,6 @@ function BridgeRows(props) {
       " ",
       createComponent(SyncInline, { panel: props.panel, theme: props.theme }),
     ),
-    line({ fg: props.theme().textMuted }, ""),
-    line({ fg: props.theme().text }, () => bridgeInventoryText(data())),
     () => {
       const current = data();
       const text = authRepairText(current);
@@ -923,6 +921,8 @@ function BridgeRows(props) {
       if (current.warnings === 0 && current.errors === 0) return undefined;
       return line({ fg: current.errors > 0 ? props.theme().error : props.theme().warning }, String(current.warnings), " warn · ", String(current.errors), " err");
     },
+    line({ fg: props.theme().textMuted }, ""),
+    line({ fg: props.theme().text }, () => bridgeInventoryText(data())),
   );
 }
 

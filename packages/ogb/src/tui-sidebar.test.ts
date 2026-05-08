@@ -82,6 +82,13 @@ test("ensureTuiSidebar installs a TUI plugin and tui config entry", () => {
   assert.match(plugin, /function SyncInline\(props\)/);
   assert.match(plugin, /function BridgeRows\(props\) \{[\s\S]*"BRIDGE"[\s\S]*outcomeLabel\(current\.outcome\)[\s\S]*createComponent\(SyncInline/);
   assert.match(plugin, /line\(\{ fg: props\.theme\(\)\.textMuted \}, ""\),\n    line\(\{ fg: props\.theme\(\)\.text \}, \(\) => bridgeInventoryText\(data\(\)\)\)/);
+  const bridgeRowsOffset = plugin.indexOf("function BridgeRows(props)");
+  const warningOffset = plugin.indexOf('String(current.warnings), " warn · "', bridgeRowsOffset);
+  const spacerOffset = plugin.indexOf('line({ fg: props.theme().textMuted }, ""),', bridgeRowsOffset);
+  const inventoryOffset = plugin.indexOf("bridgeInventoryText(data())", bridgeRowsOffset);
+  assert.ok(warningOffset > bridgeRowsOffset);
+  assert.ok(warningOffset < spacerOffset);
+  assert.ok(spacerOffset < inventoryOffset);
   assert.match(plugin, /ogb-ui\.json/);
   assert.match(plugin, /externalQuotaPanel/);
   assert.doesNotMatch(plugin, /ogb-telemetry-status\.json/);
