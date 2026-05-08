@@ -48,6 +48,45 @@ function installOutcome(options: InstallOptions, warnings: string[], check?: Pas
   return warnings.length > 0 ? "warn" : "pass";
 }
 
+type SetupCommand = SetupUxReport["commands"][number];
+type SetupWrite = SetupUxReport["writes"][number];
+type ProgressStatus = "pass" | "warn" | "skipped";
+
+function writeNeedsAttention(write: SetupWrite | undefined): boolean {
+  return write?.status === "conflict" || write?.status === "protected";
+}
+
+function commandNeedsAttention(command: SetupCommand): boolean {
+  return command.status === "fail" || command.status === "skipped";
+}
+
+function statusFromWrites(writes: SetupWrite[]): ProgressStatus {
+  return writes.some(writeNeedsAttention) ? "warn" : "pass";
+}
+
+function statusFromCommands(commands: SetupCommand[]): ProgressStatus {
+  return commands.some(commandNeedsAttention) ? "warn" : "pass";
+}
+
+function setupProfileStatus(report: SetupUxReport): ProgressStatus {
+  const profileWrites = report.writes.filter((write) => write.path !== report.ogbConfigPath);
+  return statusFromWrites(profileWrites);
+}
+
+function setupProjectProfileStatus(report: SetupUxReport): ProgressStatus {
+  if (!report.ogbConfigPath) return "pass";
+  return writeNeedsAttention(report.writes.find((write) => write.path === report.ogbConfigPath)) ? "warn" : "pass";
+}
+
+function openCodeProgressMessage(command: SetupCommand | undefined): string {
+  if (!command) return "OpenCode availability was checked.";
+  if (command.status === "fail") return "OpenCode install/check failed; see Notes.";
+  if (command.status === "preview") return "Would check OpenCode availability.";
+  if (command.status === "skipped") return command.message;
+  if (command.message === "OpenCode already available.") return command.message;
+  return "OpenCode is available.";
+}
+
 export function runInstall(options: InstallOptions = {}): InstallReport {
   const paths = resolveProjectPaths(options.projectRoot, options.homeDir);
   const plan = buildInstallerPlan({
@@ -125,38 +164,42 @@ export function runInstall(options: InstallOptions = {}): InstallReport {
           writeProjectProfile: options.writeProjectProfile,
         });
         const changedWrites = report.writes.filter((write) => write.status !== "unchanged").length;
-        const activeCommands = report.commands.filter((command) => command.status !== "skipped").length;
-        const status = report.warnings.length > 0 ? "warn" : "pass";
+        const pluginCommands = report.commands.filter((command) => command.role === "plugin" || command.role === "verify" || command.role === "auth");
+        const activePluginCommands = pluginCommands.filter((command) => command.status !== "skipped").length;
+        const profileStatus = setupProfileStatus(report);
+        const openCodeCommand = report.commands.find((command) => command.role === "opencode");
+        const openCodeStatus = openCodeCommand?.status === "fail" || openCodeCommand?.status === "skipped" ? "warn" : "pass";
+        const pluginStatus = statusFromCommands(pluginCommands);
+        const projectProfileStatus = setupProjectProfileStatus(report);
         emitRitualProgress(options.onProgress, {
           stepId: "profile",
           label: "Apply the OpenCode profile.",
           detail: options.resetGlobal ? "Overwrites global config from OGB defaults." : "Merges managed global settings and writes the project/global profile.",
-          status,
+          status: profileStatus,
           message: [
-            `${changedWrites} write(s), ${activeCommands} command(s).`,
+            `${changedWrites} write(s) checked.`,
             ...report.notices,
           ].join(" "),
         });
-        const openCodeCommand = report.commands.find((command) => command.command.some((part) => /opencode-ai|opencode(?:\.cmd)?$/i.test(part)));
         emitRitualProgress(options.onProgress, {
           stepId: "opencode",
           label: "Verify OpenCode is available.",
           detail: "Installs or updates OpenCode when the platform flow allows it.",
-          status: options.installOpenCode === false ? "skipped" : openCodeCommand?.status === "fail" ? "warn" : status,
-          message: options.installOpenCode === false ? "Skipped by --no-install-opencode." : openCodeCommand?.message ?? "OpenCode availability was checked.",
+          status: options.installOpenCode === false ? "skipped" : openCodeStatus,
+          message: options.installOpenCode === false ? "Skipped by --no-install-opencode." : openCodeProgressMessage(openCodeCommand),
         });
         emitRitualProgress(options.onProgress, {
           stepId: "plugins",
           label: "Install global OpenCode plugins.",
           detail: "Covers auth, fallback, sidebar, and OGB startup sync integrations.",
-          status: options.installPlugins === false ? "skipped" : status,
-          message: options.installPlugins === false ? "Skipped by --no-plugins." : `${activeCommands} setup command(s) checked.`,
+          status: options.installPlugins === false ? "skipped" : pluginStatus,
+          message: options.installPlugins === false ? "Skipped by --no-plugins." : `${activePluginCommands} setup command(s) checked.`,
         });
         emitRitualProgress(options.onProgress, {
           stepId: "project-profile",
           label: "Write the project or global profile.",
           detail: "Home uses global files; projects get the managed OGB profile.",
-          status: options.writeProjectProfile === false ? "skipped" : status,
+          status: options.writeProjectProfile === false ? "skipped" : projectProfileStatus,
           message: paths.homeMode ? "Home/global profile was used." : "Project profile was checked.",
         });
         return report;

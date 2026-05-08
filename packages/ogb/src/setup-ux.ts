@@ -71,6 +71,7 @@ export interface SetupUxCommand {
   command: string[];
   status: "skipped" | "ok" | "fail" | "preview";
   message: string;
+  role?: "opencode" | "tui-runtime" | "plugin" | "verify" | "auth";
 }
 
 export interface SetupUxReport {
@@ -342,15 +343,15 @@ function ensureGlobalTuiRuntime(options: {
   if (missing.length > 0 && options.install !== false) {
     const installCommand = globalTuiRuntimeInstallCommand();
     commands = options.protectInstall && !options.dryRun
-      ? [{ command: installCommand, status: "skipped", message: "Skipped by local maintainer mode" }]
-      : [runCommand(installCommand, options.dryRun, options.configDir)];
+      ? [{ command: installCommand, status: "skipped", message: "Skipped by local maintainer mode", role: "tui-runtime" }]
+      : [runCommand(installCommand, options.dryRun, options.configDir, "tui-runtime")];
   }
 
   return { packageJson, commands };
 }
 
-function runCommand(command: string[], dryRun?: boolean, cwd?: string): SetupUxCommand {
-  if (dryRun) return { command, status: "preview", message: `Would run ${command.join(" ")}` };
+function runCommand(command: string[], dryRun?: boolean, cwd?: string, role?: SetupUxCommand["role"]): SetupUxCommand {
+  if (dryRun) return { command, status: "preview", message: `Would run ${command.join(" ")}`, role };
   const result = runNativeCommand({
     command: command[0],
     args: command.slice(1),
@@ -368,9 +369,10 @@ function runCommand(command: string[], dryRun?: boolean, cwd?: string): SetupUxC
       command,
       status: "fail",
       message: result.error ?? (output || "command failed"),
+      role,
     };
   }
-  return { command, status: "ok", message: output || "ok" };
+  return { command, status: "ok", message: output || "ok", role };
 }
 
 export function missingPluginsFromDebugInfo(output: string, expected: string[]): string[] {
@@ -417,7 +419,7 @@ function runAuthProbe(opencodeCommand: string, provider: "openai" | "google", dr
     "--method",
     "__ogb_probe__",
   ];
-  if (dryRun) return { command, status: "preview", message: `Would probe ${provider} auth methods` };
+  if (dryRun) return { command, status: "preview", message: `Would probe ${provider} auth methods`, role: "auth" };
 
   const result = runNativeCommand({
     command: command[0],
@@ -433,18 +435,20 @@ function runAuthProbe(opencodeCommand: string, provider: "openai" | "google", dr
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
   const missing = missingAuthProbeExpectations(provider, output);
   const available = authProbeAvailableMethods(output);
-  if (result.error) return { command, status: "fail", message: result.error };
+  if (result.error) return { command, status: "fail", message: result.error, role: "auth" };
   if (missing.length > 0) {
     return {
       command,
       status: "fail",
       message: `Missing expected ${provider} auth method(s): ${missing.join(", ")}. Available: ${available.join(", ") || "none detected"}`,
+      role: "auth",
     };
   }
   return {
     command,
     status: "ok",
     message: `Verified ${provider} auth methods: ${available.join(", ")}`,
+    role: "auth",
   };
 }
 
@@ -561,8 +565,12 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
     if (!existingOpenCode) {
       warnings.push("OpenCode is not installed. Re-run with --install-opencode or install OpenCode first.");
     }
+  } else if (options.dryRun) {
+    commands.push(runCommand(adapter.installOpenCodeCommand(), true, undefined, "opencode"));
+  } else if (existingOpenCode) {
+    commands.push({ command: [existingOpenCode], status: "ok", message: "OpenCode already available.", role: "opencode" });
   } else {
-    commands.push(runCommand(adapter.installOpenCodeCommand(), options.dryRun));
+    commands.push(runCommand(adapter.installOpenCodeCommand(), false, undefined, "opencode"));
   }
 
   const desiredPlugins = [
@@ -662,15 +670,15 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
     const opencodeCommand = options.dryRun === true ? "opencode" : resolveCommand("opencode", { homeDir, platform: adapter.platform, env: adapter.env });
     for (const plugin of installablePlugins) {
       if (localRole.enabled && !options.dryRun) {
-        commands.push({ command: ["opencode", "plugin", plugin, "--global", "--force"], status: "skipped", message: "Skipped by local maintainer mode" });
+        commands.push({ command: ["opencode", "plugin", plugin, "--global", "--force"], status: "skipped", message: "Skipped by local maintainer mode", role: "plugin" });
       } else if (!opencodeCommand) {
-        commands.push({ command: ["opencode", "plugin", plugin, "--global", "--force"], status: "skipped", message: "OpenCode is not available" });
+        commands.push({ command: ["opencode", "plugin", plugin, "--global", "--force"], status: "skipped", message: "OpenCode is not available", role: "plugin" });
       } else {
-        commands.push(runCommand([opencodeCommand, "plugin", plugin, "--global", "--force"], options.dryRun, commandCwd));
+        commands.push(runCommand([opencodeCommand, "plugin", plugin, "--global", "--force"], options.dryRun, commandCwd, "plugin"));
       }
     }
     if (opencodeCommand && (!localRole.enabled || options.dryRun)) {
-      const verification = runCommand([opencodeCommand, "debug", "info"], options.dryRun, commandCwd);
+      const verification = runCommand([opencodeCommand, "debug", "info"], options.dryRun, commandCwd, "verify");
       if (verification.status === "ok") {
         const missing = missingPluginsFromDebugInfo(verification.message, desiredPlugins);
         verification.message = missing.length > 0
@@ -682,7 +690,7 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
       commands.push(runAuthProbe(opencodeCommand, "openai", options.dryRun, commandCwd));
       commands.push(runAuthProbe(opencodeCommand, "google", options.dryRun, commandCwd));
     } else if (localRole.enabled && !options.dryRun) {
-      commands.push({ command: ["opencode", "debug", "info"], status: "skipped", message: "Skipped by local maintainer mode" });
+      commands.push({ command: ["opencode", "debug", "info"], status: "skipped", message: "Skipped by local maintainer mode", role: "verify" });
     }
   }
 

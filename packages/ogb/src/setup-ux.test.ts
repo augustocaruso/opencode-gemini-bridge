@@ -669,6 +669,31 @@ test("setupUx dry-run previews OpenCode install or update by default", () => {
   assert.equal(installCommand?.status, "preview");
 });
 
+test("setupUx skips the OpenCode installer when opencode is already available", () => {
+  const root = tempRoot();
+  const homeDir = path.join(root, "home");
+  const opencodePath = path.join(homeDir, ".opencode", "bin", "opencode");
+  fs.mkdirSync(path.dirname(opencodePath), { recursive: true });
+  fs.writeFileSync(opencodePath, "#!/bin/sh\nexit 0\n", "utf8");
+  fs.chmodSync(opencodePath, 0o755);
+
+  const report = setupUx({
+    homeDir,
+    configDir: path.join(root, "config", "opencode"),
+    projectRoot: path.join(root, "project"),
+    installPlugins: false,
+    installTuiDependencies: false,
+  });
+
+  const openCodeCommand = report.commands.find((command) => command.role === "opencode");
+  assert.equal(openCodeCommand?.status, "ok");
+  assert.equal(openCodeCommand?.message, "OpenCode already available.");
+  assert.equal(report.commands.some((command) =>
+    command.command.join(" ").includes("opencode-ai@latest")
+    || command.command.join(" ").includes("opencode.ai/install")
+  ), false);
+});
+
 test("setupUx overwrites existing project profile with backup by default", () => {
   const root = tempRoot();
   const configDir = path.join(root, "config", "opencode");
