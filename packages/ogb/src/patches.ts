@@ -542,6 +542,21 @@ function commandFailed(result: NativeCommandResult, allowedStatus: Array<number 
   return !allowedStatus.includes(result.status);
 }
 
+const MEDNOTES_SNAPSHOT_ALLOWED_EXACT = new Set(["GEMINI.md"]);
+const MEDNOTES_SNAPSHOT_ALLOWED_PREFIXES = [
+  "commands/",
+  "skills/",
+  "agents/",
+  "knowledge/",
+  "hooks/",
+  "scripts/",
+  "src/",
+  "docs/",
+];
+const MEDNOTES_SNAPSHOT_DENY_BASENAMES = new Set([".env", ".env.local", ".gemini-extension-install.json", "telemetry.defaults.json"]);
+const MEDNOTES_SCRIPT_EXTENSIONS = new Set([".py", ".js", ".mjs", ".cjs", ".sh", ".ps1", ".cmd"]);
+const MEDNOTES_MAX_GENERATED_SCRIPT_BYTES = 96 * 1024;
+
 function git(context: PatchContext, args: string[], timeoutMs = 60_000): NativeCommandResult {
   return context.runCommand({
     command: "git",
@@ -552,16 +567,39 @@ function git(context: PatchContext, args: string[], timeoutMs = 60_000): NativeC
   });
 }
 
-function parseGitStatus(stdout: string): { changedPathCount: number; untracked: string[] } {
+function normalizeGitStatusPath(value: string): string {
+  return value.trim().replace(/^"|"$/g, "").replaceAll("\\", "/");
+}
+
+function isMedNotesSnapshotPathAllowed(relPath: string): boolean {
+  const normalized = normalizeGitStatusPath(relPath);
+  if (!normalized || normalized.includes("..")) return false;
+  const basename = path.posix.basename(normalized);
+  if (MEDNOTES_SNAPSHOT_DENY_BASENAMES.has(basename) || basename.startsWith(".env")) return false;
+  if (MEDNOTES_SNAPSHOT_ALLOWED_EXACT.has(normalized)) return true;
+  return MEDNOTES_SNAPSHOT_ALLOWED_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+function parseGitStatus(stdout: string): { changed: string[]; untracked: string[]; ignored: string[] } {
   const lines = stdout.split(/\r?\n/).map((line) => line.trimEnd()).filter(Boolean);
-  const untracked = lines
-    .filter((line) => line.startsWith("?? "))
-    .map((line) => line.slice(3).trim())
-    .filter(Boolean);
-  return {
-    changedPathCount: Math.max(0, lines.length - untracked.length),
-    untracked,
-  };
+  const changed: string[] = [];
+  const untracked: string[] = [];
+  const ignored: string[] = [];
+  for (const line of lines) {
+    const relPath = normalizeGitStatusPath(line.slice(3).split(" -> ").pop() ?? "");
+    if (!relPath) continue;
+    const allowed = isMedNotesSnapshotPathAllowed(relPath);
+    if (!allowed) {
+      ignored.push(relPath);
+      continue;
+    }
+    if (line.startsWith("?? ")) {
+      untracked.push(relPath);
+    } else {
+      changed.push(relPath);
+    }
+  }
+  return { changed, untracked, ignored };
 }
 
 function uniqueSnapshotDir(baseDir: string): string {
@@ -602,6 +640,66 @@ function writeUntrackedDiff(context: PatchContext, snapshotDir: string, untracke
   return chunks.length > 0 ? `${chunks.join("\n")}\n` : "";
 }
 
+function medNotesPathspecs(): string[] {
+  return [
+    ...MEDNOTES_SNAPSHOT_ALLOWED_EXACT,
+    ...MEDNOTES_SNAPSHOT_ALLOWED_PREFIXES.map((prefix) => prefix.replace(/\/$/, "")),
+  ];
+}
+
+function languageForScript(relPath: string): string {
+  switch (path.posix.extname(relPath).toLowerCase()) {
+    case ".py":
+      return "python";
+    case ".js":
+    case ".mjs":
+    case ".cjs":
+      return "javascript";
+    case ".sh":
+      return "shell";
+    case ".ps1":
+      return "powershell";
+    case ".cmd":
+      return "batch";
+    default:
+      return "text";
+  }
+}
+
+function generatedScriptsFromDrift(extensionPath: string, paths: string[]): Array<Record<string, unknown>> {
+  const scripts: Array<Record<string, unknown>> = [];
+  const seen = new Set<string>();
+  for (const relPath of paths) {
+    const normalized = normalizeGitStatusPath(relPath);
+    if (seen.has(normalized) || !MEDNOTES_SCRIPT_EXTENSIONS.has(path.posix.extname(normalized).toLowerCase())) continue;
+    seen.add(normalized);
+    const fullPath = path.resolve(extensionPath, normalized);
+    if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) continue;
+    const size = fs.statSync(fullPath).size;
+    if (size > MEDNOTES_MAX_GENERATED_SCRIPT_BYTES) {
+      scripts.push({
+        path: normalized,
+        language: languageForScript(normalized),
+        size_bytes: size,
+        source: "ogb_update_patch",
+        capture_method: "medical-notes-workbench-pre-update-snapshot",
+        content_omitted_reason: "script_too_large",
+      });
+      continue;
+    }
+    const content = fs.readFileSync(fullPath, "utf8");
+    scripts.push({
+      path: normalized,
+      language: languageForScript(normalized),
+      size_bytes: Buffer.byteLength(content, "utf8"),
+      source: "ogb_update_patch",
+      capture_method: "medical-notes-workbench-pre-update-snapshot",
+      content,
+    });
+  }
+  return scripts;
+}
+
 function createMedicalNotesPreUpdateSnapshot(context: PatchContext): PatchResult {
   const extension = context.extension;
   if (!extension) return { status: "skipped", message: "No Gemini extension context was provided." };
@@ -618,8 +716,9 @@ function createMedicalNotesPreUpdateSnapshot(context: PatchContext): PatchResult
     };
   }
   const drift = parseGitStatus(status.stdout);
-  if (drift.changedPathCount === 0 && drift.untracked.length === 0) {
-    return { status: "skipped", message: `${extension.name} has no local drift.` };
+  if (drift.changed.length === 0 && drift.untracked.length === 0) {
+    const ignored = drift.ignored.length ? ` Ignored non-extension drift: ${drift.ignored.slice(0, 5).join(", ")}.` : "";
+    return { status: "skipped", message: `${extension.name} has no allowlisted local drift.${ignored}` };
   }
 
   const head = git(context, ["-C", extensionPath, "rev-parse", "HEAD"]);
@@ -650,14 +749,21 @@ function createMedicalNotesPreUpdateSnapshot(context: PatchContext): PatchResult
 
   try {
     fs.mkdirSync(snapshotDir, { recursive: true });
-    const tracked = git(context, ["-C", extensionPath, "diff", "--binary"]);
-    const staged = git(context, ["-C", extensionPath, "diff", "--cached", "--binary"]);
+    const pathspecs = medNotesPathspecs();
+    const tracked = git(context, ["-C", extensionPath, "diff", "--binary", "--", ...pathspecs]);
+    const staged = git(context, ["-C", extensionPath, "diff", "--cached", "--binary", "--", ...pathspecs]);
     if (commandFailed(tracked)) throw new Error(tracked.stderr ?? tracked.error ?? "git diff failed");
     if (commandFailed(staged)) throw new Error(staged.stderr ?? staged.error ?? "git diff --cached failed");
+    const untrackedDiff = writeUntrackedDiff(context, snapshotDir, drift.untracked);
+    const generatedScripts = generatedScriptsFromDrift(extensionPath, [...drift.changed, ...drift.untracked]);
+    const snapshotUseful = Boolean(tracked.stdout.trim() || staged.stdout.trim() || untrackedDiff.trim() || generatedScripts.length > 0);
+    if (!snapshotUseful) {
+      throw new Error("allowlisted drift was detected, but no useful diff or script content was captured");
+    }
 
     fs.writeFileSync(trackedDiffPath, tracked.stdout, "utf8");
     fs.writeFileSync(stagedDiffPath, staged.stdout, "utf8");
-    fs.writeFileSync(untrackedDiffPath, writeUntrackedDiff(context, snapshotDir, drift.untracked), "utf8");
+    fs.writeFileSync(untrackedDiffPath, untrackedDiff, "utf8");
 
     const manifest = extension.manifestPath ? readJsonFile(extension.manifestPath) : undefined;
     const snapshot = {
@@ -672,9 +778,14 @@ function createMedicalNotesPreUpdateSnapshot(context: PatchContext): PatchResult
       current_ref: extension.currentRef,
       target_ref: extension.targetRef,
       git_head: gitHead,
-      changed_path_count: drift.changedPathCount,
+      changed_path_count: drift.changed.length,
       untracked_path_count: drift.untracked.length,
-      generated_scripts: [],
+      ignored_path_count: drift.ignored.length,
+      changed_paths: drift.changed,
+      untracked_paths: drift.untracked,
+      ignored_paths: drift.ignored,
+      snapshot_useful: snapshotUseful,
+      generated_scripts: generatedScripts,
     };
     fs.writeFileSync(snapshotJsonPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
 

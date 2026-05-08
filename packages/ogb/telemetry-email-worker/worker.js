@@ -1,6 +1,7 @@
 const OGB_ENVELOPE_SCHEMA = "opencode-gemini-bridge.workflow-telemetry-envelope.v1";
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const DEFAULT_MAX_BODY_BYTES = 256 * 1024;
+const DEFAULT_MAX_EMAIL_JSON_CHARS = 180 * 1024;
 const BUFFER_PREFIX = "pending:";
 const DEFAULT_DIGEST_WINDOW_MINUTES = 15;
 const DEFAULT_DIGEST_MAX_RECORDS = 100;
@@ -89,8 +90,28 @@ function payloadSummary(record) {
   return record.payloadSummary || record.payload_summary || {};
 }
 
+function environmentContext(record) {
+  return record.environmentContext || record.environment_context || {};
+}
+
+function projectContext(record) {
+  return record.project && typeof record.project === "object" ? record.project : {};
+}
+
 function summaryMessages(summary, key) {
   return Array.isArray(summary[key]) ? summary[key].map((item) => String(item || "")).filter(Boolean) : [];
+}
+
+function summaryArray(summary, ...keys) {
+  for (const key of keys) {
+    if (Array.isArray(summary[key])) return summary[key].map((item) => String(item || "")).filter(Boolean);
+  }
+  return [];
+}
+
+function objectEntries(value, limit = 20) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  return Object.entries(value).slice(0, limit).map(([key, item]) => ({ key, value: String(item) }));
 }
 
 const NON_ACTIONABLE_ROOT_CAUSES = new Set(["no_issue_detected", "dashboard_echo", "rulesync_disabled"]);
@@ -149,9 +170,12 @@ function includesAny(text, needles) {
 function workflowDisplayName(workflow) {
   return {
     "auto-update": "Auto-update",
+    check: "Check",
     dashboard: "Dashboard",
     doctor: "Doctor",
+    install: "Install",
     pass: "Pass",
+    reset: "Reset",
     "security-check": "Security-check",
     "setup-opencode": "Setup OpenCode",
     startup: "Plugin de startup",
@@ -163,9 +187,13 @@ function workflowDisplayName(workflow) {
 
 function workflowRecoveryCommand(workflow) {
   return {
+    "auto-update": "ogb auto-update",
+    check: "ogb check",
     dashboard: "ogb dashboard",
     doctor: "ogb doctor",
+    install: "ogb install",
     pass: "ogb pass",
+    reset: "ogb reset",
     "security-check": "ogb security-check",
     "setup-opencode": "ogb setup-opencode",
     sync: "ogb sync",
@@ -173,10 +201,10 @@ function workflowRecoveryCommand(workflow) {
   }[workflow] || "ogb bridge";
 }
 
-function causeResult(code, diagnostic, fallback = {}) {
+function causeResult(code, diagnostic, fallback = {}, options = {}) {
   const details = CAUSE_DETAILS[code] || {};
   const diagnosticCode = String(diagnostic.rootCauseCode || diagnostic.root_cause_code || "");
-  const useDiagnostic = diagnosticCode === code && !GENERIC_ROOT_CAUSES.has(diagnosticCode);
+  const useDiagnostic = diagnosticCode === code && (options.allowGenericDiagnostic || !GENERIC_ROOT_CAUSES.has(diagnosticCode));
   return {
     code,
     label: String((useDiagnostic && (diagnostic.rootCauseLabel || diagnostic.root_cause_label)) || fallback.label || details.label || code || "Workflow issue"),
@@ -196,6 +224,8 @@ function classifyTelemetryCause(record) {
   const rawLabel = String(diagnostic.rootCauseLabel || diagnostic.root_cause_label || "");
   const rawRecovery = String(diagnostic.recoveryCommand || diagnostic.recovery_command || "");
   const messagesText = [...warnings, ...errors, rawLabel, rawRecovery].join("\n").toLowerCase();
+  const isWarn = status === "completed_with_warnings" || outcome === "warn";
+  const isFail = status === "failed" || outcome === "fail";
 
   if (rawCode && !GENERIC_ROOT_CAUSES.has(rawCode)) return causeResult(rawCode, diagnostic);
   if (includesAny(messagesText, ["opencode-auto-fallback is enabled", "plugin is not active", "plugin inactive"])) return causeResult("plugin_inactive", diagnostic);
@@ -208,13 +238,25 @@ function classifyTelemetryCause(record) {
   if (includesAny(messagesText, ["missing built-in opencode commands"])) return causeResult("missing_builtin_commands", diagnostic);
   if (includesAny(messagesText, ["ogb global binary", "ogb resolves to"]) && messagesText.includes("expected")) return causeResult("global_binary_mismatch", diagnostic);
   if (record.workflow === "validate" && (status === "completed_with_warnings" || outcome === "warn")) return causeResult("validation_warn", diagnostic);
-  if (exitCode !== 0 || status === "failed" || outcome === "fail" || errors.length > 0) {
+  if (rawCode === "workflow_warn" && (isWarn || warnings.length > 0)) {
+    return causeResult("workflow_warn", diagnostic, {
+      label: `${workflowDisplayName(record.workflow)} terminou com avisos`,
+      recovery: `Rode ${workflowRecoveryCommand(record.workflow)} --json para ver os proximos passos.`,
+    }, { allowGenericDiagnostic: true });
+  }
+  if (rawCode === "workflow_failed" && (isFail || errors.length > 0)) {
+    return causeResult("workflow_failed", diagnostic, {
+      label: `${workflowDisplayName(record.workflow)} falhou`,
+      recovery: `Rode ${workflowRecoveryCommand(record.workflow)} --json para ver o diagnostico.`,
+    }, { allowGenericDiagnostic: true });
+  }
+  if (isFail || errors.length > 0 || (exitCode !== 0 && !isWarn)) {
     return causeResult("workflow_failed", diagnostic, {
       label: `${workflowDisplayName(record.workflow)} falhou`,
       recovery: `Rode ${workflowRecoveryCommand(record.workflow)} --json para ver o diagnostico.`,
     });
   }
-  if (status === "completed_with_warnings" || outcome === "warn" || warnings.length > 0) {
+  if (isWarn || warnings.length > 0) {
     return causeResult("workflow_warn", diagnostic, {
       label: `${workflowDisplayName(record.workflow)} terminou com avisos`,
       recovery: `Rode ${workflowRecoveryCommand(record.workflow)} --json para ver os proximos passos.`,
@@ -223,12 +265,31 @@ function classifyTelemetryCause(record) {
   return causeResult("no_issue_detected", diagnostic);
 }
 
+function compactCounts(counts) {
+  if (!counts || typeof counts !== "object" || Array.isArray(counts)) return [];
+  return Object.entries(counts)
+    .filter(([key, value]) => {
+      if (!key) return false;
+      if (typeof value === "number") return Number.isFinite(value);
+      return value !== undefined && value !== null && String(value) !== "";
+    })
+    .slice(0, 16)
+    .map(([key, value]) => ({ key, value: String(value) }));
+}
+
 function compactRecord(record) {
   const summary = payloadSummary(record);
+  const environment = environmentContext(record);
+  const project = projectContext(record);
   const cause = classifyTelemetryCause(record);
+  const snippets = Array.isArray(record.diagnosticSnippets || record.diagnostic_snippets)
+    ? (record.diagnosticSnippets || record.diagnostic_snippets).map((item) => String(item || "")).filter(Boolean)
+    : [];
   return {
     runId: runId(record),
     workflow: record.workflow,
+    command: String(record.command || ""),
+    source: String(record.source || ""),
     outcome: record.outcome || record.status || "unknown",
     status: record.status || "unknown",
     phase: record.phase || "",
@@ -240,6 +301,20 @@ function compactRecord(record) {
     recoveryCommand: cause.recovery,
     warnings: summaryMessages(summary, "warnings").slice(0, 5),
     errors: summaryMessages(summary, "errors").slice(0, 5),
+    counts: compactCounts(summary.counts),
+    relevantPaths: summaryArray(summary, "relevantPaths", "relevant_paths").slice(0, 24),
+    requiredInputs: summaryArray(summary, "requiredInputs", "required_inputs").slice(0, 12),
+    signals: summaryArray(summary, "signals").slice(0, 12),
+    pathHashes: objectEntries(summary.pathHashes || summary.path_hashes, 24),
+    diagnosticSnippets: snippets.slice(0, 5),
+    projectLabel: String(project.label || project.path || ""),
+    projectPathHash: String(project.pathHash || project.path_hash || ""),
+    appVersion: String(environment.appVersion || environment.app_version || ""),
+    installId: String(record.installId || record.install_id || ""),
+    sourceEnvelopeId: String(record.sourceEnvelopeId || record.source_envelope_id || ""),
+    automationSignals: Array.isArray(environment.automationSignals || environment.automation_signals)
+      ? (environment.automationSignals || environment.automation_signals).map((item) => String(item || "")).filter(Boolean).slice(0, 4)
+      : [],
   };
 }
 
@@ -262,9 +337,12 @@ function isActionableRecord(record) {
 }
 
 function actionableEnvelope(envelope) {
+  const records = Array.isArray(envelope.records) ? envelope.records : [];
+  const actionableCount = records.filter(isActionableRecord).length;
+  if (!actionableCount) return { ...envelope, records: [], actionableRecordCount: 0 };
   return {
     ...envelope,
-    records: Array.isArray(envelope.records) ? envelope.records.filter(isActionableRecord) : [],
+    actionableRecordCount: actionableCount,
   };
 }
 
@@ -329,8 +407,9 @@ function buildDigestEnvelope(entries, env, reason) {
   const envelopes = entries.map((entry) => entry.envelope);
   const records = [];
   for (const envelope of envelopes) {
+    const envelopeRecords = Array.isArray(envelope.records) ? envelope.records : [];
+    if (!envelopeRecords.some(isActionableRecord)) continue;
     for (const record of envelope.records || []) {
-      if (!isActionableRecord(record)) continue;
       records.push({
         ...record,
         installId: record.installId || record.install_id || installId(envelope),
@@ -356,6 +435,7 @@ function buildDigestEnvelope(entries, env, reason) {
       app: first.client?.app || "opencode-gemini-bridge",
     },
     records,
+    actionableRecordCount: records.filter(isActionableRecord).length,
     limits: {
       maxDigestRecords: digestMaxRecords(env),
       maxBodyBytes: Number(env.MAX_BODY_BYTES || DEFAULT_MAX_BODY_BYTES),
@@ -375,9 +455,12 @@ function normalizeProblemText(value) {
 }
 
 function severityOf(record) {
-  if (record.outcome === "fail" || record.status === "failed" || Number(record.exitCode || 0) !== 0) return "high";
+  const status = String(record.status || "").toLowerCase();
+  const outcome = String(record.outcome || "").toLowerCase();
+  const isWarn = status === "completed_with_warnings" || outcome === "warn";
+  if (outcome === "fail" || status === "failed" || (Number(record.exitCode || 0) !== 0 && !isWarn)) return "high";
   if (record.rootCauseCode === "setup_test" || record.workflow === "telemetry") return "low";
-  if (record.outcome === "warn" || record.status === "completed_with_warnings" || record.warnings.length || record.rootCauseCode) return "medium";
+  if (outcome === "warn" || status === "completed_with_warnings" || record.warnings.length || record.rootCauseCode) return "medium";
   return "low";
 }
 
@@ -416,8 +499,15 @@ function groupProblems(records) {
         nextAction: record.recoveryCommand || "",
         firstAt: record.recordedAt || "",
         lastAt: record.recordedAt || "",
+        latest: record,
+        sampleCounts: record.counts.slice(0, 8),
+        sampleProjects: record.projectLabel ? [record.projectLabel] : [],
+        sampleSignals: record.automationSignals.slice(0, 4),
         sampleWarnings: record.warnings.slice(0, 2),
         sampleErrors: record.errors.slice(0, 2),
+        samplePaths: record.relevantPaths.slice(0, 6),
+        sampleRequiredInputs: record.requiredInputs.slice(0, 6),
+        sampleDiagnosticSnippets: record.diagnosticSnippets.slice(0, 3),
       });
       continue;
     }
@@ -426,23 +516,121 @@ function groupProblems(records) {
     if (severityRank(severity) > severityRank(existing.severity)) existing.severity = severity;
     if (!existing.nextAction && record.recoveryCommand) existing.nextAction = record.recoveryCommand;
     if (record.recordedAt && (!existing.firstAt || record.recordedAt < existing.firstAt)) existing.firstAt = record.recordedAt;
-    if (record.recordedAt && (!existing.lastAt || record.recordedAt > existing.lastAt)) existing.lastAt = record.recordedAt;
+    if (record.recordedAt && (!existing.lastAt || record.recordedAt > existing.lastAt)) {
+      existing.lastAt = record.recordedAt;
+      existing.latest = record;
+    }
+    for (const count of record.counts) {
+      const fingerprint = `${count.key}=${count.value}`;
+      if (existing.sampleCounts.length < 8 && !existing.sampleCounts.some((item) => `${item.key}=${item.value}` === fingerprint)) existing.sampleCounts.push(count);
+    }
+    if (record.projectLabel && existing.sampleProjects.length < 3 && !existing.sampleProjects.includes(record.projectLabel)) existing.sampleProjects.push(record.projectLabel);
+    for (const signal of record.automationSignals) if (existing.sampleSignals.length < 4 && !existing.sampleSignals.includes(signal)) existing.sampleSignals.push(signal);
     for (const warning of record.warnings) if (existing.sampleWarnings.length < 2 && !existing.sampleWarnings.includes(warning)) existing.sampleWarnings.push(warning);
     for (const error of record.errors) if (existing.sampleErrors.length < 2 && !existing.sampleErrors.includes(error)) existing.sampleErrors.push(error);
+    for (const path of record.relevantPaths) if (existing.samplePaths.length < 6 && !existing.samplePaths.includes(path)) existing.samplePaths.push(path);
+    for (const input of record.requiredInputs) if (existing.sampleRequiredInputs.length < 6 && !existing.sampleRequiredInputs.includes(input)) existing.sampleRequiredInputs.push(input);
+    for (const snippet of record.diagnosticSnippets) if (existing.sampleDiagnosticSnippets.length < 3 && !existing.sampleDiagnosticSnippets.includes(snippet)) existing.sampleDiagnosticSnippets.push(snippet);
   }
   return [...groups.values()].sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || b.count - a.count || a.label.localeCompare(b.label));
 }
 
-function digestText(envelope, records) {
+function formatCounts(counts) {
+  return counts.map((count) => `${count.key}=${count.value}`).join(", ");
+}
+
+function latestSummary(record) {
+  if (!record) return "";
+  const status = record.outcome && record.outcome !== record.status ? `${record.status}/${record.outcome}` : record.status || record.outcome || "unknown";
+  const exit = Number.isFinite(Number(record.exitCode)) ? `exit=${record.exitCode}` : "";
+  const version = record.appVersion ? `app=${record.appVersion}` : "";
+  return [record.workflow, status, exit, version].filter(Boolean).join(" ");
+}
+
+function htmlProblemDetails(group) {
+  const details = [escapeHtml(group.label)];
+  if (group.code && group.code !== "unknown") details.push(`<br><code>${escapeHtml(group.code)}</code>`);
+  if (group.firstAt || group.lastAt) details.push(`<br><small>Window: ${escapeHtml(group.firstAt || "?")} -&gt; ${escapeHtml(group.lastAt || "?")}</small>`);
+  if (group.sampleProjects.length) details.push(`<br><small>Scope: ${escapeHtml(group.sampleProjects.join("; "))}</small>`);
+  if (group.sampleSignals.length) details.push(`<br><small>Signals: ${escapeHtml(group.sampleSignals.join(", "))}</small>`);
+  if (group.sampleCounts.length) details.push(`<br><small>Counts: ${escapeHtml(formatCounts(group.sampleCounts))}</small>`);
+  if (group.samplePaths.length) details.push(`<br><small>Paths: ${escapeHtml(group.samplePaths.join("; "))}</small>`);
+  if (group.sampleRequiredInputs.length) details.push(`<br><small>Required inputs: ${escapeHtml(group.sampleRequiredInputs.join(", "))}</small>`);
+  if (latestSummary(group.latest)) details.push(`<br><small>Latest: ${escapeHtml(latestSummary(group.latest))}</small>`);
+  for (const warning of group.sampleWarnings) details.push(`<br><small>Warning: ${escapeHtml(warning)}</small>`);
+  for (const error of group.sampleErrors) details.push(`<br><small>Error: ${escapeHtml(error)}</small>`);
+  for (const snippet of group.sampleDiagnosticSnippets) details.push(`<br><small>Snippet: ${escapeHtml(snippet)}</small>`);
+  return details.join("");
+}
+
+function recordTimelineLine(record, index) {
+  const status = record.outcome && record.outcome !== record.status ? `${record.status}/${record.outcome}` : record.status || record.outcome || "unknown";
+  const bits = [
+    `${index + 1}. ${record.workflow || "workflow"} ${status}`,
+    `severity=${severityOf(record)}`,
+    `exit=${record.exitCode}`,
+    record.phase ? `phase=${record.phase}` : "",
+    record.durationMs ? `durationMs=${record.durationMs}` : "",
+    record.recordedAt ? `at=${record.recordedAt}` : "",
+  ].filter(Boolean);
+  return bits.join(" ");
+}
+
+function appendRecordDetails(lines, record, index) {
+  lines.push(recordTimelineLine(record, index));
+  if (record.rootCauseCode && record.rootCauseCode !== "no_issue_detected") lines.push(`   Cause: ${record.rootCauseCode} - ${record.rootCauseLabel}`);
+  else if (record.rootCauseLabel) lines.push(`   Cause: ${record.rootCauseLabel}`);
+  if (record.recoveryCommand) lines.push(`   Next: ${record.recoveryCommand}`);
+  if (record.projectLabel) lines.push(`   Project: ${record.projectLabel}${record.projectPathHash ? ` (${record.projectPathHash})` : ""}`);
+  if (record.command) lines.push(`   Command: ${record.command}`);
+  if (record.source) lines.push(`   Source: ${record.source}`);
+  if (record.appVersion) lines.push(`   App version: ${record.appVersion}`);
+  if (record.installId) lines.push(`   Install: ${record.installId}`);
+  if (record.sourceEnvelopeId) lines.push(`   Source envelope: ${record.sourceEnvelopeId}`);
+  if (record.automationSignals.length) lines.push(`   Automation: ${record.automationSignals.join(", ")}`);
+  if (record.counts.length) lines.push(`   Counts: ${formatCounts(record.counts)}`);
+  if (record.relevantPaths.length) lines.push(`   Paths: ${record.relevantPaths.join("; ")}`);
+  if (record.pathHashes.length) lines.push(`   Path hashes: ${formatCounts(record.pathHashes)}`);
+  if (record.requiredInputs.length) lines.push(`   Required inputs: ${record.requiredInputs.join(", ")}`);
+  if (record.signals.length) lines.push(`   Signals: ${record.signals.join(", ")}`);
+  for (const warning of record.warnings) lines.push(`   Warning: ${warning}`);
+  for (const error of record.errors) lines.push(`   Error: ${error}`);
+  for (const snippet of record.diagnosticSnippets) lines.push(`   Snippet: ${snippet}`);
+}
+
+function envelopeMetaLines(envelope, records, actionableRecords) {
+  const client = envelope.client && typeof envelope.client === "object" ? envelope.client : {};
+  const payloadLevels = envelope.payloadLevels || envelope.payload_levels;
+  return [
+    `Actionable runs: ${actionableRecords.length}`,
+    `Total runs in email: ${records.length}`,
+    `Problems: ${groupProblems(actionableRecords).length}`,
+    `Generated: ${generatedAt(envelope)}`,
+    envelope.digest ? `Digest reason: ${envelope.digestReason || envelope.digest_reason || ""}` : "",
+    envelope.digest ? `Digest window: ${envelope.digestWindowMinutes || envelope.digest_window_minutes || ""} min` : "",
+    envelope.sourceEnvelopeCount || envelope.source_envelope_count ? `Source envelopes: ${envelope.sourceEnvelopeCount || envelope.source_envelope_count}` : "",
+    Array.isArray(envelope.installIds || envelope.install_ids) ? `Install IDs: ${(envelope.installIds || envelope.install_ids).join(", ")}` : `Install ID: ${installId(envelope)}`,
+    payloadLevels && typeof payloadLevels === "object" ? `Payload levels: ${formatCounts(objectEntries(payloadLevels, 12))}` : `Payload level: ${payloadLevel(envelope)}`,
+    client.app ? `Client: ${client.app}${client.appVersion || client.app_version ? ` ${client.appVersion || client.app_version}` : ""}` : "",
+    client.platform || client.arch || client.node ? `Runtime: ${[client.platform, client.arch, client.node ? `node=${client.node}` : ""].filter(Boolean).join(" ")}` : "",
+    envelope.truncated ? "Envelope was truncated before email rendering." : "",
+  ].filter(Boolean);
+}
+
+function stringifyRichJson(value) {
+  const json = JSON.stringify(value, null, 2);
+  if (json.length <= DEFAULT_MAX_EMAIL_JSON_CHARS) return json;
+  return `${json.slice(0, DEFAULT_MAX_EMAIL_JSON_CHARS)}\n... truncated at ${DEFAULT_MAX_EMAIL_JSON_CHARS} chars for email size ...`;
+}
+
+function digestText(envelope, records, allRecords, envelopeJson) {
   const groups = groupProblems(records);
   const severityCounts = Object.fromEntries(countBy(groups, (group) => group.severity));
   const lines = [
     envelope.digest ? "OGB actionable telemetry digest" : "OGB actionable telemetry",
     "",
-    `Actionable runs: ${records.length}`,
-    `Problems: ${groups.length}`,
+    ...envelopeMetaLines(envelope, allRecords, records),
     `Severity: high=${severityCounts.high || 0}, medium=${severityCounts.medium || 0}, low=${severityCounts.low || 0}`,
-    `Generated: ${generatedAt(envelope)}`,
     "",
     "Problems",
     "",
@@ -453,31 +641,75 @@ function digestText(envelope, records) {
     lines.push(`  Workflows: ${[...group.workflows].sort().join(", ")}`);
     if (group.nextAction) lines.push(`  Next: ${group.nextAction}`);
     if (group.firstAt || group.lastAt) lines.push(`  Window: ${group.firstAt || "?"} -> ${group.lastAt || "?"}`);
+    if (group.sampleProjects.length) lines.push(`  Scope: ${group.sampleProjects.join("; ")}`);
+    if (group.sampleSignals.length) lines.push(`  Signals: ${group.sampleSignals.join(", ")}`);
+    if (group.sampleCounts.length) lines.push(`  Counts: ${formatCounts(group.sampleCounts)}`);
+    if (group.samplePaths.length) lines.push(`  Paths: ${group.samplePaths.join("; ")}`);
+    if (group.sampleRequiredInputs.length) lines.push(`  Required inputs: ${group.sampleRequiredInputs.join(", ")}`);
+    if (latestSummary(group.latest)) lines.push(`  Latest: ${latestSummary(group.latest)}`);
     for (const warning of group.sampleWarnings) lines.push(`  Warning sample: ${warning}`);
     for (const error of group.sampleErrors) lines.push(`  Error sample: ${error}`);
+    for (const snippet of group.sampleDiagnosticSnippets) lines.push(`  Snippet sample: ${snippet}`);
   }
   if (groups.length > 12) lines.push("", `...${groups.length - 12} more problem group(s) omitted.`);
+  lines.push("", "Run Timeline", "");
+  allRecords.slice(0, 40).forEach((record, index) => appendRecordDetails(lines, record, index));
+  if (allRecords.length > 40) lines.push("", `...${allRecords.length - 40} more run(s) omitted from timeline.`);
+  lines.push("", "Sanitized Envelope JSON", "");
+  lines.push(envelopeJson);
   lines.push("", "Debug");
   lines.push("Run `ogb telemetry preview --since 24h` on the affected machine for full local context.");
   return lines.join("\n");
 }
 
-function digestHtml(envelope, records) {
+function htmlRecordDetails(record, index) {
+  const details = [`<strong>${escapeHtml(recordTimelineLine(record, index))}</strong>`];
+  if (record.rootCauseCode && record.rootCauseCode !== "no_issue_detected") details.push(`<br><small>Cause: ${escapeHtml(`${record.rootCauseCode} - ${record.rootCauseLabel}`)}</small>`);
+  else if (record.rootCauseLabel) details.push(`<br><small>Cause: ${escapeHtml(record.rootCauseLabel)}</small>`);
+  if (record.recoveryCommand) details.push(`<br><small>Next: ${escapeHtml(record.recoveryCommand)}</small>`);
+  if (record.projectLabel) details.push(`<br><small>Project: ${escapeHtml(record.projectLabel)}${record.projectPathHash ? ` (${escapeHtml(record.projectPathHash)})` : ""}</small>`);
+  if (record.command) details.push(`<br><small>Command: ${escapeHtml(record.command)}</small>`);
+  if (record.source) details.push(`<br><small>Source: ${escapeHtml(record.source)}</small>`);
+  if (record.appVersion) details.push(`<br><small>App version: ${escapeHtml(record.appVersion)}</small>`);
+  if (record.installId) details.push(`<br><small>Install: ${escapeHtml(record.installId)}</small>`);
+  if (record.sourceEnvelopeId) details.push(`<br><small>Source envelope: ${escapeHtml(record.sourceEnvelopeId)}</small>`);
+  if (record.automationSignals.length) details.push(`<br><small>Automation: ${escapeHtml(record.automationSignals.join(", "))}</small>`);
+  if (record.counts.length) details.push(`<br><small>Counts: ${escapeHtml(formatCounts(record.counts))}</small>`);
+  if (record.relevantPaths.length) details.push(`<br><small>Paths: ${escapeHtml(record.relevantPaths.join("; "))}</small>`);
+  if (record.pathHashes.length) details.push(`<br><small>Path hashes: ${escapeHtml(formatCounts(record.pathHashes))}</small>`);
+  if (record.requiredInputs.length) details.push(`<br><small>Required inputs: ${escapeHtml(record.requiredInputs.join(", "))}</small>`);
+  if (record.signals.length) details.push(`<br><small>Signals: ${escapeHtml(record.signals.join(", "))}</small>`);
+  for (const warning of record.warnings) details.push(`<br><small>Warning: ${escapeHtml(warning)}</small>`);
+  for (const error of record.errors) details.push(`<br><small>Error: ${escapeHtml(error)}</small>`);
+  for (const snippet of record.diagnosticSnippets) details.push(`<br><small>Snippet: ${escapeHtml(snippet)}</small>`);
+  return details.join("");
+}
+
+function digestHtml(envelope, records, allRecords, envelopeJson) {
   const groups = groupProblems(records);
   const rows = groups.slice(0, 20).map((group) => (
-    `<tr><td>${escapeHtml(String(group.count))}x</td><td>${escapeHtml(group.severity)}</td><td>${escapeHtml(group.label)}${group.code && group.code !== "unknown" ? `<br><code>${escapeHtml(group.code)}</code>` : ""}</td><td>${escapeHtml([...group.workflows].sort().join(", "))}</td><td>${escapeHtml(group.nextAction || "")}</td></tr>`
+    `<tr><td>${escapeHtml(String(group.count))}x</td><td>${escapeHtml(group.severity)}</td><td>${htmlProblemDetails(group)}</td><td>${escapeHtml([...group.workflows].sort().join(", "))}</td><td>${escapeHtml(group.nextAction || "")}</td></tr>`
+  )).join("");
+  const meta = envelopeMetaLines(envelope, allRecords, records).map((line) => `<li>${escapeHtml(line)}</li>`).join("");
+  const timelineRows = allRecords.slice(0, 40).map((record, index) => (
+    `<tr><td>${escapeHtml(String(index + 1))}</td><td>${htmlRecordDetails(record, index)}</td></tr>`
   )).join("");
   return `<!doctype html>
 <html>
   <body style="font-family: -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif; color: #1f2937;">
     <h2>OGB actionable telemetry${envelope.digest ? " digest" : ""}</h2>
-    <p><strong>Actionable runs:</strong> ${records.length}</p>
-    <p><strong>Problems:</strong> ${groups.length}</p>
-    <p><strong>Generated:</strong> ${escapeHtml(generatedAt(envelope))}</p>
+    <ul>${meta}</ul>
     <table cellpadding="6" cellspacing="0" border="1" style="border-collapse: collapse;">
       <thead><tr><th>Count</th><th>Severity</th><th>Problem</th><th>Workflows</th><th>Next action</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
+    <h3>Run Timeline</h3>
+    <table cellpadding="6" cellspacing="0" border="1" style="border-collapse: collapse;">
+      <thead><tr><th>#</th><th>Run</th></tr></thead>
+      <tbody>${timelineRows}</tbody>
+    </table>
+    <h3>Sanitized Envelope JSON</h3>
+    <pre style="white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;">${escapeHtml(envelopeJson)}</pre>
     <p style="color: #6b7280;">For full local context, run <code>ogb telemetry preview --since 24h</code> on the affected machine.</p>
   </body>
 </html>`;
@@ -485,16 +717,20 @@ function digestHtml(envelope, records) {
 
 function renderEmail(envelope) {
   const safeEnvelope = sanitizeForEmail(envelope);
-  const records = (safeEnvelope.records || []).filter(isActionableRecord).map(compactRecord);
+  const safeRecords = Array.isArray(safeEnvelope.records) ? safeEnvelope.records : [];
+  const records = safeRecords.filter(isActionableRecord).map(compactRecord);
+  const allRecords = safeRecords.map(compactRecord);
   const groups = groupProblems(records);
   const severity = groups.reduce((current, group) => severityRank(group.severity) > severityRank(current) ? group.severity : current, "low");
   const digestLabel = safeEnvelope.digest ? "[digest]" : "";
   const focus = groups.slice(0, 3).map((group) => group.label).join(", ") || "no actionable issues";
+  const envelopeJson = stringifyRichJson(safeEnvelope);
   return {
     subject: `[OGB]${digestLabel}[${severity}] ${groups.length} issue(s): ${focus}`.slice(0, 180),
-    text: digestText(safeEnvelope, records),
-    html: digestHtml(safeEnvelope, records),
+    text: digestText(safeEnvelope, records, allRecords, envelopeJson),
+    html: digestHtml(safeEnvelope, records, allRecords, envelopeJson),
     actionableCount: records.length,
+    recordCount: allRecords.length,
     problemCount: groups.length,
   };
 }
@@ -551,7 +787,8 @@ async function acceptWorkflowRuns(request, env) {
       ok: true,
       queued: true,
       accepted: parsed.body.records.length,
-      actionable: actionable.records.length,
+      actionable: actionable.actionableRecordCount || 0,
+      records: actionable.records.length,
       bufferKey: key,
       digestWindowMinutes: digestWindowMinutes(env),
       schema: OGB_ENVELOPE_SCHEMA,
@@ -564,7 +801,8 @@ async function acceptWorkflowRuns(request, env) {
     ok: true,
     queued: false,
     accepted: parsed.body.records.length,
-    actionable: actionable.records.length,
+    actionable: email.actionableCount,
+    records: email.recordCount,
     subject: email.subject,
     schema: OGB_ENVELOPE_SCHEMA,
   });
@@ -594,6 +832,7 @@ async function flushDigest(env, reason = "manual") {
       reason,
       envelopeCount: entries.length,
       records: digestEnvelope.records.length,
+      actionableRecords: email.actionableCount,
       subject: email.subject,
     };
   } catch (error) {
@@ -604,6 +843,7 @@ async function flushDigest(env, reason = "manual") {
       detail: String(error instanceof Error ? error.message : error).slice(0, 500),
       bufferedEnvelopes: entries.length,
       records: digestEnvelope.records.length,
+      actionableRecords: email.actionableCount,
     };
   }
 }
@@ -655,18 +895,18 @@ function redactText(value) {
     .replace(/\b(api[_-]?key|token|secret|password|authorization|bearer|cookie)(\s*[:=]\s*)(["']?)[^\s"',}]+/gi, "$1$2[redacted]")
     .replace(/https?:\/\/[^\s)>"]+/g, (match) => match.replace(/\?[^)\s>"]+/g, "?[redacted]"))
     .replace(/\b[A-Za-z0-9_=-]{36,}\b/g, "[redacted-token]")
-    .slice(0, 4000);
+    .slice(0, 12000);
 }
 
 function sanitizeForEmail(value, depth = 0) {
-  if (depth > 8) return "[max-depth]";
-  if (Array.isArray(value)) return value.slice(0, 100).map((item) => sanitizeForEmail(item, depth + 1));
+  if (depth > 12) return "[max-depth]";
+  if (Array.isArray(value)) return value.slice(0, 300).map((item) => sanitizeForEmail(item, depth + 1));
   if (value && typeof value === "object") {
     const out = {};
-    for (const [key, item] of Object.entries(value).slice(0, 120)) {
+    for (const [key, item] of Object.entries(value).slice(0, 300)) {
       const lower = key.toLowerCase();
       if (/(token|secret|password|authorization|cookie|apikey|api_key)/.test(lower)) out[key] = "[redacted]";
-      else if (/^(content|markdown|html|raw_chat|note_text|prompt|instructions)$/i.test(key) && typeof item === "string") out[key] = redactText(item).slice(0, 800);
+      else if (/^(content|markdown|html|raw_chat|note_text|prompt|instructions)$/i.test(key) && typeof item === "string") out[key] = redactText(item).slice(0, 4000);
       else out[key] = sanitizeForEmail(item, depth + 1);
     }
     return out;

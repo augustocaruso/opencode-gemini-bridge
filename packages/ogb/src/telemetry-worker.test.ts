@@ -213,7 +213,22 @@ test("telemetry email worker sends immediate email without KV", async () => {
     const response = await worker.fetch(request("/v1/telemetry/workflow-runs", {
       method: "POST",
       headers: { authorization: "Bearer secret" },
-      body: JSON.stringify(envelope()),
+      body: JSON.stringify(envelope([
+        actionableRecord({
+          payloadSummary: {
+            counts: { "telemetry.outboxCount": 2, "doctor.warnings": 1 },
+            warnings: [
+              "opencode-auto-fallback is enabled in OGB config, but the OpenCode plugin is not active.",
+              "api_key=open-secret-value",
+            ],
+            errors: [],
+            relevantPaths: ["~/.config/opencode/opencode.jsonc", ".opencode/generated/opencode.generated.json"],
+            pathHashes: { "~/.config/opencode/opencode.jsonc": "hash-1" },
+          },
+          diagnosticSnippets: ["Plugin was configured but not visible in opencode debug info."],
+          extra: { authToken: "open-secret-token" },
+        }),
+      ])),
     }), {
       OGB_TELEMETRY_TOKEN: "secret",
       RESEND_API_KEY: "resend-secret",
@@ -227,9 +242,14 @@ test("telemetry email worker sends immediate email without KV", async () => {
     assert.equal(body.actionable, 1);
     assert.equal(sent.length, 1);
     assert.match(sent[0].subject, /\[OGB\]\[medium\] 1 issue\(s\): Plugin OpenCode configurado mas inativo/);
-    assert.doesNotMatch(sent[0].text, /Envelope JSON/);
-    assert.doesNotMatch(sent[0].text, /"schema"/);
-    assert.doesNotMatch(sent[0].html, /<pre/);
+    assert.match(sent[0].text, /Sanitized Envelope JSON/);
+    assert.match(sent[0].text, /"schema"/);
+    assert.match(sent[0].text, /telemetry\.outboxCount/);
+    assert.match(sent[0].text, /Plugin was configured but not visible/);
+    assert.match(sent[0].text, /\.opencode\/generated\/opencode\.generated\.json/);
+    assert.match(sent[0].html, /<pre/);
+    assert.doesNotMatch(sent[0].text, /open-secret-value/);
+    assert.doesNotMatch(sent[0].text, /open-secret-token/);
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -414,8 +434,74 @@ test("telemetry email worker groups repeated fingerprints in digest subject and 
     assert.equal(sent.length, 1);
     assert.match(sent[0].subject, /\[OGB\]\[digest\]\[medium\] 1 issue\(s\): Plugin OpenCode configurado mas inativo/);
     assert.match(sent[0].text, /2x \[medium\] Plugin OpenCode configurado mas inativo/);
-    assert.doesNotMatch(sent[0].text, /sync: pass/);
-    assert.doesNotMatch(sent[0].text, /Envelope JSON/);
+    assert.match(sent[0].text, /sync completed\/pass/);
+    assert.match(sent[0].text, /Sanitized Envelope JSON/);
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("telemetry email worker keeps warning exit codes out of high failure digests", async () => {
+  const worker = await loadWorker();
+  const kv = new MemoryKv();
+  const previousFetch = globalThis.fetch;
+  const sent: Array<any> = [];
+  globalThis.fetch = (async (_url, init) => {
+    sent.push(JSON.parse(String(init?.body || "{}")));
+    return new Response('{"id":"email_1"}', { status: 200 });
+  }) as typeof fetch;
+  try {
+    await worker.fetch(request("/v1/telemetry/workflow-runs", {
+      method: "POST",
+      headers: { authorization: "Bearer secret" },
+      body: JSON.stringify(envelope([
+        actionableRecord({
+          runId: "run-check-warn",
+          workflow: "check",
+          status: "completed_with_warnings",
+          outcome: "warn",
+          exitCode: 1,
+          recordedAt: "2026-05-08T05:33:23.399Z",
+          project: { label: "tmp/ogb-smoke.abc123", pathHash: "hash-1" },
+          environmentContext: { appVersion: "0.1.8", automationSignals: ["codex"] },
+          diagnosticContext: {
+            rootCauseCode: "workflow_warn",
+            rootCauseLabel: "Check terminou com avisos",
+            recoveryCommand: "Rode ogb check --json para ver os proximos passos.",
+          },
+          payloadSummary: {
+            counts: {
+              "doctor.warnings": 8,
+              "doctor.errors": 0,
+            },
+            warnings: [],
+            errors: [],
+          },
+        }),
+      ])),
+    }), { OGB_TELEMETRY_TOKEN: "secret", TELEMETRY_BUFFER: kv });
+
+    const response = await worker.fetch(request("/v1/telemetry/digest/send", {
+      method: "POST",
+      headers: { authorization: "Bearer secret" },
+    }), {
+      OGB_TELEMETRY_TOKEN: "secret",
+      TELEMETRY_BUFFER: kv,
+      RESEND_API_KEY: "resend-secret",
+      RESEND_FROM: "ogb@example.test",
+      RESEND_TO: "maintainer@example.test",
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].subject, /\[OGB\]\[digest\]\[medium\] 1 issue\(s\): Check terminou com avisos/);
+    assert.doesNotMatch(sent[0].subject, /high/);
+    assert.doesNotMatch(sent[0].text, /Check falhou/);
+    assert.match(sent[0].text, /Next: Rode ogb check --json para ver os proximos passos\./);
+    assert.match(sent[0].text, /Scope: tmp\/ogb-smoke\.abc123/);
+    assert.match(sent[0].text, /Signals: codex/);
+    assert.match(sent[0].text, /Counts: doctor\.warnings=8/);
+    assert.match(sent[0].text, /Latest: check completed_with_warnings\/warn exit=1 app=0\.1\.8/);
   } finally {
     globalThis.fetch = previousFetch;
   }

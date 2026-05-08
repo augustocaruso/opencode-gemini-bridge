@@ -151,9 +151,30 @@ O registry inclui `medical-notes-workbench-pre-update-snapshot`.
 
 Regra:
 
-- sem drift local: o patch retorna `skipped` e o update continua;
+- sem drift local relevante: o patch retorna `skipped` e o update continua;
+- drift apenas em metadados/ruido de instalacao, como
+  `.gemini-extension-install.json`: o patch retorna `skipped`, registra o
+  caminho como ignorado na mensagem e o update continua;
 - com drift e snapshot OK: o snapshot e gravado e o update continua;
 - com drift e snapshot falhou: o patch retorna `failed`, e por ser `required`, o update de Gemini Extensions fica `blocked`.
+- com drift relevante detectado mas sem diff/script util capturado: o patch
+  retorna `failed` e bloqueia o update.
+
+Para evitar snapshots vazios ou ruidosos, o patch so considera arquivos
+allowlisted da extensao:
+
+- `GEMINI.md`
+- `commands/`
+- `skills/`
+- `agents/`
+- `knowledge/`
+- `hooks/`
+- `scripts/`
+- `src/`
+- `docs/`
+
+Arquivos `.env*`, `telemetry.defaults.json` e metadados de instalacao ficam
+fora do snapshot.
 
 O snapshot persistente e gravado fora da pasta da extensao:
 
@@ -177,9 +198,19 @@ O snapshot persistente e gravado fora da pasta da extensao:
 - `git_head`
 - `changed_path_count`
 - `untracked_path_count`
+- `ignored_path_count`
+- `changed_paths`
+- `untracked_paths`
+- `ignored_paths`
+- `snapshot_useful`
 - `generated_scripts`
 
-Os diffs tracked/staged usam `git diff --binary`. O diff de untracked concatena diffs `git diff --binary --no-index` para preservar conteudo novo antes do update.
+Os diffs tracked/staged usam `git diff --binary` limitado a allowlist acima.
+O diff de untracked concatena diffs `git diff --binary --no-index` para
+preservar conteudo novo antes do update. Scripts operacionais allowlisted com
+extensao `.py`, `.js`, `.mjs`, `.cjs`, `.sh`, `.ps1` ou `.cmd` tambem entram em
+`generated_scripts` com linguagem, tamanho e conteudo quando estiverem abaixo do
+limite de captura.
 
 ## Como adicionar um patch
 

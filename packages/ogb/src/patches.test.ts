@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import {
   PATCH_STATE_SCHEMA,
+  OGB_PATCHES,
   defineNativeScriptPatch,
   runPatchesForPhase,
   runBeforeGeminiExtensionUpdatePatches,
@@ -27,6 +28,12 @@ function hasGit(): boolean {
 function git(cwd: string, args: string[]): void {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
   assert.equal(result.status, 0, `${args.join(" ")}\n${result.stderr}`);
+}
+
+function gitOutput(cwd: string, args: string[]): string {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  assert.equal(result.status, 0, `${args.join(" ")}\n${result.stderr}`);
+  return result.stdout;
 }
 
 function patch(overrides: Partial<OgbPatch> & Pick<OgbPatch, "id" | "phase" | "run">): OgbPatch {
@@ -179,6 +186,89 @@ test("native script patches run through the shared native command runner", () =>
   assert.match(report.results[0]?.stdoutTail ?? "", /native ok/);
 });
 
+test("medical notes pre-update snapshot ignores installer metadata drift", { skip: !hasGit() }, () => {
+  const homeDir = tempRoot();
+  const extensionPath = path.join(homeDir, ".gemini", "extensions", "medical-notes-workbench");
+  fs.mkdirSync(path.join(extensionPath, "docs"), { recursive: true });
+  fs.writeFileSync(path.join(extensionPath, "gemini-extension.json"), JSON.stringify({ name: "medical-notes-workbench", version: "0.3.10" }), "utf8");
+  fs.writeFileSync(path.join(extensionPath, "GEMINI.md"), "baseline\n", "utf8");
+  git(extensionPath, ["init"]);
+  git(extensionPath, ["config", "user.email", "test@example.com"]);
+  git(extensionPath, ["config", "user.name", "Test"]);
+  git(extensionPath, ["add", "gemini-extension.json", "GEMINI.md"]);
+  git(extensionPath, ["commit", "-m", "baseline"]);
+  fs.writeFileSync(path.join(extensionPath, ".gemini-extension-install.json"), "{}\n", "utf8");
+
+  const report = runBeforeGeminiExtensionUpdatePatches({
+    projectRoot: homeDir,
+    homeDir,
+    registry: OGB_PATCHES,
+    extension: {
+      name: "medical-notes-workbench",
+      extensionPath,
+      manifestPath: path.join(extensionPath, "gemini-extension.json"),
+      currentVersion: "0.3.10",
+    },
+  });
+
+  assert.equal(report.outcome, "skipped");
+  assert.equal(report.results[0]?.status, "skipped");
+  assert.match(report.results[0]?.message ?? "", /no allowlisted local drift/i);
+  assert.equal(fs.existsSync(path.join(homeDir, ".gemini", "medical-notes-workbench", "feedback", "pre-update-snapshots")), false);
+});
+
+test("medical notes pre-update snapshot captures allowlisted diffs and scripts", { skip: !hasGit() }, () => {
+  const homeDir = tempRoot();
+  const extensionPath = path.join(homeDir, ".gemini", "extensions", "medical-notes-workbench");
+  fs.mkdirSync(path.join(extensionPath, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(extensionPath, "gemini-extension.json"), JSON.stringify({ name: "medical-notes-workbench", version: "0.3.10" }), "utf8");
+  fs.writeFileSync(path.join(extensionPath, "scripts", "baseline.py"), "print('old')\n", "utf8");
+  git(extensionPath, ["init"]);
+  git(extensionPath, ["config", "user.email", "test@example.com"]);
+  git(extensionPath, ["config", "user.name", "Test"]);
+  git(extensionPath, ["add", "gemini-extension.json", "scripts/baseline.py"]);
+  git(extensionPath, ["commit", "-m", "baseline"]);
+  fs.writeFileSync(path.join(extensionPath, "scripts", "baseline.py"), "print('patched before update')\n", "utf8");
+  fs.writeFileSync(path.join(extensionPath, "scripts", "agent_hotfix.py"), "print('agent hotfix')\n", "utf8");
+  fs.writeFileSync(path.join(extensionPath, ".gemini-extension-install.json"), "{}\n", "utf8");
+  const head = gitOutput(extensionPath, ["rev-parse", "HEAD"]).trim();
+
+  const report = runBeforeGeminiExtensionUpdatePatches({
+    projectRoot: homeDir,
+    homeDir,
+    registry: OGB_PATCHES,
+    now: new Date("2026-05-08T12:00:00.000Z"),
+    extension: {
+      name: "medical-notes-workbench",
+      extensionPath,
+      manifestPath: path.join(extensionPath, "gemini-extension.json"),
+      currentVersion: "0.3.10",
+      currentRef: "gemini-cli-extension",
+    },
+  });
+  const snapshotRoot = path.join(homeDir, ".gemini", "medical-notes-workbench", "feedback", "pre-update-snapshots");
+  const snapshotDir = fs.readdirSync(snapshotRoot).map((entry) => path.join(snapshotRoot, entry))[0]!;
+  const snapshot = JSON.parse(fs.readFileSync(path.join(snapshotDir, "snapshot.json"), "utf8"));
+  const trackedDiff = fs.readFileSync(path.join(snapshotDir, "tracked.diff"), "utf8");
+  const untrackedDiff = fs.readFileSync(path.join(snapshotDir, "untracked.diff"), "utf8");
+
+  assert.equal(report.outcome, "pass");
+  assert.equal(report.results[0]?.status, "applied");
+  assert.match(trackedDiff, /patched before update/);
+  assert.match(untrackedDiff, /agent hotfix/);
+  assert.equal(snapshot.current_version, "0.3.10");
+  assert.equal(snapshot.git_head, head);
+  assert.equal(snapshot.changed_path_count, 1);
+  assert.equal(snapshot.untracked_path_count, 1);
+  assert.equal(snapshot.ignored_path_count, 1);
+  assert.equal(snapshot.snapshot_useful, true);
+  assert.deepEqual(snapshot.changed_paths, ["scripts/baseline.py"]);
+  assert.deepEqual(snapshot.untracked_paths, ["scripts/agent_hotfix.py"]);
+  assert.deepEqual(snapshot.ignored_paths, [".gemini-extension-install.json"]);
+  assert.equal(snapshot.generated_scripts.length, 2);
+  assert.match(snapshot.generated_scripts[0].content, /patched before update|agent hotfix/);
+});
+
 test("patch phases emit progress events with canonical step ids", () => {
   const homeDir = tempRoot();
   const events: RitualProgressEvent[] = [];
@@ -238,19 +328,19 @@ test("patches receive project, platform and command contract in context", () => 
 test("medical-notes-workbench patch snapshots drift before extension update", { skip: !hasGit() }, () => {
   const homeDir = tempRoot();
   const extensionPath = path.join(homeDir, ".gemini", "extensions", "medical-notes-workbench");
-  fs.mkdirSync(extensionPath, { recursive: true });
+  fs.mkdirSync(path.join(extensionPath, "docs"), { recursive: true });
   fs.writeFileSync(path.join(extensionPath, "gemini-extension.json"), JSON.stringify({
     name: "medical-notes-workbench",
     version: "0.3.10",
   }, null, 2), "utf8");
-  fs.writeFileSync(path.join(extensionPath, "notes.md"), "baseline\n", "utf8");
+  fs.writeFileSync(path.join(extensionPath, "docs", "notes.md"), "baseline\n", "utf8");
   git(extensionPath, ["init"]);
   git(extensionPath, ["config", "user.email", "ogb@example.test"]);
   git(extensionPath, ["config", "user.name", "OGB Test"]);
   git(extensionPath, ["add", "."]);
   git(extensionPath, ["commit", "-m", "baseline"]);
-  fs.writeFileSync(path.join(extensionPath, "notes.md"), "baseline\nlocal edit\n", "utf8");
-  fs.writeFileSync(path.join(extensionPath, "untracked.md"), "new local file\n", "utf8");
+  fs.writeFileSync(path.join(extensionPath, "docs", "notes.md"), "baseline\nlocal edit\n", "utf8");
+  fs.writeFileSync(path.join(extensionPath, "docs", "untracked.md"), "new local file\n", "utf8");
 
   const report = runBeforeGeminiExtensionUpdatePatches({
     projectRoot: homeDir,
