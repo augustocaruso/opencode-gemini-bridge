@@ -18,6 +18,13 @@ REPO="${OGB_GITHUB_REPO:-augustocaruso/opencode-gemini-bridge}"
 VERSION="${OGB_RELEASE_VERSION:-latest}"
 INSTALLER_ARGS=()
 
+run_installer() {
+  if [[ "${#INSTALLER_ARGS[@]}" -gt 0 ]]; then
+    exec bash "$INSTALLER" "${INSTALLER_ARGS[@]}"
+  fi
+  exec bash "$INSTALLER"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo)
@@ -73,4 +80,4 @@ if [[ -z "$INSTALLER" ]]; then
 fi
 
 chmod +x "$INSTALLER"
-exec bash "$INSTALLER" "${INSTALLER_ARGS[@]}"
+run_installer

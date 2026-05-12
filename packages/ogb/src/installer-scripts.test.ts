@@ -35,6 +35,8 @@ test("mac installer remains a darwin wrapper around the shared POSIX installer",
 
   assert.match(text, /install-posix\.sh/);
   assert.match(text, /--platform darwin/);
+  assert.match(script("bootstrap-mac.sh"), /run_installer/);
+  assert.match(script("bootstrap-mac.sh"), /\$\{#INSTALLER_ARGS\[@\]\}/);
 });
 
 test("linux public scripts wrap the shared POSIX implementation", () => {
@@ -49,6 +51,9 @@ test("linux public scripts wrap the shared POSIX implementation", () => {
   assert.match(script("bootstrap-linux.sh"), /install-mac\.sh/);
   assert.match(script("bootstrap-linux.sh"), /legacy POSIX installer/);
   assert.match(script("bootstrap-linux.sh"), /opencode-gemini-bridge-pack\.zip/);
+  assert.match(script("bootstrap-linux.sh"), /run_installer/);
+  assert.match(script("bootstrap-linux.sh"), /\$\{#INSTALLER_ARGS_PREFIX\[@\]\}/);
+  assert.match(script("bootstrap-linux.sh"), /\$\{#INSTALLER_ARGS\[@\]\}/);
   assert.match(script("upgrade-linux.sh"), /install-linux\.sh/);
   assert.match(script("uninstall-linux.sh"), /uninstall-posix\.sh/);
 });

@@ -17,6 +17,21 @@ EOF
 REPO="${OGB_GITHUB_REPO:-augustocaruso/opencode-gemini-bridge}"
 VERSION="${OGB_RELEASE_VERSION:-latest}"
 INSTALLER_ARGS=()
+INSTALLER_ARGS_PREFIX=()
+
+run_installer() {
+  local args=()
+  if [[ "${#INSTALLER_ARGS_PREFIX[@]}" -gt 0 ]]; then
+    args+=("${INSTALLER_ARGS_PREFIX[@]}")
+  fi
+  if [[ "${#INSTALLER_ARGS[@]}" -gt 0 ]]; then
+    args+=("${INSTALLER_ARGS[@]}")
+  fi
+  if [[ "${#args[@]}" -gt 0 ]]; then
+    exec bash "$INSTALLER" "${args[@]}"
+  fi
+  exec bash "$INSTALLER"
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -66,7 +81,6 @@ curl -fL "$RELEASE_URL" -o "$TMP_DIR/ogb.zip"
 
 unzip -q "$TMP_DIR/ogb.zip" -d "$TMP_DIR/unpacked"
 INSTALLER="$(find "$TMP_DIR/unpacked" -path '*/scripts/install-linux.sh' -type f | head -n 1)"
-INSTALLER_ARGS_PREFIX=()
 
 if [[ -z "$INSTALLER" ]]; then
   INSTALLER="$(find "$TMP_DIR/unpacked" -path '*/scripts/install-posix.sh' -type f | head -n 1)"
@@ -88,4 +102,4 @@ if [[ -z "$INSTALLER" ]]; then
 fi
 
 chmod +x "$INSTALLER"
-exec bash "$INSTALLER" "${INSTALLER_ARGS_PREFIX[@]}" "${INSTALLER_ARGS[@]}"
+run_installer
