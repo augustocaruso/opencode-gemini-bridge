@@ -90,6 +90,13 @@ export interface SetupUxReport {
   warnings: string[];
 }
 
+export interface GlobalStartupPluginRepair {
+  plugin: SetupUxWrite;
+  config: SetupUxWrite;
+  pluginCheck: ReturnType<typeof checkPluginSyntax>;
+  warnings: string[];
+}
+
 function readJsonc(filePath: string): Record<string, unknown> {
   if (!fs.existsSync(filePath)) return {};
   try {
@@ -483,6 +490,61 @@ function startupCommandPlan(adapter: PlatformAdapter, options: Pick<SetupUxOptio
       includeNpmPrefix: crossPlatformResolution ? false : undefined,
     }) ?? "ogb",
     baseArgs: ["--project", adapter.homeDir],
+  };
+}
+
+export function ensureGlobalStartupPlugin(options: {
+  homeDir?: string;
+  configDir?: string;
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  dryRun?: boolean;
+  profileWriter?: ProfileWriter;
+} = {}): GlobalStartupPluginRepair {
+  const adapter = createPlatformAdapter({
+    platform: options.platform,
+    homeDir: options.homeDir || os.homedir(),
+    env: options.env,
+  });
+  const root = options.configDir
+    ? adapter.resolvePath(options.configDir)
+    : adapter.globalConfigDir;
+  const profileWriter = options.profileWriter ?? createProfileWriter({
+    bridgeConfigDir: adapter.bridgeConfigDir,
+    profileRoot: root,
+    dryRun: options.dryRun,
+    pathApi: adapter.pathApi,
+  });
+  const startupCommand = startupCommandPlan(adapter, options);
+  const pluginPath = adapter.join(root, "plugins", "ogb-startup-sync.js");
+  const configPath = adapter.join(adapter.generatedDir, "ogb-startup-sync.json");
+  const source = ogbStartupPluginSource();
+  const plugin = profileWriter.writeText({
+    filePath: pluginPath,
+    text: source,
+  });
+  const config = profileWriter.writeText({
+    filePath: configPath,
+    text: startupConfigSource({
+      command: startupCommand.command,
+      baseArgs: startupCommand.baseArgs,
+      syncArgs: ["startup-sync"],
+    }),
+  });
+  const pluginCheck = options.dryRun || plugin.status === "protected"
+    ? checkPluginSyntax(undefined, source)
+    : checkPluginSyntax(pluginPath);
+  const warnings: string[] = [];
+  if (!pluginCheck.ok) warnings.push(pluginCheck.message);
+  if (plugin.status === "protected") warnings.push(`${plugin.path} protegido pelo modo mantenedor local; arquivo mantido sem alteracao.`);
+  if (config.status === "protected") warnings.push(`${config.path} protegido pelo modo mantenedor local; arquivo mantido sem alteracao.`);
+  warnings.push(...profileWriter.retention.warnings);
+
+  return {
+    plugin,
+    config,
+    pluginCheck,
+    warnings: [...new Set(warnings)],
   };
 }
 

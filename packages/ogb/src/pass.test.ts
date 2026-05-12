@@ -8,6 +8,9 @@ import { buildInstallerPlan } from "./installer-planner.js";
 import { formatPassReport, runPass, type PassReport } from "./pass.js";
 import type { OgbPatch } from "./patches.js";
 import type { RitualProgressEvent } from "./ritual-progress.js";
+import { STARTUP_SYNC_PLUGIN_SOURCE } from "./setup-opencode.js";
+import { globalStartupPluginSpec } from "./setup-ux.js";
+import { TUI_SIDEBAR_PLUGIN_SOURCE, TUI_SIDEBAR_PLUGIN_SPEC } from "./tui-sidebar.js";
 
 function tempRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ogb-pass-"));
@@ -48,6 +51,34 @@ test("runPass can accept reviewed Gemini hooks and produce a clean doctor", () =
   assert.equal(report.outcome, "pass");
   assert.equal(report.plan.intent, "check");
   assert.equal(report.acceptedHooks.length, 1);
+  assert.equal(doctor.warnings.some((warning) => warning.startsWith("Hook needs review:")), false);
+  process.exitCode = oldExitCode;
+});
+
+test("runPass accepts BeforeTool and BeforeAgent hooks independently", () => {
+  const projectRoot = tempRoot();
+  const oldExitCode = process.exitCode;
+  fs.mkdirSync(path.join(projectRoot, ".gemini"), { recursive: true });
+  fs.writeFileSync(path.join(projectRoot, ".gemini", "settings.json"), JSON.stringify({
+    hooks: {
+      BeforeAgent: [{ command: "echo before-agent" }],
+      BeforeTool: [{ command: "echo before-tool" }],
+    },
+  }, null, 2), "utf8");
+
+  const report = runPass({
+    projectRoot,
+    homeDir: projectRoot,
+    acceptHooks: true,
+    skipExtensionUpdate: true,
+    skipValidation: true,
+    skipSecurity: true,
+    skipDashboard: true,
+  });
+  const doctor = runDoctor({ projectRoot, homeDir: projectRoot, silent: true });
+
+  assert.equal(report.outcome, "pass");
+  assert.equal(report.acceptedHooks.length, 2);
   assert.equal(doctor.warnings.some((warning) => warning.startsWith("Hook needs review:")), false);
   process.exitCode = oldExitCode;
 });
@@ -100,6 +131,75 @@ test("runPass removes progress steps disabled by check flags", () => {
   });
 
   assert.deepEqual([...new Set(events.map((event) => event.stepId))], ["doctor"]);
+  process.exitCode = oldExitCode;
+});
+
+test("runPass repairs stale global TUI sidebar without install force", () => {
+  const homeDir = tempRoot();
+  const oldExitCode = process.exitCode;
+  const configDir = path.join(homeDir, ".config", "opencode");
+  const pluginPath = path.join(configDir, "tui-plugins", "ogb-sidebar.js");
+  fs.mkdirSync(path.dirname(pluginPath), { recursive: true });
+  fs.writeFileSync(path.join(configDir, "tui.json"), JSON.stringify({
+    plugin: [TUI_SIDEBAR_PLUGIN_SPEC],
+  }, null, 2), "utf8");
+  fs.writeFileSync(pluginPath, "old sidebar plugin\n", "utf8");
+
+  const report = runPass({
+    projectRoot: homeDir,
+    homeDir,
+    skipSetup: true,
+    skipSync: true,
+    skipValidation: true,
+    skipSecurity: true,
+    skipDashboard: true,
+    silent: true,
+    setExitCode: false,
+  });
+  const doctor = runDoctor({ projectRoot: homeDir, homeDir, silent: true });
+
+  assert.equal(fs.readFileSync(pluginPath, "utf8"), TUI_SIDEBAR_PLUGIN_SOURCE);
+  assert.equal(report.automated.includes("repair-global-tui-sidebar"), true);
+  assert.equal(report.blockers.some((item) =>
+    item.message.includes("repaired automatically")
+    && item.action.includes("Reinicie o OpenCode")
+  ), true);
+  assert.equal(doctor.warnings.some((warning) => warning.includes("TUI sidebar plugin is stale")), false);
+  process.exitCode = oldExitCode;
+});
+
+test("runPass repairs stale global startup plugin without install force", () => {
+  const homeDir = tempRoot();
+  const oldExitCode = process.exitCode;
+  const configDir = path.join(homeDir, ".config", "opencode");
+  const pluginPath = path.join(configDir, "plugins", "ogb-startup-sync.js");
+  fs.mkdirSync(path.dirname(pluginPath), { recursive: true });
+  fs.writeFileSync(path.join(configDir, "opencode.json"), JSON.stringify({
+    plugin: [globalStartupPluginSpec(pluginPath)],
+  }, null, 2), "utf8");
+  fs.writeFileSync(pluginPath, "old startup plugin\n", "utf8");
+
+  const report = runPass({
+    projectRoot: homeDir,
+    homeDir,
+    skipSetup: true,
+    skipSync: true,
+    skipValidation: true,
+    skipSecurity: true,
+    skipDashboard: true,
+    silent: true,
+    setExitCode: false,
+  });
+  const doctor = runDoctor({ projectRoot: homeDir, homeDir, silent: true });
+
+  assert.equal(fs.readFileSync(pluginPath, "utf8"), STARTUP_SYNC_PLUGIN_SOURCE);
+  assert.match(fs.readFileSync(pluginPath, "utf8"), /DEFAULT_LIMITS_REFRESH_MS/);
+  assert.equal(report.automated.includes("repair-global-startup-plugin"), true);
+  assert.equal(report.blockers.some((item) =>
+    item.message.includes("startup plugin was repaired automatically")
+    && item.action.includes("Reinicie o OpenCode")
+  ), true);
+  assert.equal(doctor.warnings.some((warning) => warning.includes("startup plugin is stale")), false);
   process.exitCode = oldExitCode;
 });
 

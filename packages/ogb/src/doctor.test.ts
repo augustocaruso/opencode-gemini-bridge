@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { runDoctor } from "./doctor.js";
+import { STARTUP_SYNC_PLUGIN_SOURCE } from "./setup-opencode.js";
+import { globalStartupPluginSpec } from "./setup-ux.js";
 import { syncToOpenCode } from "./sync.js";
 import { TUI_SIDEBAR_PLUGIN_SOURCE, TUI_SIDEBAR_PLUGIN_SPEC } from "./tui-sidebar.js";
 
@@ -185,7 +187,28 @@ test("runDoctor warns when the global TUI sidebar plugin is stale", () => {
 
   assert.equal(report.warnings.some((warning) =>
     warning.includes("Global OGB TUI sidebar plugin is stale")
-    && warning.includes("ogb install --force")
+    && warning.includes("ogb check")
+    && warning.includes("repair it automatically")
+    && warning.includes("restart OpenCode")
+  ), true);
+});
+
+test("runDoctor warns when the global startup plugin is stale", () => {
+  const homeDir = tempRoot();
+  const configDir = path.join(homeDir, ".config", "opencode");
+  const pluginPath = path.join(configDir, "plugins", "ogb-startup-sync.js");
+  fs.mkdirSync(path.dirname(pluginPath), { recursive: true });
+  fs.writeFileSync(path.join(configDir, "opencode.json"), JSON.stringify({
+    plugin: [globalStartupPluginSpec(pluginPath)],
+  }, null, 2), "utf8");
+  fs.writeFileSync(pluginPath, `${STARTUP_SYNC_PLUGIN_SOURCE}\n// old local copy\n`, "utf8");
+
+  const report = runDoctor({ projectRoot: homeDir, homeDir, silent: true });
+
+  assert.equal(report.warnings.some((warning) =>
+    warning.includes("Global OGB startup plugin is stale")
+    && warning.includes("ogb check")
+    && warning.includes("repair it automatically")
     && warning.includes("restart OpenCode")
   ), true);
 });

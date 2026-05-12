@@ -26,9 +26,11 @@ import path from "node:path";
 
 const DEFAULT_ARGS = ["startup-sync"];
 const DASHBOARD_ARGS = ["dashboard", "--write-only"];
+const LIMITS_ARGS = ["limits", "--json"];
 const UPDATE_ARGS = ["check-update", "--no-write"];
 const DEFAULT_LOCK_TTL_MS = 10 * 60_000;
 const DEFAULT_FAILURE_BACKOFF_MS = 10 * 60_000;
+const DEFAULT_LIMITS_REFRESH_MS = 60_000;
 const PROJECT_GENERATED_DIR = path.join(".opencode", "generated");
 const GLOBAL_GENERATED_DIR = path.join(os.homedir(), ".config", "opencode-gemini-bridge", "generated");
 const STARTUP_CONFIG_FILE = "ogb-startup-sync.json";
@@ -340,6 +342,16 @@ function dashboardPlanFrom(syncPlan) {
   return {
     command: syncPlan.command,
     args: [...baseArgs, ...DASHBOARD_ARGS],
+  };
+}
+
+function limitsPlanFrom(syncPlan) {
+  const verbs = new Set(["sync", "startup-sync", "import", "doctor", "dashboard", "limits", "quota"]);
+  const verbIndex = syncPlan.args.findIndex((arg) => verbs.has(String(arg)));
+  const baseArgs = verbIndex >= 0 ? syncPlan.args.slice(0, verbIndex) : [];
+  return {
+    command: syncPlan.command,
+    args: [...baseArgs, ...LIMITS_ARGS],
   };
 }
 
@@ -725,6 +737,29 @@ async function updateDashboard({ cwd, client, syncPlan }) {
   return result;
 }
 
+async function updateLimits({ cwd, client, syncPlan, reason }) {
+  const plan = limitsPlanFrom(syncPlan);
+  const result = await runProcess({ cwd, plan });
+
+  await log(client, {
+    service: "ogb-startup-sync",
+    level: result.ok ? "info" : "warn",
+    message: result.ok ? "ogb limits refreshed" : "ogb limits refresh failed",
+    extra: {
+      cwd,
+      reason,
+      command: plan.command,
+      args: plan.args,
+      exitCode: result.exitCode,
+      error: result.error,
+      stdout: tail(result.stdout),
+      stderr: tail(result.stderr),
+    },
+  });
+
+  return result;
+}
+
 async function recordTelemetry({ cwd, client, syncPlan, reason, result, update, dashboard, status }) {
   const plan = telemetryPlanFrom(syncPlan);
   const payload = {
@@ -953,7 +988,11 @@ export const OgbStartupSync = async ({ client, directory, worktree }) => {
   const config = readConfig(cwd);
   const configuredBackoff = Number(config.failureBackoffMs ?? DEFAULT_FAILURE_BACKOFF_MS);
   const failureBackoffMs = Number.isFinite(configuredBackoff) && configuredBackoff >= 0 ? configuredBackoff : DEFAULT_FAILURE_BACKOFF_MS;
+  const configuredLimitsRefresh = Number(process.env.OGB_LIMITS_REFRESH_MS ?? config.limitsRefreshMs ?? DEFAULT_LIMITS_REFRESH_MS);
+  const limitsRefreshMs = Number.isFinite(configuredLimitsRefresh) && configuredLimitsRefresh >= 0 ? configuredLimitsRefresh : DEFAULT_LIMITS_REFRESH_MS;
   let startupTimer;
+  let limitsTimer;
+  let limitsRefreshRunning = false;
   let startupStarted = false;
   let successToastShown = false;
   let failureToastShown = false;
@@ -1029,6 +1068,16 @@ export const OgbStartupSync = async ({ client, directory, worktree }) => {
     }
   }
 
+  async function refreshLimits(reason) {
+    if (!enabled || limitsRefreshMs <= 0 || limitsRefreshRunning) return;
+    limitsRefreshRunning = true;
+    try {
+      await updateLimits({ cwd, client, syncPlan: plan, reason });
+    } finally {
+      limitsRefreshRunning = false;
+    }
+  }
+
   function scheduleStartup(reason, delayMs = 0) {
     if (startupTimer) {
       if (delayMs > 0) return;
@@ -1041,8 +1090,16 @@ export const OgbStartupSync = async ({ client, directory, worktree }) => {
     if (typeof startupTimer.unref === "function") startupTimer.unref();
   }
 
+  function scheduleLimitsRefresh() {
+    if (limitsRefreshMs <= 0) return;
+    const run = () => void refreshLimits("periodic");
+    limitsTimer = setInterval(run, limitsRefreshMs);
+    if (typeof limitsTimer.unref === "function") limitsTimer.unref();
+  }
+
   const startupDelay = Number(process.env.OGB_STARTUP_DELAY_MS ?? STARTUP_DELAY_MS);
   scheduleStartup("plugin.init", Number.isFinite(startupDelay) && startupDelay >= 0 ? startupDelay : STARTUP_DELAY_MS);
+  scheduleLimitsRefresh();
 
   return {
     config: async (opencodeConfig) => {
@@ -1176,6 +1233,7 @@ export function startupConfigSource(plan: SetupCommandPlan): string {
     updateArgs: ["check-update", "--no-write"],
     lockTtlMs: 10 * 60_000,
     failureBackoffMs: 10 * 60_000,
+    limitsRefreshMs: 60_000,
   }, null, 2)}\n`;
 }
 

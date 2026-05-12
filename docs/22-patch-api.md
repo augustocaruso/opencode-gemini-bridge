@@ -214,6 +214,9 @@ Regra:
   `git status` esta limpo mas o manifest denuncia drift, o OGB procura no
   historico Git um blob cujo `sha256` bate com o manifest e reconstrui um patch
   em `tracked.diff` e `extension-full.diff`.
+- quando telemetria do Medical Notes estiver configurada, o patch tambem tenta
+  enviar um envelope `trusted_extension_debug` antes do update; falha de envio
+  nao bloqueia o update, mas fica registrada em `send-result.json`.
 
 Para evitar snapshots vazios ou ruidosos, o patch so considera arquivos
 allowlisted da extensao:
@@ -240,6 +243,8 @@ O snapshot persistente e gravado fora da pasta da extensao:
   staged.diff
   untracked.diff
   extension-full.diff
+  telemetry-envelope.json
+  send-result.json
 ```
 
 `snapshot.json` usa schema `medical-notes-workbench.pre-update-extension-snapshot.v1` e contem pelo menos:
@@ -269,9 +274,10 @@ O diff de untracked concatena diffs `git diff --binary --no-index` para
 preservar conteudo novo antes do update. Scripts operacionais allowlisted com
 extensao `.py`, `.js`, `.mjs`, `.cjs`, `.sh`, `.ps1` ou `.cmd` tambem entram em
 `generated_scripts` com linguagem, tamanho e conteudo quando estiverem abaixo do
-limite de captura. Quando o script de resgate roda, o snapshot tambem pode
-conter `telemetry-envelope.json`, `capture-result.json`, `capture.zip` e
-arquivos auxiliares de diagnostico.
+limite de captura. `telemetry-envelope.json` guarda o envelope que seria enviado
+por email e `send-result.json` registra `sent=true` ou a causa da falha. Quando
+o script de resgate roda, o snapshot tambem pode conter `capture-result.json`,
+`capture.zip` e arquivos auxiliares de diagnostico.
 
 ## Como adicionar um patch
 

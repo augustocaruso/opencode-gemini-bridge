@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 import {
   PATCH_LIFECYCLE_SCHEMA,
@@ -22,6 +22,14 @@ import type { RitualProgressEvent } from "./ritual-progress.js";
 
 function tempRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ogb-patches-"));
+}
+
+async function waitForFile(filePath: string): Promise<void> {
+  const startedAt = Date.now();
+  while (!fs.existsSync(filePath)) {
+    if (Date.now() - startedAt > 5000) throw new Error(`Timed out waiting for ${filePath}`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 function hasGit(): boolean {
@@ -346,6 +354,91 @@ test("medical notes pre-update snapshot captures allowlisted diffs and scripts",
   assert.match(snapshot.generated_scripts[0].content, /patched before update|agent hotfix/);
 });
 
+test("medical notes pre-update snapshot sends trusted debug telemetry when configured", { skip: !hasGit() }, async () => {
+  const homeDir = tempRoot();
+  const extensionPath = path.join(homeDir, ".gemini", "extensions", "medical-notes-workbench");
+  const requestLog = path.join(homeDir, "telemetry-requests.json");
+  const portFile = path.join(homeDir, "telemetry-port.txt");
+  const serverScript = `
+const fs = require("node:fs");
+const http = require("node:http");
+const requestLog = process.argv[1];
+const portFile = process.argv[2];
+const server = http.createServer((request, response) => {
+  let body = "";
+  request.setEncoding("utf8");
+  request.on("data", (chunk) => { body += chunk; });
+  request.on("end", () => {
+    let requests = [];
+    try { requests = JSON.parse(fs.readFileSync(requestLog, "utf8")); } catch {}
+    requests.push({ path: request.url || "", auth: String(request.headers.authorization || ""), body });
+    fs.writeFileSync(requestLog, JSON.stringify(requests), "utf8");
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ ok: true, accepted_records: 1 }));
+  });
+});
+server.listen(0, "127.0.0.1", () => {
+  fs.writeFileSync(portFile, String(server.address().port), "utf8");
+});
+`;
+  const server = spawn(process.execPath, ["-e", serverScript, requestLog, portFile], { stdio: ["ignore", "ignore", "pipe"] });
+  try {
+    await waitForFile(portFile);
+    const port = fs.readFileSync(portFile, "utf8").trim();
+    const endpoint = `http://127.0.0.1:${port}/v1/telemetry/workflow-runs`;
+    fs.mkdirSync(path.join(extensionPath, "scripts"), { recursive: true });
+    fs.mkdirSync(path.join(homeDir, ".gemini", "medical-notes-workbench"), { recursive: true });
+    fs.writeFileSync(
+      path.join(homeDir, ".gemini", "medical-notes-workbench", "config.toml"),
+      `[telemetry]\nendpoint_url = "${endpoint}"\nauth_token = "test-token"\npayload_level = "trusted_extension_debug"\ninstall_id = "friend-install"\n`,
+      "utf8",
+    );
+    fs.writeFileSync(path.join(extensionPath, "gemini-extension.json"), JSON.stringify({ name: "medical-notes-workbench", version: "0.3.10" }), "utf8");
+    fs.writeFileSync(path.join(extensionPath, "scripts", "baseline.py"), "print('old')\n", "utf8");
+    git(extensionPath, ["init"]);
+    git(extensionPath, ["config", "user.email", "test@example.com"]);
+    git(extensionPath, ["config", "user.name", "Test"]);
+    git(extensionPath, ["add", "."]);
+    git(extensionPath, ["commit", "-m", "baseline"]);
+    fs.writeFileSync(path.join(extensionPath, "scripts", "baseline.py"), "print('patched before update')\n", "utf8");
+
+    const report = runBeforeGeminiExtensionUpdatePatches({
+      projectRoot: homeDir,
+      homeDir,
+      registry: OGB_PATCHES,
+      now: new Date("2026-05-08T12:30:00.000Z"),
+      extension: {
+        name: "medical-notes-workbench",
+        extensionPath,
+        manifestPath: path.join(extensionPath, "gemini-extension.json"),
+        currentVersion: "0.3.10",
+      },
+    });
+    const snapshotJsonPath = report.results[0]?.writes?.find((item) => item.endsWith("snapshot.json"));
+    assert.equal(report.outcome, "pass");
+    assert.equal(report.results[0]?.status, "applied");
+    assert.match(report.results[0]?.message ?? "", /telemetry email send requested/);
+    assert.ok(snapshotJsonPath);
+    const snapshotDir = path.dirname(snapshotJsonPath);
+    const sendResult = JSON.parse(fs.readFileSync(path.join(snapshotDir, "send-result.json"), "utf8"));
+    const envelope = JSON.parse(fs.readFileSync(path.join(snapshotDir, "telemetry-envelope.json"), "utf8"));
+    const requests = JSON.parse(fs.readFileSync(requestLog, "utf8")) as Array<{ path: string; auth: string; body: string }>;
+    const workflowRequest = requests.find((item) => item.path === "/v1/telemetry/workflow-runs");
+    const digestRequest = requests.find((item) => item.path === "/v1/telemetry/digest/send");
+
+    assert.equal(sendResult.sent, true);
+    assert.ok(workflowRequest);
+    assert.equal(workflowRequest?.auth, "Bearer test-token");
+    assert.ok(digestRequest);
+    assert.equal(envelope.payload_level, "trusted_extension_debug");
+    assert.equal(envelope.install_id, "friend-install");
+    assert.match(JSON.stringify(envelope.records[0].extension_diffs), /patched before update/);
+    assert.match(JSON.stringify(JSON.parse(workflowRequest?.body ?? "{}")), /patched before update/);
+  } finally {
+    server.kill();
+  }
+});
+
 test("medical notes pre-update snapshot recovers manifest drift when git status is clean", { skip: !hasGit() }, () => {
   const homeDir = tempRoot();
   const extensionPath = path.join(homeDir, ".gemini", "extensions", "medical-notes-workbench");
@@ -416,10 +509,11 @@ test("medical notes pre-update snapshot prefers installed capture_extension_diff
     "import argparse, json",
     "from pathlib import Path",
     "parser = argparse.ArgumentParser()",
-    "parser.add_argument('--extension-path')",
-    "parser.add_argument('--output-dir')",
-    "parser.add_argument('--no-flush', action='store_true')",
-    "parser.add_argument('--no-existing-snapshots', action='store_true')",
+	    "parser.add_argument('--extension-path')",
+	    "parser.add_argument('--output-dir')",
+	    "parser.add_argument('--send', action='store_true')",
+	    "parser.add_argument('--no-flush', action='store_true')",
+	    "parser.add_argument('--no-existing-snapshots', action='store_true')",
     "args = parser.parse_args()",
     "out = Path(args.output_dir)",
     "out.mkdir(parents=True, exist_ok=True)",

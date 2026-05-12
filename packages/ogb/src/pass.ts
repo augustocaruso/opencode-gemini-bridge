@@ -6,11 +6,14 @@ import { updateGeminiExtensions, type ExtensionCommandReport } from "./extension
 import { buildInstallerPlan, type InstallerPlan } from "./installer-planner.js";
 import { buildInventory } from "./inventory.js";
 import { runPatchesForPhase, summarizePatchReport, type OgbPatch, type PatchPhase, type PatchRunReport } from "./patches.js";
+import { globalOpenCodeConfigDir } from "./opencode-paths.js";
 import { resolveProjectPaths } from "./paths.js";
 import { runSecurityCheck, type SecurityReport } from "./security.js";
 import { setupOpenCode, type SetupOpenCodeReport } from "./setup-opencode.js";
+import { ensureGlobalStartupPlugin } from "./setup-ux.js";
 import { syncToOpenCode, type SyncReport } from "./sync.js";
 import { hookTrustHash, hookTrustKeys, readTrustFile, writeTrustFile } from "./trust.js";
+import { ensureGlobalTuiSidebar } from "./tui-sidebar.js";
 import { OGB_VERSION } from "./types.js";
 import { runValidation, type ValidationReport } from "./validation.js";
 import type { RulesyncMode } from "./rulesync.js";
@@ -177,6 +180,14 @@ function securityAction(): string {
 
 function dashboardAction(): string {
   return "Rode `ogb dashboard --plain` e abra o arquivo Markdown do dashboard para ver o estado persistido completo.";
+}
+
+function needsGlobalTuiRepair(warnings: readonly string[]): boolean {
+  return warnings.some((warning) => /Global OGB TUI sidebar plugin is (missing|stale)/i.test(warning));
+}
+
+function needsGlobalStartupRepair(warnings: readonly string[]): boolean {
+  return warnings.some((warning) => /Global OGB startup plugin is (missing|stale)/i.test(warning));
 }
 
 function patchAction(result: { nextAction?: string; id: string }): string {
@@ -376,6 +387,8 @@ export function runPass(options: PassOptions = {}): PassReport {
   let validation: ValidationReport | undefined;
   let security: SecurityReport | undefined;
   let dashboard: DashboardReport | undefined;
+  let globalTuiRepaired = false;
+  let globalStartupRepaired = false;
 
   if (!options.skipSetup) {
     emitCheckProgress(options.onProgress, "setup", "running");
@@ -515,6 +528,41 @@ export function runPass(options: PassOptions = {}): PassReport {
   );
   automated.push("doctor");
 
+  const shouldRepairGlobalStartup = !options.dryRun && needsGlobalStartupRepair(doctor.warnings);
+  const shouldRepairGlobalTui = !options.dryRun && needsGlobalTuiRepair(doctor.warnings);
+  if (shouldRepairGlobalStartup || shouldRepairGlobalTui) {
+    emitCheckProgress(options.onProgress, "doctor", "running", "Repairing global OpenCode plugin files.");
+    if (shouldRepairGlobalStartup) {
+      const repair = ensureGlobalStartupPlugin({
+        homeDir: paths.homeDir,
+      });
+      automated.push("repair-global-startup-plugin");
+      globalStartupRepaired = repair.plugin.status === "created" || repair.plugin.status === "updated";
+      if (!repair.pluginCheck.ok) blockers.push(blocker("setup", "warn", repair.pluginCheck.message, "Rode `ogb setup-ux` para reinstalar o plugin global de startup."));
+      for (const warning of repair.warnings) blockers.push(blocker("setup", "warn", warning, "Rode `ogb setup-ux` para revisar o plugin global de startup."));
+    }
+    if (shouldRepairGlobalTui) {
+      const repair = ensureGlobalTuiSidebar({
+        configDir: globalOpenCodeConfigDir({ homeDir: paths.homeDir }),
+      });
+      automated.push("repair-global-tui-sidebar");
+      globalTuiRepaired = repair.plugin.status === "created" || repair.plugin.status === "updated";
+      if (!repair.pluginCheck.ok) blockers.push(blocker("setup", "warn", repair.pluginCheck.message, "Rode `ogb setup-ux` para reinstalar o plugin TUI global."));
+      for (const warning of repair.warnings) blockers.push(blocker("setup", "warn", warning, "Rode `ogb setup-ux` para revisar o perfil TUI global."));
+    }
+    doctor = runDoctor({ projectRoot: paths.projectRoot, homeDir: paths.homeDir, silent: true });
+    emitCheckProgress(
+      options.onProgress,
+      "doctor",
+      progressStatusFromFindings(doctor.errors.length, doctor.warnings.length),
+      globalStartupRepaired || globalTuiRepaired
+        ? "Global OpenCode plugin files repaired; restart OpenCode."
+        : doctor.warnings.length > 0
+          ? `${doctor.warnings.length} warning(s)`
+          : "Doctor is clean.",
+    );
+  }
+
   let acceptedHooks: string[] = [];
   if (options.acceptHooks) {
     emitCheckProgress(options.onProgress, "hookReview", "running");
@@ -597,6 +645,8 @@ export function runPass(options: PassOptions = {}): PassReport {
 
   for (const error of doctor.errors) blockers.push(blocker("doctor", "fail", error, "Corrija o erro indicado pelo doctor e rode `ogb check` novamente."));
   for (const warning of doctor.warnings) blockers.push(blocker("doctor", "warn", warning, actionForWarning(warning)));
+  if (globalStartupRepaired) blockers.push(blocker("setup", "warn", "Global OGB startup plugin was repaired automatically.", "Reinicie o OpenCode para carregar o refresh automatico do usage."));
+  if (globalTuiRepaired) blockers.push(blocker("setup", "warn", "Global OGB TUI sidebar plugin was repaired automatically.", "Reinicie o OpenCode para carregar a TUI nova."));
   if (validation?.outcome === "fail") blockers.push(blocker("validation", "fail", `Validation falhou: ${firstValidationIssue(validation, "fail") ?? "um check obrigatorio falhou."}`, validationAction(options)));
   if (validation?.outcome === "warn") blockers.push(blocker("validation", "warn", `Validation passou com avisos: ${firstValidationIssue(validation, "warn") ?? "ha checks que precisam de revisao."}`, validationAction(options)));
   if (security?.outcome === "fail") blockers.push(blocker("security", "fail", `Security-check falhou: ${firstSecurityIssue(security, "fail") ?? "um guardrail obrigatorio falhou."}`, securityAction()));
@@ -654,10 +704,15 @@ export function runPass(options: PassOptions = {}): PassReport {
   }
   steps.push({
     name: "doctor",
-    status: statusFromFindings(doctor.errors.length > 0, doctor.warnings.length > 0),
+    status: statusFromFindings(doctor.errors.length > 0, doctor.warnings.length > 0 || globalStartupRepaired || globalTuiRepaired),
     detail: doctor.errors.length > 0
       ? `${doctor.errors.length} error(s)`
-      : doctor.warnings.length > 0
+      : globalStartupRepaired || globalTuiRepaired
+        ? [
+          globalStartupRepaired ? "global startup repaired" : "",
+          globalTuiRepaired ? "global TUI repaired" : "",
+        ].filter(Boolean).join(", ")
+        : doctor.warnings.length > 0
         ? `${doctor.warnings.length} warning(s)`
         : undefined,
   });

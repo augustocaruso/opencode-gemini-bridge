@@ -14,6 +14,7 @@ import { configReferencesExpandedGemini, projectConfigPath } from "./project-con
 import { resolveProjectPaths } from "./paths.js";
 import { spawnCommandSync } from "./process.js";
 import { resolveRulesyncCommand } from "./rulesync.js";
+import { STARTUP_SYNC_PLUGIN_SOURCE } from "./setup-opencode.js";
 import { missingGlobalTuiRuntimeDependencies } from "./setup-ux.js";
 import { recoverStaleStartupStatus } from "./startup-status.js";
 import { readSyncState } from "./sync-state.js";
@@ -540,15 +541,22 @@ export function runDoctor(options: DoctorOptions = {}): DoctorReport {
   if (state?.lastRulesync?.conflicts?.length) warnings.push(`Rulesync has unresolved conflicts: ${state.lastRulesync.conflicts.join(", ")}`);
   else if (state?.lastRulesync?.status === "error") warnings.push("Last Rulesync run failed. Run ogb sync --rulesync require --dry-run for details.");
   if (paths.homeMode && startupSync.globalPlugin && !globalStartupPluginConfigured) warnings.push("Global OGB startup plugin exists but is not listed in the OpenCode global plugin config. Run ogb setup-ux --reset-global.");
+  if (globalStartupPluginConfigured) {
+    if (!startupSync.globalPlugin) {
+      warnings.push("Global OGB startup plugin is missing. Run ogb check to repair it automatically, then restart OpenCode.");
+    } else if (sha256File(globalStartupPluginPath) !== sha256Text(STARTUP_SYNC_PLUGIN_SOURCE)) {
+      warnings.push("Global OGB startup plugin is stale. Run ogb check to repair it automatically, then restart OpenCode.");
+    }
+  }
   const globalTuiConfig = globalTuiConfigPath(paths.homeDir);
   if (configHasPluginSpec(globalTuiConfig, TUI_SIDEBAR_PLUGIN_SPEC)) {
     const missingTuiRuntime = missingGlobalTuiRuntimeDependencies(globalOpenCodeConfigDir({ homeDir: paths.homeDir }));
     if (missingTuiRuntime.length > 0) warnings.push(`Global OGB TUI runtime dependencies are missing: ${missingTuiRuntime.join(", ")}. Run ogb setup-ux.`);
     const globalTuiPlugin = globalTuiPluginPath(paths.homeDir);
     if (!fs.existsSync(globalTuiPlugin)) {
-      warnings.push("Global OGB TUI sidebar plugin is missing. Run ogb install --force and restart OpenCode.");
+      warnings.push("Global OGB TUI sidebar plugin is missing. Run ogb check to repair it automatically, then restart OpenCode.");
     } else if (sha256File(globalTuiPlugin) !== sha256Text(TUI_SIDEBAR_PLUGIN_SOURCE)) {
-      warnings.push("Global OGB TUI sidebar plugin is stale. Run ogb install --force and restart OpenCode.");
+      warnings.push("Global OGB TUI sidebar plugin is stale. Run ogb check to repair it automatically, then restart OpenCode.");
     }
   }
   if (startupSync.lastState === "fail") warnings.push("Last OpenCode startup sync failed. Run ogb dashboard for details.");

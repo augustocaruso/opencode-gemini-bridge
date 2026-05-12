@@ -818,6 +818,12 @@ const MEDNOTES_MAX_GENERATED_SCRIPT_BYTES = 96 * 1024;
 const MEDNOTES_INTEGRITY_MANIFEST = "extension-integrity-manifest.json";
 const MEDNOTES_CAPTURE_SCRIPT_REL = "scripts/mednotes/capture_extension_diff.py";
 const MEDNOTES_MAX_GIT_HISTORY_COMMITS = 600;
+const MEDNOTES_TELEMETRY_ENVELOPE_SCHEMA = "medical-notes-workbench.workflow-telemetry-envelope.v1";
+const MEDNOTES_RUN_RECORD_SCHEMA = "medical-notes-workbench.workflow-run-record.v1";
+const MEDNOTES_PRE_UPDATE_SNAPSHOT_SCHEMA = "medical-notes-workbench.pre-update-extension-snapshot.v1";
+const MEDNOTES_TRUSTED_DEBUG_PAYLOAD_LEVEL = "trusted_extension_debug";
+const MEDNOTES_MAX_TELEMETRY_ENVELOPE_BYTES = 1024 * 1024;
+const MEDNOTES_MAX_PATCH_CHARS = 160 * 1024;
 
 interface ManifestDrift {
   changed: string[];
@@ -827,6 +833,12 @@ interface ManifestDrift {
   baselineRecoveredCount: number;
   gitDiffEmptyCount: number;
   unavailable: Array<{ path: string; reason: string }>;
+}
+
+interface MedNotesTelemetrySettings {
+  endpointUrl: string;
+  authToken: string;
+  installId: string;
 }
 
 function git(context: PatchContext, args: string[], timeoutMs = 60_000): NativeCommandResult {
@@ -1158,6 +1170,353 @@ function snapshotDirUseful(snapshotDir: string): boolean {
   return Array.isArray(generatedScripts) && generatedScripts.length > 0;
 }
 
+function stringField(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function readTextIfExists(filePath: string): string {
+  try {
+    return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
+  } catch {
+    return "";
+  }
+}
+
+function medNotesTelemetryConfigPath(context: PatchContext): string {
+  const env = context.adapter.env;
+  const override = env.MEDNOTES_TELEMETRY_CONFIG || env.MEDNOTES_CONFIG || env.MEDICAL_NOTES_CONFIG;
+  if (override) return context.adapter.resolvePath(override);
+  const home = env.MEDNOTES_HOME || env.MEDICAL_NOTES_WORKBENCH_HOME;
+  const base = home ? context.adapter.resolvePath(home) : context.adapter.join(context.homeDir, ".gemini", "medical-notes-workbench");
+  return context.adapter.join(base, "config.toml");
+}
+
+function readTomlTelemetrySection(filePath: string): Record<string, unknown> {
+  const text = readTextIfExists(filePath);
+  const out: Record<string, unknown> = {};
+  let inTelemetry = false;
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const section = line.match(/^\[([^\]]+)\]$/);
+    if (section) {
+      inTelemetry = section[1].trim() === "telemetry";
+      continue;
+    }
+    if (!inTelemetry || !line.includes("=")) continue;
+    const [rawKey, ...rest] = line.split("=");
+    const key = rawKey.trim();
+    let value = rest.join("=").trim();
+    if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    out[key] = value === "true" ? true : value === "false" ? false : value;
+  }
+  return out;
+}
+
+function readMedNotesDistributionDefaults(context: PatchContext, extensionPath: string): Record<string, unknown> {
+  const candidates: string[] = [];
+  const envDefault = context.adapter.env.MEDNOTES_TELEMETRY_DEFAULTS;
+  if (envDefault) candidates.push(context.adapter.resolvePath(envDefault));
+  candidates.push(path.join(extensionPath, "telemetry.defaults.json"));
+  candidates.push(path.join(extensionPath, ".telemetry-defaults.json"));
+  for (const candidate of candidates) {
+    const raw = readJsonFile(candidate);
+    if (raw) return raw.telemetry && typeof raw.telemetry === "object" && !Array.isArray(raw.telemetry)
+      ? raw.telemetry as Record<string, unknown>
+      : raw;
+  }
+  return {};
+}
+
+function medNotesTelemetrySettings(context: PatchContext, extensionPath: string): MedNotesTelemetrySettings {
+  const config = readTomlTelemetrySection(medNotesTelemetryConfigPath(context));
+  const defaults = readMedNotesDistributionDefaults(context, extensionPath);
+  return {
+    endpointUrl: stringField(config.endpoint_url) || stringField(defaults.endpoint_url) || stringField(defaults.endpointUrl),
+    authToken: stringField(config.auth_token) || stringField(defaults.auth_token) || stringField(defaults.authToken),
+    installId: stringField(config.install_id) || stringField(defaults.install_id) || stringField(defaults.installId) || `ogb-pre-update-${crypto.randomUUID()}`,
+  };
+}
+
+function redactMedNotesUrl(value: string): string {
+  const index = value.indexOf("?");
+  return index === -1 ? value : `${value.slice(0, index)}?[redacted]`;
+}
+
+function redactMedNotesOperationalText(value: unknown, maxChars = MEDNOTES_MAX_PATCH_CHARS): string {
+  let text = String(value ?? "");
+  text = text.replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[email]");
+  text = text.replace(/\b(api[_-]?key|token|secret|password|authorization|bearer)(\s*[:=]\s*)(["']?)[^\s"']+/gi, "$1$2[redacted]");
+  text = text.replace(/(--(?:api-key|auth-token|token|secret|password)\s+)([^\s"']+)/gi, "$1[redacted]");
+  text = text.replace(/https?:\/\/[^\s)>"]+/g, (url) => redactMedNotesUrl(url));
+  text = text.replace(/\b[A-Za-z0-9_=-]{36,}\b/g, "[redacted-token]");
+  if (text.length > maxChars) return `${text.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+  return text;
+}
+
+function medNotesSnapshotDiffs(snapshotDir: string): Array<Record<string, unknown>> {
+  const files: Array<{ filename: string; change: string }> = [
+    { filename: "tracked.diff", change: "pre_update_tracked" },
+    { filename: "staged.diff", change: "pre_update_staged" },
+    { filename: "untracked.diff", change: "pre_update_untracked" },
+  ];
+  const diffs: Array<Record<string, unknown>> = [];
+  for (const item of files) {
+    const patch = readTextIfExists(path.join(snapshotDir, item.filename));
+    if (!patch.trim()) continue;
+    const sanitized = redactMedNotesOperationalText(patch);
+    diffs.push({
+      path: item.filename,
+      kind: "patch",
+      change: item.change,
+      baseline_source: "ogb-pre-update-snapshot",
+      patch: sanitized,
+      truncated: sanitized.length < patch.length,
+    });
+  }
+  return diffs;
+}
+
+function medNotesPreUpdateRecord(snapshot: Record<string, unknown>, snapshotDir: string): Record<string, unknown> {
+  const extensionDiffs = medNotesSnapshotDiffs(snapshotDir);
+  const generatedScripts = Array.isArray(snapshot.generated_scripts) ? snapshot.generated_scripts : [];
+  const changedCount = Number(snapshot.changed_path_count ?? 0) || 0;
+  const untrackedCount = Number(snapshot.untracked_path_count ?? 0) || 0;
+  const summary = {
+    changed_path_count: changedCount,
+    untracked_path_count: untrackedCount,
+    extension_diff_count: extensionDiffs.length,
+    generated_script_count: generatedScripts.length,
+    baseline_recovered_count: Number(snapshot.baseline_recovered_count ?? 0) || 0,
+    git_diff_empty_count: Number(snapshot.git_diff_empty_count ?? 0) || 0,
+  };
+  return {
+    schema: MEDNOTES_RUN_RECORD_SCHEMA,
+    run_id: `pre-update-extension-snapshot-${stringField(snapshot.snapshot_id) || path.basename(snapshotDir)}`,
+    recorded_at: stringField(snapshot.recorded_at) || new Date().toISOString(),
+    workflow: "/mednotes:telemetry",
+    source: "ogb_update_patch",
+    command: "ogb update",
+    exit_code: 0,
+    duration_ms: 0,
+    status: "completed_with_warnings",
+    phase: "pre-extension-update-snapshot",
+    blocked_reason: "",
+    next_action: "Analisar extension_diffs e preservar o snapshot antes de atualizar novamente a extensao.",
+    required_inputs: [],
+    human_decision_required: false,
+    dry_run: false,
+    apply: false,
+    payload_summary: {
+      counts: summary,
+      warnings: ["pre_update_extension_snapshot"],
+      errors: [],
+      required_inputs: [],
+      relevant_paths: Array.isArray(snapshot.changed_paths) ? snapshot.changed_paths.slice(0, 40) : [],
+      path_hashes: {},
+      signals: ["extension.pre_update_snapshot"],
+      status: "completed_with_warnings",
+      phase: "pre-extension-update-snapshot",
+    },
+    diagnostic_context: {
+      root_cause_code: "extension.pre_update_snapshot",
+      root_cause_label: "Snapshot pre-update de drift da extensao",
+      recovery_command: "Abrir extension-full.diff/capture.zip ou revisar este email antes de outro update.",
+      missing_inputs: [],
+      decision_context: { types: [], decisions: [] },
+      blocker_context: { codes: [], counts: {}, summaries: [], samples: [], routes: [] },
+      contract_gaps: [],
+    },
+    environment_context: {
+      extension_integrity: {
+        schema: MEDNOTES_PRE_UPDATE_SNAPSHOT_SCHEMA,
+        drift_detected: true,
+        snapshot_id: snapshot.snapshot_id,
+        snapshot_path: snapshot.snapshot_path,
+        extension_name: snapshot.extension_name,
+        extension_path: snapshot.extension_path,
+        current_version: snapshot.current_version,
+        target_version: snapshot.target_version,
+        git_head: snapshot.git_head,
+        summary,
+        extension_diffs: extensionDiffs,
+      },
+    },
+    diagnostic_snippets: [],
+    extension_diffs: extensionDiffs,
+    generated_scripts: generatedScripts,
+    command_events: [],
+  };
+}
+
+function fitMedNotesEnvelope(envelope: Record<string, unknown>): Record<string, unknown> {
+  const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
+  if (size(envelope) <= MEDNOTES_MAX_TELEMETRY_ENVELOPE_BYTES) return envelope;
+  const records = Array.isArray(envelope.records) ? envelope.records : [];
+  const record = records[0];
+  if (!record || typeof record !== "object" || Array.isArray(record)) return envelope;
+  const mutable = record as Record<string, unknown>;
+  const diffs = Array.isArray(mutable.extension_diffs) ? mutable.extension_diffs : [];
+  for (const diff of diffs) {
+    if (!diff || typeof diff !== "object" || Array.isArray(diff)) continue;
+    const item = diff as Record<string, unknown>;
+    if (typeof item.patch === "string" && item.patch.length > 24 * 1024) {
+      item.patch = `${item.patch.slice(0, 24 * 1024 - 3).trimEnd()}...`;
+      item.truncated = true;
+    }
+  }
+  if (diffs.length > 8) {
+    mutable.extension_diffs = [
+      ...diffs.slice(0, 8),
+      { path: "", kind: "summary", change: "truncated", omitted_count: diffs.length - 8 },
+    ];
+  }
+  const context = mutable.environment_context;
+  if (context && typeof context === "object" && !Array.isArray(context)) {
+    const integrity = (context as Record<string, unknown>).extension_integrity;
+    if (integrity && typeof integrity === "object" && !Array.isArray(integrity)) {
+      (integrity as Record<string, unknown>).extension_diffs = mutable.extension_diffs;
+    }
+  }
+  return envelope;
+}
+
+function buildMedNotesTelemetryEnvelope(
+  context: PatchContext,
+  snapshot: Record<string, unknown>,
+  snapshotDir: string,
+  settings: MedNotesTelemetrySettings,
+): Record<string, unknown> {
+  return fitMedNotesEnvelope({
+    schema: MEDNOTES_TELEMETRY_ENVELOPE_SCHEMA,
+    envelope_id: crypto.randomUUID(),
+    generated_at: context.now.toISOString(),
+    install_id: settings.installId,
+    payload_level: MEDNOTES_TRUSTED_DEBUG_PAYLOAD_LEVEL,
+    client: {
+      app: "medical-notes-workbench",
+      app_version: stringField(snapshot.current_version) || "unknown",
+      platform: context.platform,
+      capture_script: "ogb-native-pre-update-snapshot",
+    },
+    records: [medNotesPreUpdateRecord(snapshot, snapshotDir)],
+    limits: { max_envelope_bytes: MEDNOTES_MAX_TELEMETRY_ENVELOPE_BYTES },
+  });
+}
+
+function sendMedNotesTelemetryEnvelope(
+  context: PatchContext,
+  envelopePath: string,
+  settings: MedNotesTelemetrySettings,
+): Record<string, unknown> {
+  if (!settings.endpointUrl || !settings.authToken) {
+    return { ok: false, sent: false, reason: "telemetry_endpoint_or_token_missing" };
+  }
+  const script = `
+const fs = require("node:fs");
+const envelopePath = process.argv[1];
+const endpoint = process.env.MEDNOTES_TELEMETRY_ENDPOINT || "";
+const token = process.env.MEDNOTES_TELEMETRY_TOKEN || "";
+function digestUrl(value) {
+  try {
+    const parsed = new URL(value);
+    const currentPath = parsed.pathname.replace(/\\/+$/, "");
+    parsed.pathname = currentPath.endsWith("/v1/telemetry/workflow-runs")
+      ? currentPath.slice(0, -"/v1/telemetry/workflow-runs".length) + "/v1/telemetry/digest/send"
+      : currentPath + "/digest/send";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+(async () => {
+  const body = fs.readFileSync(envelopePath, "utf8");
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + token,
+      "Content-Type": "application/json",
+      "X-MedNotes-Telemetry-Schema": "medical-notes-workbench.workflow-telemetry-envelope.v1",
+    },
+    body,
+  });
+  const text = await response.text();
+  const out = { ok: response.ok, sent: response.ok, status: response.status, response: text.slice(-2000) };
+  if (response.ok) {
+    const url = digestUrl(endpoint);
+    if (url) {
+      try {
+        const flush = await fetch(url, { method: "POST", headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" }, body: "{}" });
+        out.digest_flush = { ok: flush.ok, status: flush.status, response: (await flush.text()).slice(-2000) };
+      } catch (error) {
+        out.digest_flush = { ok: false, reason: error instanceof Error ? error.message : String(error) };
+      }
+    }
+  }
+  console.log(JSON.stringify(out));
+})().catch((error) => {
+  console.log(JSON.stringify({ ok: false, sent: false, reason: error instanceof Error ? error.message : String(error) }));
+  process.exitCode = 1;
+});
+`;
+  const result = context.runCommand({
+    command: process.execPath,
+    args: ["-e", script, envelopePath],
+    cwd: context.projectRoot,
+    env: {
+      ...context.adapter.env,
+      MEDNOTES_TELEMETRY_ENDPOINT: settings.endpointUrl,
+      MEDNOTES_TELEMETRY_TOKEN: settings.authToken,
+    },
+    stdio: "pipe",
+    timeoutMs: 20_000,
+  });
+  if (commandFailed(result)) {
+    return {
+      ok: false,
+      sent: false,
+      reason: result.stderr || result.error || `node fetch exited ${result.status}`,
+      exit_code: result.status,
+      signal: result.signal,
+    };
+  }
+  try {
+    return JSON.parse(result.stdout.trim()) as Record<string, unknown>;
+  } catch {
+    return {
+      ok: false,
+      sent: false,
+      reason: "telemetry_send_result_not_json",
+      stdout_tail: result.stdout.trim().slice(-2000),
+      stderr_tail: result.stderr.trim().slice(-2000),
+    };
+  }
+}
+
+function writeMedNotesTelemetryArtifacts(
+  context: PatchContext,
+  snapshotDir: string,
+  snapshot: Record<string, unknown>,
+): { writes: string[]; sendResult: Record<string, unknown>; message: string } {
+  const settings = medNotesTelemetrySettings(context, stringField(snapshot.extension_path) || context.extension?.extensionPath || "");
+  const envelopePath = path.join(snapshotDir, "telemetry-envelope.json");
+  const sendResultPath = path.join(snapshotDir, "send-result.json");
+  const envelope = buildMedNotesTelemetryEnvelope(context, snapshot, snapshotDir, settings);
+  fs.writeFileSync(envelopePath, `${JSON.stringify(envelope, null, 2)}\n`, "utf8");
+  const rawSendResult = sendMedNotesTelemetryEnvelope(context, envelopePath, settings);
+  const sendResult = {
+    ...rawSendResult,
+    endpoint_url: settings.endpointUrl ? redactMedNotesUrl(settings.endpointUrl) : "",
+  };
+  fs.writeFileSync(sendResultPath, `${JSON.stringify(sendResult, null, 2)}\n`, "utf8");
+  const message = rawSendResult.sent === true
+    ? "telemetry email send requested"
+    : `telemetry email not sent: ${String(rawSendResult.reason || rawSendResult.status || "unknown")}`;
+  return { writes: [envelopePath, sendResultPath], sendResult, message };
+}
+
 function runMedicalNotesCaptureScript(context: PatchContext, scriptPath: string, snapshotDir: string): PatchResult | undefined {
   const extension = context.extension;
   if (!extension) return undefined;
@@ -1167,14 +1526,14 @@ function runMedicalNotesCaptureScript(context: PatchContext, scriptPath: string,
       command: candidate.command,
       args: [
         ...candidate.argsPrefix,
-        scriptPath,
-        "--extension-path",
-        extension.extensionPath,
-        "--output-dir",
-        snapshotDir,
-        "--no-flush",
-        "--no-existing-snapshots",
-      ],
+	        scriptPath,
+	        "--extension-path",
+	        extension.extensionPath,
+	        "--output-dir",
+	        snapshotDir,
+	        "--send",
+	        "--no-existing-snapshots",
+	      ],
       cwd: extension.extensionPath,
       stdio: "pipe",
       timeoutMs: 120_000,
@@ -1243,10 +1602,12 @@ function createMedicalNotesPreUpdateSnapshot(context: PatchContext): PatchResult
   const snapshotDir = uniqueSnapshotDir(snapshotBase);
   const snapshotJsonPath = path.join(snapshotDir, "snapshot.json");
   const trackedDiffPath = path.join(snapshotDir, "tracked.diff");
-  const stagedDiffPath = path.join(snapshotDir, "staged.diff");
-  const untrackedDiffPath = path.join(snapshotDir, "untracked.diff");
-  const extensionFullDiffPath = path.join(snapshotDir, "extension-full.diff");
-  const writes = [snapshotJsonPath, trackedDiffPath, stagedDiffPath, untrackedDiffPath, extensionFullDiffPath];
+	  const stagedDiffPath = path.join(snapshotDir, "staged.diff");
+	  const untrackedDiffPath = path.join(snapshotDir, "untracked.diff");
+	  const extensionFullDiffPath = path.join(snapshotDir, "extension-full.diff");
+	  const telemetryEnvelopePath = path.join(snapshotDir, "telemetry-envelope.json");
+	  const sendResultPath = path.join(snapshotDir, "send-result.json");
+	  const writes = [snapshotJsonPath, trackedDiffPath, stagedDiffPath, untrackedDiffPath, extensionFullDiffPath, telemetryEnvelopePath, sendResultPath];
 
   if (context.dryRun) {
     return {
@@ -1313,14 +1674,15 @@ function createMedicalNotesPreUpdateSnapshot(context: PatchContext): PatchResult
       diff_unavailable: manifestDrift.unavailable,
       snapshot_useful: snapshotUseful,
       generated_scripts: generatedScripts,
-    };
-    fs.writeFileSync(snapshotJsonPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+	    };
+	    fs.writeFileSync(snapshotJsonPath, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+	    const telemetry = writeMedNotesTelemetryArtifacts(context, snapshotDir, snapshot);
 
-    return {
-      status: "applied",
-      message: `Snapshot saved for ${extension.name}: ${snapshotDir}`,
-      writes,
-    };
+	    return {
+	      status: "applied",
+	      message: `Snapshot saved for ${extension.name}: ${snapshotDir}; ${telemetry.message}`,
+	      writes: [...writes, ...telemetry.writes].filter((item, index, all) => all.indexOf(item) === index),
+	    };
   } catch (error) {
     return {
       status: "failed",
