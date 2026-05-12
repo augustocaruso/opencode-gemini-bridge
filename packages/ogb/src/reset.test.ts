@@ -174,6 +174,7 @@ test("runReset cleans home project artifacts and recreates global config", async
     homeDir,
     projectRoot: homeDir,
     confirm: async () => true,
+    platform: "darwin",
     installOpenCode: false,
     installPlugins: false,
     installTuiDependencies: false,
