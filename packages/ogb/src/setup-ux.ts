@@ -472,12 +472,29 @@ function currentCliPath(): string | undefined {
 }
 
 function startupCommandPlan(adapter: PlatformAdapter, options: Pick<SetupUxOptions, "platform" | "env">): { command: string; baseArgs: string[] } {
+  const crossPlatformResolution = options.platform !== undefined && options.platform !== process.platform;
+  const ogbCommand = resolveCommand("ogb", {
+    homeDir: adapter.homeDir,
+    platform: adapter.platform,
+    env: adapter.env,
+    includeLookup: crossPlatformResolution ? false : undefined,
+    includeNpmPrefix: crossPlatformResolution ? false : undefined,
+  });
+  if (ogbCommand) {
+    return {
+      command: ogbCommand,
+      baseArgs: ["--project", adapter.homeDir],
+    };
+  }
+
   const cliPath = currentCliPath();
   if (cliPath) {
     const nodeCommand = resolveCommand("node", {
       homeDir: adapter.homeDir,
       platform: adapter.platform,
       env: adapter.env,
+      includeLookup: crossPlatformResolution ? false : undefined,
+      includeNpmPrefix: crossPlatformResolution ? false : undefined,
     }) ?? process.execPath;
     return {
       command: nodeCommand,
@@ -485,15 +502,8 @@ function startupCommandPlan(adapter: PlatformAdapter, options: Pick<SetupUxOptio
     };
   }
 
-  const crossPlatformResolution = options.platform !== undefined && options.platform !== process.platform;
   return {
-    command: resolveCommand("ogb", {
-      homeDir: adapter.homeDir,
-      platform: adapter.platform,
-      env: adapter.env,
-      includeLookup: crossPlatformResolution ? false : undefined,
-      includeNpmPrefix: crossPlatformResolution ? false : undefined,
-    }) ?? "ogb",
+    command: "ogb",
     baseArgs: ["--project", adapter.homeDir],
   };
 }

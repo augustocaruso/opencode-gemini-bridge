@@ -157,6 +157,32 @@ test("setupUx writes an absolute Windows ogb shim path for startup sync", () => 
   assert.deepEqual(startupConfig.syncArgs, ["startup-sync"]);
 });
 
+test("setupUx prefers the installed ogb command for POSIX startup sync", () => {
+  const root = tempRoot();
+  const homeDir = path.join(root, "home");
+  const configDir = path.join(root, "config", "opencode");
+  const projectRoot = path.join(root, "project");
+  const binDir = path.join(root, "bin");
+  const ogbBin = path.join(binDir, "ogb");
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(ogbBin, "#!/bin/sh\nexit 0\n", "utf8");
+  fs.chmodSync(ogbBin, 0o755);
+
+  setupUx({
+    homeDir,
+    configDir,
+    projectRoot,
+    env: { PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}` },
+    installOpenCode: false,
+    installPlugins: false,
+  });
+
+  const startupConfig = readJson(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-startup-sync.json"));
+  assert.equal(startupConfig.command, ogbBin);
+  assert.deepEqual(startupConfig.baseArgs, ["--project", homeDir]);
+});
+
 test("setupUx removes the retired global dev-server command and overwrites global AGENTS.md", () => {
   const root = tempRoot();
   const homeDir = path.join(root, "home");

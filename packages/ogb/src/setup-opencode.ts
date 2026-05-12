@@ -1211,6 +1211,17 @@ export function defaultCommandPlan(options: SetupOpenCodeOptions): SetupCommandP
     };
   }
 
+  if (!options.baseArgs) {
+    const ogbCommand = resolveCommand("ogb", { homeDir: options.homeDir });
+    if (ogbCommand) {
+      return {
+        command: ogbCommand,
+        baseArgs: [],
+        syncArgs: options.syncArgs ?? ["startup-sync"],
+      };
+    }
+  }
+
   const baseArgs = options.baseArgs ?? currentCliBaseArgs();
   if (baseArgs.length > 0) {
     return {
