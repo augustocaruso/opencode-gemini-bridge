@@ -319,7 +319,7 @@ test("refreshLimits refreshes expired Anthropic OAuth before reading usage", asy
   }
 });
 
-test("refreshLimits reports unavailable when OpenUsage and Gemini fallback are unavailable", async () => {
+test("refreshLimits stays quiet when optional OpenAI and Claude fallbacks are unavailable", async () => {
   const projectRoot = tempDir("ogb-limits-project-");
   const homeDir = tempDir("ogb-limits-home-");
   const previousFetch = globalThis.fetch;
@@ -337,7 +337,7 @@ test("refreshLimits reports unavailable when OpenUsage and Gemini fallback are u
     assert.equal(report.sources.openaiChatGPT?.status, "unavailable");
     assert.equal(report.sources.anthropicClaude?.status, "unavailable");
     assert.equal(report.sources.geminiCodeAssist.status, "unavailable");
-    assert.ok(report.warnings.some((warning) => warning.includes("OpenUsage offline")));
+    assert.equal(report.warnings.some((warning) => /OpenAI|Anthropic|Claude/.test(warning)), false);
   } finally {
     globalThis.fetch = previousFetch;
   }

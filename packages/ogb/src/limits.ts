@@ -606,7 +606,6 @@ export async function refreshLimits(options: LimitsOptions = {}): Promise<Limits
     warnings,
   });
 
-  if (openusage.status !== "ok" && openaiChatGPT.status !== "ok" && anthropicClaude.status !== "ok") warnings.push("OpenUsage offline; OpenAI/Anthropic native fallbacks unavailable.");
   if (openusage.status !== "ok" && openaiChatGPT.status === "ok") warnings.push("OpenUsage offline; OpenAI limits are using native ChatGPT OAuth fallback.");
   if (openusage.status !== "ok" && anthropicClaude.status === "ok") warnings.push("OpenUsage offline; Claude limits are using native Anthropic OAuth fallback.");
   if (geminiCodeAssist.status !== "ok" && !hasGeminiProvider(providers)) warnings.push("Gemini Code Assist quota unavailable; /gquota remains the manual fallback.");

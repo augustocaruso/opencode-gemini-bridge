@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.24 - Warnings opcionais silenciosos
+
+- Para de persistir warning quando OpenUsage esta offline e os fallbacks opcionais de OpenAI/Claude nao estao autenticados.
+- Mantem o estado interno das fontes como `unavailable`, sem transformar ausencia de provedor opcional em acao para o usuario.
+
 ## 0.1.2 - Gemini auth resiliente e update de extensoes
 
 - Faz `ogb check` atualizar Gemini Extensions antes do sync, com `--no-extension-update` para pular a etapa quando necessario.
