@@ -231,6 +231,34 @@ function copyDir(src: string, dst: string, extensionDir: string): void {
   copyEntry(src, dst);
 }
 
+function projectedDirMatchesSource(options: { sourceDir: string; targetDir: string; sourceBaseDir: string }): boolean {
+  if (!dirExists(options.targetDir)) return false;
+
+  const sourceFiles = listFilesRecursive(options.sourceDir).map((filePath) => relativeTo(options.sourceDir, filePath)).sort();
+  const targetFiles = listFilesRecursive(options.targetDir).map((filePath) => relativeTo(options.targetDir, filePath)).sort();
+  if (sourceFiles.length !== targetFiles.length) return false;
+
+  for (let index = 0; index < sourceFiles.length; index += 1) {
+    if (sourceFiles[index] !== targetFiles[index]) return false;
+  }
+
+  for (const relFile of sourceFiles) {
+    const sourcePath = path.join(options.sourceDir, ...relFile.split("/"));
+    const targetPath = path.join(options.targetDir, ...relFile.split("/"));
+    if (!fileExists(targetPath)) return false;
+
+    if (isTextProjectionFile(sourcePath)) {
+      const projected = resolveExtensionPlaceholders(fs.readFileSync(sourcePath, "utf8"), options.sourceBaseDir);
+      if (fs.readFileSync(targetPath, "utf8") !== projected) return false;
+      continue;
+    }
+
+    if (sha256File(sourcePath) !== sha256File(targetPath)) return false;
+  }
+
+  return true;
+}
+
 const GLOBAL_OPENCODE_PREFIX = ".config/opencode";
 const GLOBAL_ANTIGRAVITY_PREFIX = ".gemini/antigravity";
 const ANTIGRAVITY_MCP_CONFIG_REL_PATH = `${GLOBAL_ANTIGRAVITY_PREFIX}/mcp_config.json`;
@@ -1505,6 +1533,21 @@ function copyManagedSkillDir(options: {
   if (options.dryRun) return { promoted: options.reportDir };
 
   const previousHash = managedHashFor(options.state, reportSkillPath, "ogb");
+  if (dirExists(targetDir) && !previousHash && projectedDirMatchesSource({
+    sourceDir: options.sourceDir,
+    targetDir,
+    sourceBaseDir: options.sourceBaseDir,
+  })) {
+    recordManagedSkillDir({
+      state: options.state,
+      targetDir,
+      reportDir: options.reportDir,
+      projection: options.projection,
+      origin: options.origin,
+    });
+    return { promoted: options.reportDir };
+  }
+
   if (dirExists(targetDir) && !options.force && !previousHash) {
     return { warning: `${options.label} conflict: ${options.reportDir} exists and is not managed by ogb; use --force to overwrite` };
   }

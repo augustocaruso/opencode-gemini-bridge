@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.25 - Migração segura de skills Antigravity
+
+- Adota projeções Antigravity já existentes quando o conteúdo é idêntico ao que o OGB geraria, registrando-as no estado gerenciado sem overwrite.
+- Mantém conflito para diretórios diferentes ou editados manualmente, preservando o contrato de só remover/sobrescrever arquivos gerenciados.
+- Cobre a migração com testes para adoção segura e preservação de conteúdo não gerenciado.
+
 ## 0.1.24 - Warnings opcionais silenciosos
 
 - Para de persistir warning quando OpenUsage esta offline e os fallbacks opcionais de OpenAI/Claude nao estao autenticados.

@@ -543,6 +543,59 @@ test("syncToOpenCode projects Gemini skills to global Antigravity skills", () =>
   ));
 });
 
+test("syncToOpenCode adopts identical unmanaged Antigravity skill projections", () => {
+  const projectRoot = tempProject();
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));
+  const extensionDir = path.join(homeDir, ".gemini", "extensions", "study-pack");
+  const extensionSkillDir = path.join(extensionDir, "skills", "review-notes");
+  const projectedSkillDir = path.join(homeDir, ".gemini", "antigravity", "skills", "review-notes");
+  fs.mkdirSync(path.join(extensionSkillDir, "references"), { recursive: true });
+  fs.mkdirSync(path.join(projectedSkillDir, "references"), { recursive: true });
+  fs.writeFileSync(path.join(extensionSkillDir, "SKILL.md"), `---\nname: review-notes\ndescription: Review notes.\n---\n# Review\nUse ${"${extensionPath}"}${"${/}"}references${"${/}"}guide.md\n`);
+  fs.writeFileSync(path.join(extensionSkillDir, "references", "guide.md"), `Bundle: ${"${extensionPath}"}\n`);
+  fs.writeFileSync(path.join(projectedSkillDir, "SKILL.md"), `---\nname: review-notes\ndescription: Review notes.\n---\n# Review\nUse ${path.join(extensionDir, "references", "guide.md")}\n`);
+  fs.writeFileSync(path.join(projectedSkillDir, "references", "guide.md"), `Bundle: ${extensionDir}\n`);
+
+  const report = syncToOpenCode({ projectRoot, homeDir, rulesyncMode: "off", silent: true });
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, ".opencode", "generated", "ogb-sync-state.json"), "utf8"));
+
+  assert.equal(
+    report.warnings.some((warning) => warning.includes(".gemini/antigravity/skills/review-notes exists and is not managed")),
+    false,
+  );
+  assert.ok(report.projectedAntigravitySkills.includes(".gemini/antigravity/skills/review-notes"));
+  assert.ok(state.managedFiles.some((file: { path: string; kind?: string; projection?: string }) =>
+    file.path === ".gemini/antigravity/skills/review-notes/SKILL.md"
+    && file.kind === "skill"
+    && file.projection === "antigravity"
+  ));
+  assert.ok(state.managedFiles.some((file: { path: string; kind?: string; projection?: string }) =>
+    file.path === ".gemini/antigravity/skills/review-notes/references/guide.md"
+    && file.kind === "skill"
+    && file.projection === "antigravity"
+  ));
+});
+
+test("syncToOpenCode preserves different unmanaged Antigravity skill projections", () => {
+  const projectRoot = tempProject();
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));
+  const extensionDir = path.join(homeDir, ".gemini", "extensions", "study-pack");
+  const extensionSkillDir = path.join(extensionDir, "skills", "review-notes");
+  const projectedSkillDir = path.join(homeDir, ".gemini", "antigravity", "skills", "review-notes");
+  fs.mkdirSync(extensionSkillDir, { recursive: true });
+  fs.mkdirSync(projectedSkillDir, { recursive: true });
+  fs.writeFileSync(path.join(extensionSkillDir, "SKILL.md"), "---\nname: review-notes\ndescription: Review notes.\n---\n# Review\n");
+  fs.writeFileSync(path.join(projectedSkillDir, "SKILL.md"), "---\nname: review-notes\ndescription: Manual edit.\n---\n# Manual\n");
+
+  const report = syncToOpenCode({ projectRoot, homeDir, rulesyncMode: "off", silent: true });
+  const state = JSON.parse(fs.readFileSync(path.join(projectRoot, ".opencode", "generated", "ogb-sync-state.json"), "utf8"));
+
+  assert.ok(report.warnings.some((warning) => warning.includes(".gemini/antigravity/skills/review-notes exists and is not managed")));
+  assert.equal(report.projectedAntigravitySkills.includes(".gemini/antigravity/skills/review-notes"), false);
+  assert.equal(fs.readFileSync(path.join(projectedSkillDir, "SKILL.md"), "utf8"), "---\nname: review-notes\ndescription: Manual edit.\n---\n# Manual\n");
+  assert.equal(state.managedFiles.some((file: { path: string }) => file.path.startsWith(".gemini/antigravity/skills/review-notes/")), false);
+});
+
 test("syncToOpenCode projects global Gemini MCPs to Antigravity mcp_config", () => {
   const projectRoot = tempProject();
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));
