@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.34 - UI rica compacta em terminais curtos
+
+- Evita o fallback de tela cheia do Ink quando o painel do update passa da altura do terminal.
+- Compacta TODOs, problemas e proximos passos em terminais curtos para manter o spinner incremental.
+- Adiciona testes que falham se ticks do spinner ou relatorios finais emitirem `clearTerminal`.
+
 ## 0.1.33 - Ink 7 com render incremental
 
 - Migra a UI rica para Ink 7 e assume Node.js >=22 como requisito oficial.

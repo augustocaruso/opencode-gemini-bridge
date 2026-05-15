@@ -141,6 +141,10 @@ const MAX_DISPLAY_LINE_LENGTH = 280;
 const MIN_RITUAL_UI_COLUMNS = 80;
 const RITUAL_UI_SPINNER_INTERVAL_MS = 1000;
 const RITUAL_UI_MAX_FPS = 10;
+const DEFAULT_RITUAL_UI_ROWS = 40;
+const COMPACT_RITUAL_ROWS = 34;
+const COMPACT_RITUAL_STEPS = 6;
+const TIGHT_RITUAL_STEPS = 4;
 
 function isTransferProgressLine(line: string): boolean {
   if (/^% Total\s+% Received\s+% Xferd/.test(line)) return true;
@@ -573,25 +577,25 @@ function MetricRow(props: { metric: RitualMetric }) {
   );
 }
 
-function TodoRow(props: { step: LiveRitualStep; spinner: string }) {
+function TodoRow(props: { step: LiveRitualStep; spinner: string; compact?: boolean }) {
   const tone = toneFromProgress(props.step.status);
   const active = props.step.status === "running";
   const muted = props.step.status === "queued" || props.step.status === "skipped";
   return React.createElement(
     Box,
-    { flexDirection: "column", marginTop: 1 },
+    { flexDirection: "column", marginTop: props.compact ? 0 : 1 },
     React.createElement(
       Box,
       { flexDirection: "row" },
       React.createElement(Text, { color: colorFromTone(tone), bold: active || props.step.status === "fail" || props.step.status === "warn" }, `${statusText(props.step.status, props.spinner).padEnd(5)} `),
       React.createElement(Text, { bold: active, color: muted ? "gray" : undefined }, props.step.label),
     ),
-    props.step.detail
+    !props.compact && props.step.detail
       ? React.createElement(Box, { marginLeft: 6 },
         React.createElement(Text, { color: "gray" }, props.step.detail),
       )
       : null,
-    props.step.message
+    !props.compact && props.step.message
       ? React.createElement(Box, { marginLeft: 6 },
         React.createElement(Text, { color: props.step.status === "fail" ? "red" : props.step.status === "warn" ? "yellow" : "gray" }, props.step.message),
       )
@@ -599,24 +603,28 @@ function TodoRow(props: { step: LiveRitualStep; spinner: string }) {
   );
 }
 
-function BulletList(props: { title: string; items: string[]; tone?: RitualTone }) {
+function BulletList(props: { title: string; items: string[]; tone?: RitualTone; limit?: number }) {
   if (props.items.length === 0) return null;
+  const limit = Math.max(0, props.limit ?? 5);
   return React.createElement(
     Box,
     { flexDirection: "column", marginTop: 1 },
     React.createElement(SectionTitle, null, props.title),
-    ...props.items.slice(0, 5).map((item, index) => React.createElement(Box, { key: `${props.title}-${index}`, marginTop: index === 0 ? 0 : 1 },
+    ...props.items.slice(0, limit).map((item, index) => React.createElement(Box, { key: `${props.title}-${index}`, marginTop: index === 0 ? 0 : 1 },
       React.createElement(Text, { color: props.tone ? colorFromTone(props.tone) : "gray" }, `- ${item}`),
     )),
   );
 }
 
-function useTerminalWidth(): number {
+function useTerminalSize(): { width: number; rows: number } {
   const { stdout } = useStdout();
-  const readWidth = () => Math.max(20, stdout.columns ?? process.stdout.columns ?? 100);
-  const [width, setWidth] = useState(readWidth);
+  const readSize = () => ({
+    width: Math.max(20, stdout.columns ?? process.stdout.columns ?? 100),
+    rows: Math.max(10, stdout.rows ?? process.stdout.rows ?? DEFAULT_RITUAL_UI_ROWS),
+  });
+  const [size, setSize] = useState(readSize);
   useEffect(() => {
-    const onResize = () => setWidth(readWidth());
+    const onResize = () => setSize(readSize());
     stdout.on?.("resize", onResize);
     process.stdout.on?.("resize", onResize);
     onResize();
@@ -625,13 +633,34 @@ function useTerminalWidth(): number {
       process.stdout.off?.("resize", onResize);
     };
   }, [stdout]);
-  return width;
+  return size;
 }
 
-function RitualPanel(props: { model: LiveRitualModel; animate: boolean }) {
+function compactStepWindow(steps: LiveRitualStep[], currentStepId: string | undefined, maxSteps: number): LiveRitualStep[] {
+  if (steps.length <= maxSteps) return steps;
+  const currentIndex = Math.max(0, steps.findIndex((step) => step.stepId === currentStepId));
+  const start = Math.min(Math.max(0, currentIndex - 2), Math.max(0, steps.length - maxSteps));
+  return steps.slice(start, start + maxSteps);
+}
+
+function compactFinalSteps(steps: LiveRitualStep[], maxSteps: number): LiveRitualStep[] {
+  if (steps.length <= maxSteps) return steps;
+  const problemIds = new Set(
+    steps
+      .filter((step) => step.status === "fail" || step.status === "warn")
+      .map((step) => step.stepId),
+  );
+  if (problemIds.size > 0) return steps.filter((step) => problemIds.has(step.stepId)).slice(0, maxSteps);
+  const skippedIds = new Set(steps.filter((step) => step.status === "skipped").map((step) => step.stepId));
+  if (skippedIds.size === 0) return steps.slice(-maxSteps);
+  const importantIds = skippedIds;
+  return steps.filter((step) => importantIds.has(step.stepId)).slice(0, maxSteps);
+}
+
+export function RitualPanel(props: { model: LiveRitualModel; animate: boolean }) {
   const model = props.model;
   const visibleSteps = visibleTodoSteps(model.steps);
-  const width = useTerminalWidth();
+  const { width, rows } = useTerminalSize();
   const animation = useAnimation({
     interval: RITUAL_UI_SPINNER_INTERVAL_MS,
     isActive: props.animate && !model.final,
@@ -647,6 +676,15 @@ function RitualPanel(props: { model: LiveRitualModel; animate: boolean }) {
   const headerStatus = model.final ? elapsed : "running";
   const borderColor = model.final ? colorFromTone(model.tone) : "gray";
   const headline = model.final ? model.statusLabel : "RUN";
+  const compact = rows <= COMPACT_RITUAL_ROWS || visibleSteps.length > COMPACT_RITUAL_STEPS || (model.final && model.callouts.length > 2);
+  const maxSteps = rows <= 28 ? TIGHT_RITUAL_STEPS : COMPACT_RITUAL_STEPS;
+  const displayedSteps = compact
+    ? model.final
+      ? compactFinalSteps(visibleSteps, maxSteps)
+      : compactStepWindow(visibleSteps, current?.stepId ?? model.currentStepId, maxSteps)
+    : visibleSteps;
+  const bulletLimit = compact ? rows <= 28 ? 1 : 2 : 5;
+  const todoTitle = compact && displayedSteps.length < visibleSteps.length ? `TODOs ${displayedSteps.length}/${visibleSteps.length}` : "TODOs";
 
   return React.createElement(
     Box,
@@ -679,12 +717,12 @@ function RitualPanel(props: { model: LiveRitualModel; animate: boolean }) {
       )
       : null,
     React.createElement(Box, { flexDirection: "column", marginTop: 1 },
-      React.createElement(SectionTitle, null, "TODOs"),
-      ...visibleSteps.map((step) => React.createElement(TodoRow, { key: step.stepId, step, spinner })),
+      React.createElement(SectionTitle, null, todoTitle),
+      ...displayedSteps.map((step) => React.createElement(TodoRow, { key: step.stepId, step, spinner, compact })),
     ),
-    React.createElement(BulletList, { title: model.tone === "fail" ? "Problems" : "Notes", items: model.callouts, tone: model.tone === "fail" ? "fail" : "warn" }),
-    React.createElement(BulletList, { title: "Next", items: model.next }),
-    React.createElement(BulletList, { title: "Reports", items: model.files }),
+    React.createElement(BulletList, { title: model.tone === "fail" ? "Problems" : "Notes", items: model.callouts, tone: model.tone === "fail" ? "fail" : "warn", limit: bulletLimit }),
+    React.createElement(BulletList, { title: "Next", items: model.next, limit: bulletLimit }),
+    React.createElement(BulletList, { title: "Reports", items: model.files, limit: compact ? 1 : 5 }),
   );
 }
 

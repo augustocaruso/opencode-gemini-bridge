@@ -4,7 +4,8 @@ import test from "node:test";
 import React from "react";
 import { Box, Text, render as renderInk } from "ink";
 import { buildInstallerPlan } from "./installer-planner.js";
-import { applyRitualProgressEvent, cleanInkFrame, createLiveRitualModel, failLiveRitualModel, finishLiveRitualModel, ritualViewModel, shouldAnimateRitualUi, shouldUseRitualUi } from "./ritual-ui.js";
+import { updateProgressSteps } from "./ritual-progress.js";
+import { applyRitualProgressEvent, cleanInkFrame, createLiveRitualModel, failLiveRitualModel, finishLiveRitualModel, finishLiveRitualModelFromProgressEvent, RitualPanel, ritualViewModel, shouldAnimateRitualUi, shouldUseRitualUi } from "./ritual-ui.js";
 import type { InstallReport } from "./install.js";
 import type { PassReport } from "./pass.js";
 import type { ResetReport } from "./reset.js";
@@ -154,6 +155,94 @@ test("Ink incremental rendering keeps spinner ticks from repainting the whole ri
   assert.equal(stats.clearTerminal, 0);
   assert.ok(stats.bytes < 600, `expected incremental spinner tick under 600 bytes, got ${JSON.stringify(stats)}`);
   assert.ok(stats.eraseLine < 3, `expected spinner tick to avoid full-panel line erases, got ${JSON.stringify(stats)}`);
+});
+
+test("update ritual spinner stays incremental when the terminal is shorter than the full plan", async () => {
+  const stdout = new CaptureTty();
+  stdout.rows = 24;
+  stdout.columns = 100;
+  const model = createLiveRitualModel("update", projectRoot, updateProgressSteps(), { now: 1000 });
+  const instance = renderInk(React.createElement(RitualPanel, { model, animate: true }), {
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    stderr: stdout as unknown as NodeJS.WriteStream,
+    stdin: process.stdin,
+    exitOnCtrlC: false,
+    patchConsole: false,
+    incrementalRendering: true,
+    maxFps: 10,
+  } as Parameters<typeof renderInk>[1] & { incrementalRendering: boolean; maxFps: number });
+
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  stdout.clear();
+  await new Promise((resolve) => setTimeout(resolve, 1150));
+
+  const stats = ansiWriteStats(stdout.text());
+  instance.unmount();
+  instance.cleanup();
+
+  assert.equal(stats.clearTerminal, 0, `spinner tick should not clear the terminal: ${JSON.stringify(stats)}`);
+  assert.ok(stats.bytes < 800, `expected compact spinner tick under 800 bytes, got ${JSON.stringify(stats)}`);
+});
+
+test("update ritual final report avoids Ink fullscreen clears on short terminals", async () => {
+  const stdout = new CaptureTty();
+  stdout.rows = 24;
+  stdout.columns = 100;
+  let model = createLiveRitualModel("update", projectRoot, updateProgressSteps(), { now: 1000 });
+  for (const step of model.steps) {
+    model = applyRitualProgressEvent(model, {
+      stepId: step.stepId,
+      label: step.label,
+      detail: step.detail,
+      status: step.stepId === "validate" || step.stepId === "dashboard" ? "fail" : step.stepId === "doctor" ? "warn" : "pass",
+      message: step.stepId === "validate" ? "Generated config marker: Generated config version is stale." : step.stepId === "doctor" ? "5 warning(s)" : undefined,
+    });
+  }
+
+  const instance = renderInk(React.createElement(RitualPanel, { model, animate: true }), {
+    stdout: stdout as unknown as NodeJS.WriteStream,
+    stderr: stdout as unknown as NodeJS.WriteStream,
+    stdin: process.stdin,
+    exitOnCtrlC: false,
+    patchConsole: false,
+    incrementalRendering: true,
+    maxFps: 10,
+  } as Parameters<typeof renderInk>[1] & { incrementalRendering: boolean; maxFps: number });
+
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const finalModel = finishLiveRitualModelFromProgressEvent(model, {
+    schemaVersion: "ogb.progress.v1",
+    ritualId: "test",
+    kind: "update",
+    timestamp: new Date(0).toISOString(),
+    type: "ritual.finished",
+    outcome: "fail",
+    exitCode: 2,
+    summary: {
+      statusLabel: "FAIL",
+      callouts: [
+        "doctor: stale generated file",
+        "doctor: stale sync state",
+        "validation: generated config marker failed",
+        "dashboard: validation failed",
+      ],
+      next: [
+        "Run `ogb check --plain --force` to inspect the post-update failure directly.",
+        "Run `ogb dashboard --plain` for the last persisted bridge state.",
+      ],
+    },
+    files: [`${projectRoot}/.opencode/generated/ogb-pass.json`, `${projectRoot}/.opencode/generated/ogb-dashboard.md`],
+  }, { now: 5000 });
+
+  stdout.clear();
+  instance.rerender(React.createElement(RitualPanel, { model: finalModel, animate: true }));
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
+  const stats = ansiWriteStats(stdout.text());
+  instance.unmount();
+  instance.cleanup();
+
+  assert.equal(stats.clearTerminal, 0, `final report should not clear the terminal: ${JSON.stringify(stats)}`);
 });
 
 test("Ink frame cleanup keeps the final rendered frame for transcript captures", () => {
