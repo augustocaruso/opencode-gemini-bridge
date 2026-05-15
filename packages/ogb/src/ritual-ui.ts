@@ -131,11 +131,42 @@ function countChangedWrites(report: InstallReport | ResetReport): number | undef
   return writes.filter((write) => write.status !== "unchanged").length;
 }
 
+const ANSI_ESCAPE_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
+const MAX_DISPLAY_LINE_LENGTH = 280;
+
+function isTransferProgressLine(line: string): boolean {
+  if (/^% Total\s+% Received\s+% Xferd/.test(line)) return true;
+  if (/^Dload\s+Upload\s+Total\s+Spent\s+Left\s+Speed$/.test(line)) return true;
+  if (/--:--:--/.test(line) && /^\d{1,3}\s+/.test(line)) return true;
+  return false;
+}
+
+function truncateDisplayLine(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  if (maxChars <= 3) return text.slice(0, maxChars);
+  return `${text.slice(0, maxChars - 3).trimEnd()}...`;
+}
+
+function compactDisplayLine(item: string | undefined, maxChars = MAX_DISPLAY_LINE_LENGTH): string | undefined {
+  const text = item
+    ?.replace(ANSI_ESCAPE_PATTERN, "")
+    .replace(/\r/g, "\n")
+    .split(/\n/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .filter((line) => !isTransferProgressLine(line))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return undefined;
+  return truncateDisplayLine(text, maxChars);
+}
+
 function uniqueLines(items: Array<string | undefined>, limit = 5): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const item of items) {
-    const text = item?.replace(/\s+/g, " ").trim();
+    const text = compactDisplayLine(item);
     if (!text || seen.has(text)) continue;
     seen.add(text);
     out.push(text);
@@ -356,10 +387,10 @@ export function applyRitualProgressEvent(model: LiveRitualModel, event: RitualPr
   const nextStep: LiveRitualStep = {
     stepId: event.stepId,
     label: event.label,
-    detail: event.detail ?? existing?.detail,
+    detail: compactDisplayLine(event.detail, 180) ?? existing?.detail,
     optional: existing?.optional,
     status: event.status,
-    message: event.message,
+    message: compactDisplayLine(event.message),
   };
   const steps = existingIndex >= 0
     ? model.steps.map((step, index) => index === existingIndex ? { ...step, ...nextStep } : step)

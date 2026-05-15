@@ -9,6 +9,14 @@ import type { SelfUpdateReport } from "./self-update.js";
 
 const projectRoot = "/tmp/ogb-project";
 const homeDir = "/tmp/ogb-home";
+const noisyBootstrapTail = [
+  "% Total    % Received % Xferd  Average Speed   Time    Time     Time  Current",
+  "                                 Dload  Upload   Total   Spent    Left  Speed",
+  "\r  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0",
+  "\r100  817k  100  817k    0     0   484k      0  0:00:01  0:00:01 --:--:-- 1261k",
+  "npm warn deprecated koa-router@14.0.0: Please use @koa/router instead, starting from v9!",
+  "sync: Antigravity skill conflict: .gemini/antigravity/skills/process-medical-chats was edited manually; use --force to overwrite",
+].join("\n");
 
 function passReport(overrides: Partial<PassReport> = {}): PassReport {
   return {
@@ -115,6 +123,22 @@ test("live progress events update the active todo without creating a second repo
     ["sync", "running"],
   ]);
   assert.match(model.steps[0].message ?? "", /Startup sync/);
+});
+
+test("live progress model compacts noisy bootstrap output before rendering", () => {
+  const model = applyRitualProgressEvent(createLiveRitualModel("update", projectRoot, [
+    { stepId: "install", label: "Apply the installer." },
+  ], { now: 1000 }), {
+    stepId: "install",
+    label: "Apply the installer.",
+    status: "fail",
+    message: noisyBootstrapTail,
+  });
+
+  const message = model.steps[0].message ?? "";
+  assert.match(message, /koa-router/);
+  assert.doesNotMatch(message, /% Total|--:--:--|\r/);
+  assert.ok(message.length <= 280);
 });
 
 test("finishing the live progress model turns the same todo list into the final report", () => {
@@ -304,4 +328,19 @@ test("update final model surfaces bootstrap tails and useful retry actions", () 
   assert.equal(model.statusLabel, "FAIL");
   assert.match(model.callouts.join("\n"), /npm is not recognized/);
   assert.match(model.next[0], /ogb update --plain/);
+});
+
+test("update final model compacts noisy bootstrap tails for the rich UI", () => {
+  const model = ritualViewModel("update", {
+    status: "error",
+    command: ["bash", "-lc", "bootstrap"],
+    plan: buildInstallerPlan({ intent: "update", projectRoot, homeDir, release: "v0.0.61" }),
+    message: "Bootstrap exited with code 1.",
+    stdoutTail: noisyBootstrapTail,
+  });
+
+  const text = model.callouts.join("\n");
+  assert.match(text, /koa-router/);
+  assert.doesNotMatch(text, /% Total|--:--:--|\r/);
+  assert.ok(model.callouts.every((item) => item.length <= 280));
 });

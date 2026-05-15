@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.28 - UI de update compacta logs ruidosos
+
+- Compacta mensagens exibidas pela UI rica antes de renderizar steps e callouts, removendo ANSI, carriage returns e medidores de transferencia do `curl`.
+- Limita linhas longas do painel para evitar que tails de bootstrap quebrem a borda ou poluam o TODO/final report.
+- Mantem os diagnosticos completos nos reports e no modo `--plain`.
+
 ## 0.1.27 - Update tolera warnings
 
 - Atualiza o sync para refrescar hashes gerenciados quando a skill Antigravity existente ja bate com a projecao atual, evitando falso conflito de edicao manual.
