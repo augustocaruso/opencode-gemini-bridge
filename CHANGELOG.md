@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.36 - Instalador global duravel
+
+- Corrige o bootstrap POSIX para instalar o OGB a partir de um tarball empacotado, nao de um diretorio temporario.
+- Evita que `/opt/homebrew/bin/ogb` vire um symlink quebrado depois da limpeza do `ogb-bootstrap.*`.
+- Adiciona teste que falha se o instalador voltar a fazer `npm install -g "$CLI_DIR"`.
+
 ## 0.1.35 - Permissoes de leitura no Plan
 
 - Adiciona uma allowlist compartilhada para comandos Bash somente-leitura em agentes OpenCode.

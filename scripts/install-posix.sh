@@ -210,6 +210,34 @@ repair_ogb_shim() {
   fi
 }
 
+install_ogb_package() {
+  local force_flag="${1:-0}"
+  local pack_dir
+  local package_tgz
+  local install_status=0
+
+  pack_dir="$(mktemp -d "${TMPDIR:-/tmp}/ogb-npm-pack.XXXXXX")"
+  if ! (cd "$CLI_DIR" && npm pack --pack-destination "$pack_dir"); then
+    rm -rf "$pack_dir"
+    return 1
+  fi
+
+  package_tgz="$(find "$pack_dir" -maxdepth 1 -type f -name 'opencode-gemini-bridge-*.tgz' -print -quit)"
+  if [[ -z "$package_tgz" || ! -f "$package_tgz" ]]; then
+    echo "npm pack did not produce an opencode-gemini-bridge tarball." >&2
+    rm -rf "$pack_dir"
+    return 1
+  fi
+
+  if [[ "$force_flag" -eq 1 ]]; then
+    npm install --prefix "$PREFIX" -g "$package_tgz" --force || install_status=$?
+  else
+    npm install --prefix "$PREFIX" -g "$package_tgz" || install_status=$?
+  fi
+  rm -rf "$pack_dir"
+  return "$install_status"
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CLI_DIR="$REPO_ROOT/packages/ogb"
@@ -307,16 +335,16 @@ npm --prefix "$CLI_DIR" run build
 
 OGB_BIN="$PREFIX/bin/ogb"
 echo "Installing ogb into $PREFIX..."
-if ! npm install --prefix "$PREFIX" -g "$CLI_DIR"; then
+if ! install_ogb_package 0; then
   echo "npm install did not complete; removing stale ogb shim and retrying with --force..."
   rm -f "$OGB_BIN"
-  npm install --prefix "$PREFIX" -g "$CLI_DIR" --force
+  install_ogb_package 1
 fi
 
 if ! repair_ogb_shim; then
   echo "ogb command shim was not created or did not run; retrying npm install with --force..."
   rm -f "$OGB_BIN"
-  npm install --prefix "$PREFIX" -g "$CLI_DIR" --force
+  install_ogb_package 1
   repair_ogb_shim
 fi
 

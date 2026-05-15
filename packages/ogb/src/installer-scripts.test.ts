@@ -82,6 +82,17 @@ test("linux POSIX installer persists env without macOS zsh config", () => {
   assert.doesNotMatch(linuxTargets, /\.config\/zsh/);
 });
 
+test("posix installer installs ogb from a packed tarball instead of linking a source directory", () => {
+  assertScriptExists("install-posix.sh");
+  const text = script("install-posix.sh");
+
+  assert.match(text, /install_ogb_package/);
+  assert.match(text, /cd "\$CLI_DIR" && npm pack --pack-destination/);
+  assert.match(text, /package_tgz/);
+  assert.match(text, /npm install --prefix "\$PREFIX" -g "\$package_tgz"/);
+  assert.doesNotMatch(text, /npm install --prefix "\$PREFIX" -g "\$CLI_DIR"/);
+});
+
 test("installers fail early when Node is older than 22", () => {
   const posix = script("install-posix.sh");
   const windows = script("install-windows.ps1");
