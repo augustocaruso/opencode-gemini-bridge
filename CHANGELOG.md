@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.30 - Update desliga UI rica em transcripts
+
+- Desliga automaticamente a UI Ink quando o terminal anuncia `TERM=dumb` ou o shell vem do Codex, evitando frames ANSI repetidos no transcript.
+- Mantem o modo texto/classico como fallback nesses ambientes, preservando a UI rica em terminais humanos interativos.
+
 ## 0.1.29 - Update mostra WARN quando post-check avisa
 
 - Faz a UI rica do update exibir `WARN` quando o bootstrap aplica com sucesso, mas o post-check termina com avisos.

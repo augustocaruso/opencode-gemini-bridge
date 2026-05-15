@@ -508,7 +508,15 @@ function progressStatusFromTone(tone: RitualTone): RitualProgressStatus {
 export function shouldUseRitualUi(options: RitualUiOptions = {}): boolean {
   if (options.json || options.plain || options.progressJson) return false;
   const env = options.env ?? process.env;
-  if (env.CI || env.OGB_PLAIN === "1" || env.OGB_UI === "0") return false;
+  const term = (env.TERM ?? "").toLowerCase();
+  if (
+    env.CI
+    || env.CODEX_CI
+    || env.CODEX_SHELL
+    || term === "dumb"
+    || env.OGB_PLAIN === "1"
+    || env.OGB_UI === "0"
+  ) return false;
   return options.stdoutIsTTY ?? process.stdout.isTTY ?? false;
 }
 

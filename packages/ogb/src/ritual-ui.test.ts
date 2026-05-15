@@ -67,6 +67,9 @@ test("rich ritual UI is opt-in to an interactive human terminal", () => {
   assert.equal(shouldUseRitualUi({ stdoutIsTTY: true, plain: true, env: {} }), false);
   assert.equal(shouldUseRitualUi({ stdoutIsTTY: true, progressJson: true, env: {} }), false);
   assert.equal(shouldUseRitualUi({ stdoutIsTTY: true, env: { CI: "true" } }), false);
+  assert.equal(shouldUseRitualUi({ stdoutIsTTY: true, env: { CODEX_CI: "1" } }), false);
+  assert.equal(shouldUseRitualUi({ stdoutIsTTY: true, env: { CODEX_SHELL: "1" } }), false);
+  assert.equal(shouldUseRitualUi({ stdoutIsTTY: true, env: { TERM: "dumb" } }), false);
   assert.equal(shouldUseRitualUi({ stdoutIsTTY: true, env: { OGB_PLAIN: "1" } }), false);
   assert.equal(shouldUseRitualUi({ stdoutIsTTY: true, env: { OGB_UI: "0" } }), false);
 });
