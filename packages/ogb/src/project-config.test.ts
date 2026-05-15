@@ -22,6 +22,16 @@ test("ensureProjectConfig creates a conservative OpenCode config and avoids manu
   assert.equal(parsed.agent.agent.mode, "primary");
   assert.equal(parsed.agent.agent.permission.question, "allow");
   assert.equal(parsed.agent.agent.permission.plan_enter, "allow");
+  assert.equal(parsed.agent.agent.permission.bash["*"], "ask");
+  assert.equal(parsed.agent.agent.permission.bash["git status*"], "allow");
+  assert.equal(parsed.agent.agent.permission.bash["rg*"], "allow");
+  assert.equal(parsed.agent.agent.permission.bash["git push*"], "deny");
+  assert.equal(parsed.agent.plan.permission.bash["*"], "ask");
+  assert.equal(parsed.agent.plan.permission.bash["git status*"], "allow");
+  assert.equal(parsed.agent.plan.permission.bash["rg*"], "allow");
+  assert.equal(parsed.agent.plan.permission.bash["git push*"], "deny");
+  assert.equal(parsed.agent.plan.permission.edit, "ask");
+  assert.equal(parsed.agent.plan.permission.question, "allow");
 
   const unchanged = ensureProjectConfig({ projectRoot });
   assert.equal(unchanged.status, "unchanged");

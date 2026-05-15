@@ -112,6 +112,23 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function mergePermissionRecord(current: unknown, preset: unknown): Record<string, unknown> {
+  const currentRecord = asRecord(current);
+  const presetRecord = asRecord(preset);
+  const merged: Record<string, unknown> = { ...currentRecord };
+  for (const [key, value] of Object.entries(presetRecord)) {
+    const currentValue = currentRecord[key];
+    merged[key] = isRecord(currentValue) && isRecord(value)
+      ? { ...currentValue, ...value }
+      : value;
+  }
+  return merged;
+}
+
 function unique(values: string[]): string[] {
   return [...new Set(values.map((item) => item.trim()).filter(Boolean))];
 }
@@ -189,6 +206,7 @@ function mergeGlobalConfig(current: Record<string, unknown>, defaultAgent = "age
   const agent = asRecord(current.agent);
   const buildAgent = asRecord(agent.build);
   const primaryAgent = asRecord(agent.agent);
+  const planAgent = asRecord(agent.plan);
   const compactionAgent = asRecord(agent.compaction);
 
   return {
@@ -208,10 +226,12 @@ function mergeGlobalConfig(current: Record<string, unknown>, defaultAgent = "age
       agent: {
         ...primaryAgent,
         ...preset.agent.agent,
-        permission: {
-          ...asRecord(primaryAgent.permission),
-          ...asRecord(preset.agent.agent.permission),
-        },
+        permission: mergePermissionRecord(primaryAgent.permission, preset.agent.agent.permission),
+      },
+      plan: {
+        ...planAgent,
+        ...asRecord(preset.agent.plan),
+        permission: mergePermissionRecord(planAgent.permission, asRecord(preset.agent.plan).permission),
       },
       compaction: {
         ...compactionAgent,

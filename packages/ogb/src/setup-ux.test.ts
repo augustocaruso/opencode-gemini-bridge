@@ -82,6 +82,16 @@ test("setupUx writes global OpenCode UX profile and project fallback profile", (
   assert.equal(globalConfig.default_agent, "YOLO");
   assert.equal(globalConfig.agent.build.disable, true);
   assert.equal(globalConfig.agent.agent.permission.question, "allow");
+  assert.equal(globalConfig.agent.agent.permission.bash["*"], "ask");
+  assert.equal(globalConfig.agent.agent.permission.bash["git status*"], "allow");
+  assert.equal(globalConfig.agent.agent.permission.bash["rg*"], "allow");
+  assert.equal(globalConfig.agent.agent.permission.bash["git push*"], "deny");
+  assert.equal(globalConfig.agent.plan.permission.bash["*"], "ask");
+  assert.equal(globalConfig.agent.plan.permission.bash["git status*"], "allow");
+  assert.equal(globalConfig.agent.plan.permission.bash["rg*"], "allow");
+  assert.equal(globalConfig.agent.plan.permission.bash["git push*"], "deny");
+  assert.equal(globalConfig.agent.plan.permission.edit, "ask");
+  assert.equal(globalConfig.agent.plan.permission.question, "allow");
   assert.equal(globalConfig.agent.compaction.model, "openai/gpt-5.4-mini");
   assert.equal(globalConfig.permission.websearch, "allow");
   assert.equal(globalConfig.permission.bash["npm run dev*"], "allow");
@@ -343,6 +353,23 @@ test("setupUx lets OGB-managed opencode.json fields win while preserving unknown
     plugin: ["user-plugin@1.0.0"],
     default_agent: "agent",
     custom_user_field: { keep: true },
+    agent: {
+      agent: {
+        permission: {
+          bash: {
+            "hx*": "allow",
+          },
+        },
+      },
+      plan: {
+        permission: {
+          bash: {
+            "custom-read*": "allow",
+          },
+          edit: "deny",
+        },
+      },
+    },
   }, null, 2) + "\n", "utf8");
 
   const report = setupUx({
@@ -358,6 +385,11 @@ test("setupUx lets OGB-managed opencode.json fields win while preserving unknown
   assert.equal(globalConfig.custom_user_field.keep, true);
   assert.equal(globalConfig.default_agent, "YOLO");
   assert.deepEqual(globalConfig.plugin, expectedGlobalPlugins(configDir));
+  assert.equal(globalConfig.agent.agent.permission.bash["hx*"], "allow");
+  assert.equal(globalConfig.agent.agent.permission.bash["rg*"], "allow");
+  assert.equal(globalConfig.agent.plan.permission.bash["custom-read*"], "allow");
+  assert.equal(globalConfig.agent.plan.permission.bash["rg*"], "allow");
+  assert.equal(globalConfig.agent.plan.permission.edit, "ask");
   assert.equal(write?.status, "updated");
   assert.ok(write?.backup);
   const backup = readJson(write.backup);

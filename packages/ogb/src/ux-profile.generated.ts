@@ -1,4 +1,5 @@
 import { UX_PROFILE_SCHEMA, type UxProfilePreset } from "./ux-profile.js";
+import { PLAN_READ_ONLY_BASH_PERMISSIONS } from "./opencode-permissions.js";
 
 export const UX_PROFILE_PRESET = {
   "schema": UX_PROFILE_SCHEMA,
@@ -113,8 +114,22 @@ export const UX_PROFILE_PRESET = {
         "mode": "primary",
         "description": "Agente principal para conversar, editar e executar ferramentas conforme permissoes.",
         "permission": {
+          "bash": {
+            ...PLAN_READ_ONLY_BASH_PERMISSIONS
+          },
           "question": "allow",
           "plan_enter": "allow"
+        }
+      },
+      "plan": {
+        "mode": "primary",
+        "description": "Planeja e inspeciona o workspace sem modificar arquivos.",
+        "permission": {
+          "bash": {
+            ...PLAN_READ_ONLY_BASH_PERMISSIONS
+          },
+          "edit": "ask",
+          "question": "allow"
         }
       },
       "compaction": {

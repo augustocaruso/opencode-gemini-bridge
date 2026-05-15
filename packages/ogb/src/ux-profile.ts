@@ -15,6 +15,7 @@ export interface UxProfileGlobalConfig {
   agent: {
     build: Record<string, unknown>;
     agent: Record<string, unknown>;
+    plan?: Record<string, unknown>;
     compaction: Record<string, unknown>;
   };
 }

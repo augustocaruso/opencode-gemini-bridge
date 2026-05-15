@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.35 - Permissoes de leitura no Plan
+
+- Adiciona uma allowlist compartilhada para comandos Bash somente-leitura em agentes OpenCode.
+- Projeta a allowlist no agente padrao e no agente Plan, mantendo edicoes como `ask` e comandos destrutivos como `deny`.
+- Faz o `setup-ux` mesclar permissoes aninhadas sem apagar entradas manuais existentes.
+
 ## 0.1.34 - UI rica compacta em terminais curtos
 
 - Evita o fallback de tela cheia do Ink quando o painel do update passa da altura do terminal.
