@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.29 - Update mostra WARN quando post-check avisa
+
+- Faz a UI rica do update exibir `WARN` quando o bootstrap aplica com sucesso, mas o post-check termina com avisos.
+- Evita o texto enganoso de final limpo em updates aplicados com warnings.
+
 ## 0.1.28 - UI de update compacta logs ruidosos
 
 - Compacta mensagens exibidas pela UI rica antes de renderizar steps e callouts, removendo ANSI, carriage returns e medidores de transferencia do `curl`.

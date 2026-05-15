@@ -313,8 +313,10 @@ function resetModel(report: ResetReport): RitualViewModel {
 }
 
 function updateModel(report: SelfUpdateReport): RitualViewModel {
-  const tone = toneFromOutcome(report.status);
   const postUpdateTone = toneFromOutcome(report.postUpdate?.status);
+  const tone = report.status === "applied" && postUpdateTone === "warn"
+    ? "warn"
+    : toneFromOutcome(report.status);
   const releaseFlagIndex = report.plan.delegation.args.indexOf("--release");
   const release = releaseFlagIndex >= 0 ? report.plan.delegation.args[releaseFlagIndex + 1] : undefined;
   const bootstrapDetail = report.status === "preview"

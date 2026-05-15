@@ -274,6 +274,24 @@ test("install, reset and update models expose user-facing next steps", () => {
   assert.ok(ritualViewModel("update", update).next.some((item) => /Restart OpenCode/.test(item)));
 });
 
+test("update final model shows warning when the post-update check warns", () => {
+  const model = ritualViewModel("update", {
+    status: "applied",
+    command: ["ogb", "update"],
+    plan: buildInstallerPlan({ intent: "update", projectRoot, homeDir, release: "v0.0.61" }),
+    message: "OGB bootstrap completed. Full bridge check ran with warnings; see ogb check/dashboard for details.",
+    postUpdate: {
+      status: "warn",
+      command: ["ogb", "check"],
+      message: "Post-update check completed with warnings.",
+      exitCode: 1,
+    },
+  });
+
+  assert.equal(model.statusLabel, "WARN");
+  assert.equal(model.tone, "warn");
+});
+
 test("install and reset final models keep nested check blockers specific", () => {
   const failingCheck = passReport({
     outcome: "fail",
