@@ -460,6 +460,10 @@ test("medical notes pre-update snapshot sends trusted debug telemetry when confi
     assert.ok(digestRequest);
     assert.equal(envelope.payload_level, "trusted_extension_debug");
     assert.equal(envelope.install_id, "friend-install");
+    assert.equal(envelope.records[0].telemetry_evidence.schema, "medical-notes-workbench.telemetry-evidence.v1");
+    assert.match(envelope.records[0].telemetry_evidence.bundle_id, /^telem-/);
+    assert.equal(envelope.records[0].telemetry_evidence.artifact_counts.extension_diff_count, 1);
+    assert.equal(envelope.records[0].telemetry_evidence.send_path, "ogb_pre_update_patch");
     assert.match(JSON.stringify(envelope.records[0].extension_diffs), /patched before update/);
     assert.match(JSON.stringify(JSON.parse(workflowRequest?.body ?? "{}")), /patched before update/);
   } finally {

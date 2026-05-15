@@ -18,6 +18,7 @@ export interface RitualProgressDefinition {
   stepId: string;
   label: string;
   detail?: string;
+  optional?: boolean;
 }
 
 export interface RitualProgressMetric {
@@ -109,6 +110,7 @@ export interface UpdateProgressOptions {
   setup?: boolean;
   installOpencode?: boolean;
   dryRun?: boolean;
+  windows?: boolean;
 }
 
 export const CHECK_PROGRESS_STEPS = {
@@ -156,31 +158,37 @@ export const CHECK_PROGRESS_STEPS = {
     stepId: "patches-pre-extension-update",
     label: "Apply OGB patches before Gemini extension updates.",
     detail: "Runs authorized, versioned fixes that must happen before Gemini CLI changes.",
+    optional: true,
   },
   patchPostExtensionUpdate: {
     stepId: "patches-post-extension-update",
     label: "Apply OGB patches after Gemini extension updates.",
     detail: "Runs authorized, versioned fixes that depend on updated Gemini extensions.",
+    optional: true,
   },
   patchPreSync: {
     stepId: "patches-pre-sync",
     label: "Apply OGB patches before sync.",
     detail: "Prepares managed files and state before projecting Gemini resources.",
+    optional: true,
   },
   patchPostSync: {
     stepId: "patches-post-sync",
     label: "Apply OGB patches after sync.",
     detail: "Repairs or hardens managed files produced by the sync.",
+    optional: true,
   },
   patchPreDoctor: {
     stepId: "patches-pre-doctor",
     label: "Apply OGB patches before doctor.",
     detail: "Normalizes diagnostics state before inventory checks run.",
+    optional: true,
   },
   patchPostCheck: {
     stepId: "patches-post-check",
     label: "Apply OGB patches after check.",
     detail: "Records final repair state after validation, security, and dashboard.",
+    optional: true,
   },
 } as const satisfies Record<string, RitualProgressDefinition>;
 
@@ -291,10 +299,24 @@ export const UPDATE_PROGRESS_STEPS = {
 export function checkProgressSteps(options: CheckProgressOptions = {}): RitualProgressDefinition[] {
   const syncEnabled = options.sync !== false;
   const extensionUpdateEnabled = syncEnabled && options.extensionUpdate !== false;
+  const patchesEnabled = options.patches !== false;
   return [
     ...(options.setup === false ? [] : [CHECK_PROGRESS_STEPS.setup]),
-    ...(extensionUpdateEnabled ? [CHECK_PROGRESS_STEPS.extensionUpdate] : []),
-    ...(syncEnabled ? [CHECK_PROGRESS_STEPS.sync] : []),
+    ...(extensionUpdateEnabled
+      ? [
+        ...(patchesEnabled ? [CHECK_PROGRESS_STEPS.patchPreExtensionUpdate] : []),
+        CHECK_PROGRESS_STEPS.extensionUpdate,
+        ...(patchesEnabled ? [CHECK_PROGRESS_STEPS.patchPostExtensionUpdate] : []),
+      ]
+      : []),
+    ...(syncEnabled
+      ? [
+        ...(patchesEnabled ? [CHECK_PROGRESS_STEPS.patchPreSync] : []),
+        CHECK_PROGRESS_STEPS.sync,
+        ...(patchesEnabled ? [CHECK_PROGRESS_STEPS.patchPostSync] : []),
+      ]
+      : []),
+    ...(patchesEnabled ? [CHECK_PROGRESS_STEPS.patchPreDoctor] : []),
     CHECK_PROGRESS_STEPS.doctor,
     ...(options.acceptHooks ? [CHECK_PROGRESS_STEPS.hookReview] : []),
     ...(options.validation === false ? [] : [{
@@ -303,6 +325,7 @@ export function checkProgressSteps(options: CheckProgressOptions = {}): RitualPr
     }]),
     ...(options.security === false ? [] : [CHECK_PROGRESS_STEPS.security]),
     ...(options.dashboard === false ? [] : [CHECK_PROGRESS_STEPS.dashboard]),
+    ...(patchesEnabled ? [CHECK_PROGRESS_STEPS.patchPostCheck] : []),
   ];
 }
 
@@ -363,6 +386,7 @@ export function resetProgressSteps(options: ResetProgressOptions = {}): RitualPr
 }
 
 export function updateProgressSteps(options: UpdateProgressOptions = {}): RitualProgressDefinition[] {
+  const includePostCheckSteps = options.setup !== false && !options.dryRun;
   return [
     {
       ...UPDATE_PROGRESS_STEPS.resolve,
@@ -381,6 +405,7 @@ export function updateProgressSteps(options: UpdateProgressOptions = {}): Ritual
           ? "Verifies the bridge without installing OpenCode."
           : UPDATE_PROGRESS_STEPS.postCheck.detail,
     },
+    ...(includePostCheckSteps ? checkProgressSteps({ windows: options.windows }) : []),
   ];
 }
 

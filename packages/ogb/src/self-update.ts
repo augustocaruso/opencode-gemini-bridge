@@ -4,7 +4,7 @@ import { buildInstallerPlan, type InstallerPlan } from "./installer-planner.js";
 import { runNativeCommand, type NativeCommandResult, type NativeCommandSpec } from "./native-runner.js";
 import { createPlatformAdapter } from "./platform-adapter.js";
 import { normalizePathInput, resolveProjectPaths } from "./paths.js";
-import { emitRitualProgress, progressStatusFromOutcome, type RitualProgressSink } from "./ritual-progress.js";
+import { emitRitualProgress, progressStatusFromOutcome, RITUAL_PROGRESS_SCHEMA_VERSION, type RitualProgressJsonEvent, type RitualProgressSink, type RitualProgressStatus } from "./ritual-progress.js";
 import { writeStateRecord } from "./state-store.js";
 import { OGB_VERSION } from "./types.js";
 import type { RulesyncMode } from "./rulesync.js";
@@ -28,6 +28,7 @@ export interface SelfUpdateOptions {
   stdio?: "inherit" | "pipe";
   onProgress?: RitualProgressSink;
   runCommand?: (spec: NativeCommandSpec) => NativeCommandResult;
+  runPostUpdateCommand?: (spec: NativeCommandSpec) => NativeCommandResult;
 }
 
 export interface SelfUpdateReport {
@@ -237,6 +238,31 @@ export function buildPostUpdateRitualCommand(options: SelfUpdateOptions = {}, pl
   return [ogb, ...args];
 }
 
+function replayPostUpdateProgress(stdout: string, sink: RitualProgressSink | undefined): void {
+  if (!sink) return;
+  const statuses = new Set<RitualProgressStatus>(["queued", "running", "pass", "warn", "fail", "skipped"]);
+  for (const line of stdout.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let event: Partial<RitualProgressJsonEvent>;
+    try {
+      event = JSON.parse(trimmed) as Partial<RitualProgressJsonEvent>;
+    } catch {
+      continue;
+    }
+    if (event.schemaVersion !== RITUAL_PROGRESS_SCHEMA_VERSION || event.type !== "ritual.step") continue;
+    if (typeof event.stepId !== "string" || typeof event.label !== "string" || typeof event.status !== "string") continue;
+    if (!statuses.has(event.status as RitualProgressStatus)) continue;
+    emitRitualProgress(sink, {
+      stepId: event.stepId,
+      label: event.label,
+      detail: typeof event.detail === "string" ? event.detail : undefined,
+      status: event.status as RitualProgressStatus,
+      message: typeof event.message === "string" ? event.message : undefined,
+    });
+  }
+}
+
 function buildUpdatePlan(options: SelfUpdateOptions = {}, platform: NodeJS.Platform = process.platform): InstallerPlan {
   const paths = resolveProjectPaths(options.projectRoot);
   const rulesyncMode: RulesyncMode | undefined = options.rulesync === "auto" || options.rulesync === "off" || options.rulesync === "require"
@@ -274,9 +300,11 @@ export function runPostUpdateRitual(options: SelfUpdateOptions = {}): PostUpdate
   }
 
   const paths = resolveProjectPaths(options.projectRoot);
-  const result = runNativeCommand({
-    command: command[0],
-    args: command.slice(1),
+  const executionCommand = options.onProgress ? [...command, "--progress-json"] : command;
+  const runCommand = options.runPostUpdateCommand ?? runNativeCommand;
+  const result = runCommand({
+    command: executionCommand[0],
+    args: executionCommand.slice(1),
     cwd: paths.projectRoot,
     timeoutMs: 5 * 60_000,
     env: {
@@ -284,6 +312,7 @@ export function runPostUpdateRitual(options: SelfUpdateOptions = {}): PostUpdate
       NO_COLOR: process.env.NO_COLOR ?? "1",
     },
   });
+  replayPostUpdateProgress(result.stdout, options.onProgress);
   const stdoutTail = outputTail(result.stdout);
   const stderrTail = outputTail(result.stderr);
 

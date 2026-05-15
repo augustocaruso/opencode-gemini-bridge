@@ -67,6 +67,7 @@ test("setupUx writes global OpenCode UX profile and project fallback profile", (
 
   assert.equal(report.writes.some((write) => write.path.endsWith("opencode.json") && write.status === "created"), true);
   assert.equal(report.writes.some((write) => write.path.endsWith("agents/YOLO.md") && write.status === "created"), true);
+  assert.equal(report.writes.some((write) => write.path.endsWith("agents/YOLO-worker.md") && write.status === "created"), true);
   assert.equal(report.writes.some((write) => write.path.endsWith(".opencode/ogb.config.jsonc") && write.status === "created"), true);
 
   const globalConfig = readJson(path.join(configDir, "opencode.json"));
@@ -91,6 +92,11 @@ test("setupUx writes global OpenCode UX profile and project fallback profile", (
   assert.match(yolo, /edit: allow/);
   assert.match(yolo, /task: allow/);
   assert.match(yolo, /external_directory: allow/);
+  assert.match(yolo, /YOLO-worker/);
+  const yoloWorker = fs.readFileSync(path.join(configDir, "agents", "YOLO-worker.md"), "utf8");
+  assert.match(yoloWorker, /mode: subagent/);
+  assert.match(yoloWorker, /bash: allow/);
+  assert.match(yoloWorker, /external_directory: allow/);
   assert.equal(fs.readFileSync(path.join(configDir, "AGENTS.md"), "utf8"), GLOBAL_AGENTS_MD);
 
   const fallback = readJson(path.join(configDir, "plugins", "fallback.json"));

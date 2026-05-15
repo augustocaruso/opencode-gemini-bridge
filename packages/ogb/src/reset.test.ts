@@ -23,6 +23,10 @@ function readJson(filePath: string): any {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
+function expectedGlobalExpandedInstruction(homeDir: string): string {
+  return path.resolve(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "GEMINI.expanded.md")).replace(/\\/g, "/");
+}
+
 test("runReset refuses to run outside the home project", async () => {
   const root = tempRoot();
   const homeDir = path.join(root, "home");
@@ -196,7 +200,7 @@ test("runReset cleans home project artifacts and recreates global config", async
   assert.equal(globalConfig.default_agent, "YOLO");
   assert.ok(globalConfig.plugin.includes(globalStartupPluginSpec(path.join(homeDir, ".config", "opencode", "plugins", "ogb-startup-sync.js"))));
   assert.equal(globalConfig.permission.websearch, "allow");
-  assert.ok(globalConfig.instructions.includes("../opencode-gemini-bridge/generated/GEMINI.expanded.md"));
+  assert.ok(globalConfig.instructions.includes(expectedGlobalExpandedInstruction(homeDir)));
   assert.equal(fs.existsSync(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "GEMINI.expanded.md")), true);
   assert.equal(fs.existsSync(path.join(homeDir, ".config", "opencode", "plugins", "ogb-startup-sync.js")), true);
   assert.equal(fs.readFileSync(path.join(homeDir, ".config", "opencode", "AGENTS.md"), "utf8"), GLOBAL_AGENTS_MD);

@@ -13,6 +13,10 @@ function tempProject(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ogb-sync-"));
 }
 
+function expectedGlobalExpandedInstruction(homeDir: string): string {
+  return path.resolve(path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "GEMINI.expanded.md")).replace(/\\/g, "/");
+}
+
 test("syncToOpenCode writes bridge-native generated config without Rulesync", () => {
   const projectRoot = tempProject();
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));
@@ -99,7 +103,7 @@ test("syncToOpenCode treats home as global OpenCode sync", () => {
   assert.ok(report.projectedSkills.includes(".config/opencode/skills/review-notes"));
   assert.equal(fs.readFileSync(path.join(globalRoot, "AGENTS.md"), "utf8"), "Manual OpenCode global rules\n");
   assert.match(expandedGemini, /Imported global rules/);
-  assert.ok(globalConfig.instructions.includes("../opencode-gemini-bridge/generated/GEMINI.expanded.md"));
+  assert.ok(globalConfig.instructions.includes(expectedGlobalExpandedInstruction(homeDir)));
   assert.match(reviewCommand, /Review: \$ARGUMENTS/);
   assert.match(planCommand, /Plan: \$ARGUMENTS/);
   assert.match(extensionCommand, new RegExp(path.join(extensionDir, "docs", "guide.md").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -128,7 +132,7 @@ test("syncToOpenCode treats home as global OpenCode sync", () => {
   assert.match(extensionAgent, /read: allow/);
   assert.match(extensionAgent, /edit: allow/);
   assert.match(extensionAgent, /external_directory: allow/);
-  assert.match(extensionAgent, /bash: ask/);
+  assert.match(extensionAgent, /bash: allow/);
   assert.match(extensionAgent, /temperature: 0.2/);
   assert.equal(fs.existsSync(path.join(homeDir, "opencode.jsonc")), false);
   assert.equal(fs.existsSync(path.join(homeDir, ".opencode", "agents", "YOLO.md")), false);
@@ -154,7 +158,7 @@ test("syncToOpenCode replaces stale absolute global instruction paths", () => {
   const globalConfig = JSON.parse(fs.readFileSync(path.join(configDir, "opencode.json"), "utf8"));
   assert.deepEqual(globalConfig.instructions, [
     "./manual.md",
-    "../opencode-gemini-bridge/generated/GEMINI.expanded.md",
+    expectedGlobalExpandedInstruction(homeDir),
   ]);
 });
 
@@ -213,7 +217,7 @@ test("syncToOpenCode builds global context from Gemini extensions and imports gl
   assert.match(expandedGemini, /Extension rules live at/);
   assert.match(expandedGemini, new RegExp(path.join(extensionDir, "docs").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.doesNotMatch(expandedGemini, /Missing import: .*\.gemini\/GEMINI\.md/);
-  assert.ok(globalConfig.instructions.includes("../opencode-gemini-bridge/generated/GEMINI.expanded.md"));
+  assert.ok(globalConfig.instructions.includes(expectedGlobalExpandedInstruction(homeDir)));
   assert.deepEqual(globalConfig.mcp["anki-mcp"].command, ["uvx", "anki-mcp"]);
   assert.deepEqual(globalConfig.mcp["gemini-md-export"].command, ["node", path.join(extensionDir, "src", "mcp-server.js")]);
   assert.deepEqual(globalConfig.mcp["gemini-md-export"].environment, {
@@ -292,7 +296,8 @@ test("syncToOpenCode projects built-in YOLO agent", () => {
   const yolo = fs.readFileSync(yoloPath, "utf8");
 
   assert.ok(report.projectedAgents.includes(".opencode/agents/YOLO.md"));
-  assert.equal(report.projectedAgents.length, 1);
+  assert.ok(report.projectedAgents.includes(".opencode/agents/YOLO-worker.md"));
+  assert.equal(report.projectedAgents.length, 2);
   assert.match(yolo, /description: Execucao direta com minima friccao em workspace confiavel\./);
   assert.doesNotMatch(yolo, /description: YOLO:/);
   assert.match(yolo, /mode: primary/);
@@ -301,6 +306,11 @@ test("syncToOpenCode projects built-in YOLO agent", () => {
   assert.match(yolo, /bash: allow/);
   assert.match(yolo, /task: allow/);
   assert.match(yolo, /external_directory: allow/);
+  assert.match(yolo, /YOLO-worker/);
+  const worker = fs.readFileSync(path.join(projectRoot, ".opencode", "agents", "YOLO-worker.md"), "utf8");
+  assert.match(worker, /mode: subagent/);
+  assert.match(worker, /bash: allow/);
+  assert.match(worker, /external_directory: allow/);
 });
 
 test("syncToOpenCode preserves user-tuned YOLO task and external directory permissions", () => {
@@ -830,11 +840,34 @@ test("syncToOpenCode projects Gemini extension TOML commands and maps risky reso
   assert.match(agent, /read: allow/);
   assert.match(agent, /edit: allow/);
   assert.match(agent, /external_directory: allow/);
-  assert.match(agent, /bash: ask/);
+  assert.match(agent, /bash: allow/);
   assert.equal(extensionMap.extensions[0].agents[0].projected, true);
   assert.equal(extensionMap.extensions[0].agents[0].target, ".opencode/agents/helper.md");
   assert.equal(extensionMap.extensions[0].hooks[0].projected, false);
   assert.equal(extensionMap.extensions[0].scripts.some((script: { source: string }) => script.source === "bin/run.sh"), true);
+});
+
+test("syncToOpenCode keeps extension subagent bash conservative when YOLO is not the default agent", () => {
+  const projectRoot = tempProject();
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));
+  const extensionDir = path.join(homeDir, ".gemini", "extensions", "study-pack");
+  fs.mkdirSync(path.join(projectRoot, ".opencode"), { recursive: true });
+  fs.writeFileSync(path.join(projectRoot, ".opencode", "ogb.config.jsonc"), JSON.stringify({
+    openCode: {
+      defaultAgent: "agent",
+    },
+  }, null, 2));
+  fs.mkdirSync(path.join(extensionDir, "agents"), { recursive: true });
+  fs.writeFileSync(path.join(extensionDir, "gemini-extension.json"), JSON.stringify({ name: "study-pack" }));
+  fs.writeFileSync(path.join(extensionDir, "agents", "helper.md"), "# Helper\n");
+
+  syncToOpenCode({ projectRoot, homeDir, rulesyncMode: "off" });
+
+  const agent = fs.readFileSync(path.join(projectRoot, ".opencode", "agents", "helper.md"), "utf8");
+  const projectConfig = JSON.parse(fs.readFileSync(path.join(projectRoot, "opencode.jsonc"), "utf8"));
+  assert.equal(projectConfig.default_agent, "agent");
+  assert.match(agent, /mode: subagent/);
+  assert.match(agent, /bash: ask/);
 });
 
 test("syncToOpenCode projects configurable model fallbacks for extension subagents", () => {

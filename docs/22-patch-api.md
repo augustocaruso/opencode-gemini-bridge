@@ -231,6 +231,10 @@ Regra:
   extensao antiga que ainda nao tinham `telemetry.defaults.json`: o pre-update
   salva o diff localmente, a atualizacao instala os defaults novos, e o
   post-update envia o snapshot sem pedir script manual.
+- o run record do snapshot inclui `telemetry_evidence` com schema
+  `medical-notes-workbench.telemetry-evidence.v1`, `bundle_id`, fontes,
+  contadores, timeline curta, flags de qualidade e `send_path` para permitir
+  correlacionar o email, o snapshot local e qualquer reenvio posterior.
 
 Para evitar snapshots vazios ou ruidosos, o patch so considera arquivos
 allowlisted da extensao:
@@ -287,11 +291,12 @@ Os diffs tracked/staged usam `git diff --binary` limitado a allowlist acima.
 O diff de untracked concatena diffs `git diff --binary --no-index` para
 preservar conteudo novo antes do update. Scripts operacionais allowlisted com
 extensao `.py`, `.js`, `.mjs`, `.cjs`, `.sh`, `.ps1` ou `.cmd` tambem entram em
-`generated_scripts` com linguagem, tamanho e conteudo quando estiverem abaixo do
-limite de captura. `telemetry-envelope.json` guarda o envelope que seria enviado
-por email e `send-result.json` registra `sent=true` ou a causa da falha. Quando
-o script de resgate roda, o snapshot tambem pode conter `capture-result.json`,
-`capture.zip` e arquivos auxiliares de diagnostico.
+`generated_scripts` com linguagem, tamanho, conteudo e `risk_codes` quando
+estiverem abaixo do limite de captura. `telemetry-envelope.json` guarda o
+envelope que seria enviado por email e `send-result.json` registra `sent=true`
+ou a causa da falha. Quando o script de resgate roda, o snapshot tambem pode
+conter `capture-result.json`, `capture.zip` e arquivos auxiliares de
+diagnostico.
 
 ## Como adicionar um patch
 

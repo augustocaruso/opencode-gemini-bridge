@@ -18,7 +18,7 @@ Pontos importantes:
 
 - `question: allow` para perguntas estruturadas.
 - `todowrite: allow` para checklists.
-- `YOLO` usa permissoes `allow`; o config global continua com bash mais conservador.
+- `YOLO` e `YOLO-worker` usam permissoes `allow`; o config global continua com bash mais conservador.
 - `autoupdate: notify` para evitar updates silenciosos.
 - `watcher.ignore` para evitar ruído.
 - Plugins: Gemini auth e quota.
@@ -50,6 +50,7 @@ O ponto crítico:
 ## Agente gerado pelo bridge
 
 - `YOLO`: execução com mínima fricção em ambiente confiável, escolhido explicitamente pelo usuário.
+- `YOLO-worker`: subagente para delegacao generica do YOLO sem cair em subagentes especializados conservadores.
 
 O agente embutido fica em:
 
@@ -124,7 +125,10 @@ Exemplo conservador para projetos que nao querem YOLO:
 }
 ```
 
-Depois criar `yolo` separado com `edit/bash: allow`.
+Depois criar `yolo` separado com `edit/bash: allow`. No perfil OGB, quando
+`openCode.defaultAgent` e `YOLO`, subagentes projetados de extensoes tambem
+recebem `bash: allow`; se o default mudar para outro agente, eles voltam a
+`bash: ask`.
 
 ## Sobre YOLO
 

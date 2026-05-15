@@ -983,9 +983,53 @@ function generatedScriptsFromDrift(extensionPath: string, paths: string[]): Arra
       source: "ogb_update_patch",
       capture_method: "medical-notes-workbench-pre-update-snapshot",
       content,
+      risk_codes: medNotesScriptRiskCodes(normalized, content),
     });
   }
   return scripts;
+}
+
+function medNotesScriptRiskCodes(relPath: string, content: string): string[] {
+  const text = String(content ?? "");
+  const lowered = text.toLowerCase();
+  const pathLower = relPath.replaceAll("\\", "/").toLowerCase();
+  const codes: string[] = [];
+  const add = (code: string, condition: boolean): void => {
+    if (condition && !codes.includes(code)) codes.push(code);
+  };
+  const markdownScan =
+    lowered.includes('rglob("*.md")')
+    || lowered.includes("rglob('*.md')")
+    || lowered.includes('glob("**/*.md")')
+    || lowered.includes("glob('**/*.md')")
+    || (lowered.includes("os.walk") && lowered.includes(".md"));
+  const writesFiles =
+    /\bwrite_text\s*\(/.test(lowered)
+    || /\bopen\s*\([^)]*['"]w/.test(lowered)
+    || lowered.includes("fs.writefile")
+    || lowered.includes("set-content")
+    || lowered.includes("out-file")
+    || lowered.includes(".unlink(")
+    || lowered.includes("shutil.move");
+  add("mass_markdown_mutation", markdownScan && writesFiles);
+  add("hardcoded_user_path", /([a-z]:\\|\/users\/|\/home\/|~[\/\\])/i.test(text));
+  add("reads_obsidian_plugin_data", lowered.includes(".obsidian/plugins") || lowered.includes("related-notes") || lowered.includes("related notes"));
+  add("writes_related_notes_section", lowered.includes("notas relacionadas") || lowered.includes("related notes"));
+  add(
+    "external_api_or_embedding_call",
+    /\b(openai|anthropic|gemini|embedding|embeddings)\b/.test(lowered)
+      || /\b(requests|httpx)\.(post|get|request)\s*\(/.test(lowered)
+      || /\bfetch\s*\(/.test(lowered),
+  );
+  add("no_dry_run", writesFiles && !lowered.includes("dry_run") && !lowered.includes("--dry-run") && !lowered.includes("dry-run"));
+  add("encoding_corruption", text.includes("\uFFFD") || /^##\s+\?+\s+(notas relacionadas|fontes consolidadas|fechamento)\b/im.test(text));
+  add(
+    "extension_prompt_or_script_drift",
+    pathLower === "gemini.md"
+      || ["commands/", "skills/", "knowledge/", "hooks/", "scripts/", "src/", "docs/"].some((prefix) => pathLower.startsWith(prefix))
+      || pathLower.includes("/extensions/medical-notes-workbench/"),
+  );
+  return codes;
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -1325,7 +1369,7 @@ function medNotesPreUpdateRecord(snapshot: Record<string, unknown>, snapshotDir:
     baseline_recovered_count: Number(snapshot.baseline_recovered_count ?? 0) || 0,
     git_diff_empty_count: Number(snapshot.git_diff_empty_count ?? 0) || 0,
   };
-  return {
+  const record: Record<string, unknown> = {
     schema: MEDNOTES_RUN_RECORD_SCHEMA,
     run_id: `pre-update-extension-snapshot-${stringField(snapshot.snapshot_id) || path.basename(snapshotDir)}`,
     recorded_at: stringField(snapshot.recorded_at) || new Date().toISOString(),
@@ -1381,6 +1425,67 @@ function medNotesPreUpdateRecord(snapshot: Record<string, unknown>, snapshotDir:
     extension_diffs: extensionDiffs,
     generated_scripts: generatedScripts,
     command_events: [],
+  };
+  record.telemetry_evidence = medNotesTelemetryEvidence(record, snapshot, "ogb_pre_update_patch");
+  return record;
+}
+
+function medNotesTelemetryEvidence(record: Record<string, unknown>, snapshot: Record<string, unknown>, sendPath: string): Record<string, unknown> {
+  const extensionDiffs = Array.isArray(record.extension_diffs) ? record.extension_diffs : [];
+  const generatedScripts = Array.isArray(record.generated_scripts) ? record.generated_scripts : [];
+  const commandEvents = Array.isArray(record.command_events) ? record.command_events : [];
+  const hookErrors = Array.isArray(record.hook_errors) ? record.hook_errors : [];
+  const counts = {
+    extension_diff_count: extensionDiffs.length,
+    generated_script_count: generatedScripts.length,
+    command_event_count: commandEvents.length,
+    hook_error_count: hookErrors.length,
+  };
+  const sources: string[] = [];
+  if (extensionDiffs.length > 0) sources.push("pre_update_snapshot:extension_diffs");
+  if (generatedScripts.length > 0) sources.push("ogb_update_patch:generated_scripts");
+  if (commandEvents.length > 0) sources.push("ogb_update_patch:command_events");
+  const qualityFlags: string[] = [];
+  if (generatedScripts.length > 0 && commandEvents.length === 0) qualityFlags.push("telemetry.command_events_missing");
+  const snapshotChangedCount = Number(snapshot.changed_path_count ?? 0) + Number(snapshot.untracked_path_count ?? 0);
+  if (extensionDiffs.length > 0 && snapshotChangedCount === 0) qualityFlags.push("telemetry.snapshot_counts_mismatch");
+  const seed = JSON.stringify({
+    snapshot_id: snapshot.snapshot_id,
+    recorded_at: snapshot.recorded_at,
+    counts,
+    sources,
+  });
+  const at = stringField(record.recorded_at) || new Date().toISOString();
+  return {
+    schema: "medical-notes-workbench.telemetry-evidence.v1",
+    bundle_id: `telem-${crypto.createHash("sha256").update(seed, "utf8").digest("hex").slice(0, 16)}`,
+    sources,
+    artifact_counts: counts,
+    timeline: [
+      { at, kind: "pre_update_snapshot", label: stringField(snapshot.snapshot_id) || path.basename(stringField(snapshot.snapshot_path) || ""), phase: stringField(snapshot.phase) },
+      ...extensionDiffs.slice(0, 4).map((item) => {
+        const diff = item as Record<string, unknown>;
+        return { at, kind: "extension_diff", label: stringField(diff.path), change: stringField(diff.change) };
+      }),
+      ...generatedScripts.slice(0, 4).map((item) => {
+        const script = item as Record<string, unknown>;
+        return { at, kind: "generated_script", label: stringField(script.path), source: stringField(script.source) };
+      }),
+    ],
+    quality_flags: qualityFlags,
+    redaction_summary: {
+      applied: true,
+      blocked_fields: ["content", "markdown", "html", "raw_chat", "note_text", ".env", "tokens", "keys"],
+      operational_debug_fields: ["extension_diffs", "generated_scripts"],
+    },
+    truncation_summary: {
+      truncated_artifacts: [...extensionDiffs, ...generatedScripts].filter((item) => Boolean((item as Record<string, unknown>).truncated)).length,
+      omitted_artifacts: [...extensionDiffs, ...generatedScripts].filter((item) => {
+        const recordItem = item as Record<string, unknown>;
+        return Boolean(recordItem.full_diff_unavailable_reason || recordItem.content_omitted_reason);
+      }).length,
+    },
+    send_path: sendPath,
   };
 }
 
@@ -1474,6 +1579,7 @@ function buildOgbMedicalNotesSnapshotEnvelope(
       exitCode: 0,
       payload_summary: record.payload_summary,
       diagnostic_context: record.diagnostic_context,
+      telemetry_evidence: record.telemetry_evidence,
       environment_context: {
         ...environment,
         appVersion: stringField(snapshot.current_version) || "unknown",

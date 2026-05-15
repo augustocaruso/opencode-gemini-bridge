@@ -115,9 +115,15 @@ test("check --progress-json includes extension-update before sync unless skipped
   assert.ok(withUpdate.status === 0 || withUpdate.status === 1, withUpdate.stderr);
   const withUpdateEvents = parseNdjson(withUpdate.stdout);
   assert.deepEqual(withUpdateEvents[0].steps.map((step: any) => step.stepId), [
+    "patches-pre-extension-update",
     "extension-update",
+    "patches-post-extension-update",
+    "patches-pre-sync",
     "sync",
+    "patches-post-sync",
+    "patches-pre-doctor",
     "doctor",
+    "patches-post-check",
   ]);
   assert.deepEqual(
     withUpdateEvents.filter((event) => event.type === "ritual.step" && event.status === "running").map((event) => event.stepId),
@@ -132,8 +138,12 @@ test("check --progress-json includes extension-update before sync unless skipped
   assert.ok(skipped.status === 0 || skipped.status === 1, skipped.stderr);
   const skippedEvents = parseNdjson(skipped.stdout);
   assert.deepEqual(skippedEvents[0].steps.map((step: any) => step.stepId), [
+    "patches-pre-sync",
     "sync",
+    "patches-post-sync",
+    "patches-pre-doctor",
     "doctor",
+    "patches-post-check",
   ]);
 });
 

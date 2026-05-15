@@ -352,21 +352,27 @@ export function createLiveRitualModel(
 
 export function applyRitualProgressEvent(model: LiveRitualModel, event: RitualProgressEvent): LiveRitualModel {
   const existingIndex = model.steps.findIndex((step) => step.stepId === event.stepId);
+  const existing = existingIndex >= 0 ? model.steps[existingIndex] : undefined;
   const nextStep: LiveRitualStep = {
     stepId: event.stepId,
     label: event.label,
-    detail: event.detail,
+    detail: event.detail ?? existing?.detail,
+    optional: existing?.optional,
     status: event.status,
     message: event.message,
   };
   const steps = existingIndex >= 0
-    ? model.steps.map((step, index) => index === existingIndex ? { ...step, ...nextStep, detail: event.detail ?? step.detail } : step)
+    ? model.steps.map((step, index) => index === existingIndex ? { ...step, ...nextStep } : step)
     : [...model.steps, nextStep];
   return {
     ...model,
     steps,
     currentStepId: event.status === "running" ? event.stepId : model.currentStepId,
   };
+}
+
+function visibleTodoSteps(steps: LiveRitualStep[]): LiveRitualStep[] {
+  return steps.filter((step) => !(step.optional && (step.status === "queued" || step.status === "skipped")));
 }
 
 function canonicalStepId(label: string): string {
@@ -579,14 +585,15 @@ function useTerminalWidth(): number {
 
 function RitualPanel(props: { model: LiveRitualModel }) {
   const model = props.model;
+  const visibleSteps = visibleTodoSteps(model.steps);
   const width = useTerminalWidth();
   const tick = useTicker(model.final);
   const spinnerFrames = useMemo(() => ["◐", "◓", "◑", "◒"], []);
   const spinner = spinnerFrames[Math.floor(tick / 160) % spinnerFrames.length];
-  const current = model.steps.find((step) => step.status === "running")
-    ?? model.steps.find((step) => step.stepId === model.currentStepId)
-    ?? model.steps.find((step) => step.status === "queued")
-    ?? model.steps.at(-1);
+  const current = visibleSteps.find((step) => step.status === "running")
+    ?? visibleSteps.find((step) => step.stepId === model.currentStepId)
+    ?? visibleSteps.find((step) => step.status === "queued")
+    ?? visibleSteps.at(-1);
   const elapsed = formatElapsed((model.finishedAt ?? tick) - model.startedAt);
   const borderColor = model.final ? colorFromTone(model.tone) : "gray";
   const headline = model.final
@@ -625,7 +632,7 @@ function RitualPanel(props: { model: LiveRitualModel }) {
       : null,
     React.createElement(Box, { flexDirection: "column", marginTop: 1 },
       React.createElement(SectionTitle, null, "TODOs"),
-      ...model.steps.map((step) => React.createElement(TodoRow, { key: step.stepId, step, spinner })),
+      ...visibleSteps.map((step) => React.createElement(TodoRow, { key: step.stepId, step, spinner })),
     ),
     React.createElement(BulletList, { title: model.tone === "fail" ? "Problems" : "Notes", items: model.callouts, tone: model.tone === "fail" ? "fail" : "warn" }),
     React.createElement(BulletList, { title: "Next", items: model.next }),

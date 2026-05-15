@@ -532,11 +532,19 @@ inventory → flatten → sync → doctor → opencode [--agent <name>]
 
 ```text
 .opencode/agents/YOLO.md
+.opencode/agents/YOLO-worker.md
 ```
 
-Esse agente e o equivalente pratico do "YOLO mode" no fluxo OpenCode: as
-permissoes declaradas do agente ficam em `allow`, incluindo `edit`, `bash`,
-`task` e `external_directory`. Nao tornar essas permissoes globais.
+`YOLO` e o equivalente pratico do "YOLO mode" no fluxo OpenCode: as permissoes
+declaradas do agente ficam em `allow`, incluindo `edit`, `bash`, `task` e
+`external_directory`. `YOLO-worker` e o par subagente usado para delegacao
+generica sem cair em subagentes especializados conservadores por acidente.
+Nao tornar essas permissoes globais.
+
+Quando `openCode.defaultAgent` e `YOLO`, subagentes projetados de extensoes
+tambem recebem `bash: allow`, porque eles estao sendo usados dentro do perfil
+YOLO. Se o perfil do projeto mudar o default para outro agente, esses
+subagentes voltam a `bash: ask`.
 
 `setup-ux` grava `default_agent: "YOLO"` no config global do OpenCode. Isso vale
 fora de projetos OGB tambem, salvo quando o projeto aberto tiver um
@@ -579,7 +587,7 @@ Deve:
 - gravar config global de DCP e `plugins/fallback.json`;
 - garantir `~/.config/opencode/package.json` com `type: "module"` e as
   dependências `@opentui/solid`/`solid-js` usadas pela TUI global;
-- instalar `YOLO.md` como agente global OpenCode;
+- instalar `YOLO.md` e `YOLO-worker.md` como agentes globais OpenCode;
 - definir o agente padrao global a partir de `openCode.defaultAgent` do perfil OGB;
 - gravar `.opencode/ogb.config.jsonc` no projeto com as regras de fallback/subagente do OGB;
 - não substituir `.opencode/ogb.config.jsonc` divergente sem `--force`.

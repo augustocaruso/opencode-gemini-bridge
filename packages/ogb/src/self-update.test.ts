@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { buildPostUpdateRitualCommand, buildSelfUpdateCommand, checkOgbUpdate, runAutoUpdate, runSelfUpdate, writeSelfUpdateSuccessStatus } from "./self-update.js";
 import { resolveProjectPaths } from "./paths.js";
-import type { RitualProgressEvent } from "./ritual-progress.js";
+import { RITUAL_PROGRESS_SCHEMA_VERSION, type RitualProgressEvent } from "./ritual-progress.js";
 import { OGB_VERSION } from "./types.js";
 
 test("buildSelfUpdateCommand uses GitHub bootstrap on POSIX platforms", () => {
@@ -126,6 +126,86 @@ test("runSelfUpdate dry-run emits update ritual progress", () => {
     "download:skipped",
     "install:skipped",
     "post-check:skipped",
+  ]);
+});
+
+test("runSelfUpdate forwards post-update check progress in canonical order", () => {
+  const events: RitualProgressEvent[] = [];
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-update-progress-"));
+  const nestedProgress = [
+    {
+      schemaVersion: RITUAL_PROGRESS_SCHEMA_VERSION,
+      ritualId: "check-test",
+      kind: "check",
+      timestamp: "2026-05-06T00:00:00.000Z",
+      type: "ritual.step",
+      stepId: "patches-pre-sync",
+      label: "Apply OGB patches before sync.",
+      status: "pass",
+      message: "1 applied",
+    },
+    {
+      schemaVersion: RITUAL_PROGRESS_SCHEMA_VERSION,
+      ritualId: "check-test",
+      kind: "check",
+      timestamp: "2026-05-06T00:00:00.000Z",
+      type: "ritual.step",
+      stepId: "sync",
+      label: "Sync Gemini resources into OpenCode.",
+      status: "running",
+    },
+    {
+      schemaVersion: RITUAL_PROGRESS_SCHEMA_VERSION,
+      ritualId: "check-test",
+      kind: "check",
+      timestamp: "2026-05-06T00:00:00.000Z",
+      type: "ritual.step",
+      stepId: "sync",
+      label: "Sync Gemini resources into OpenCode.",
+      status: "pass",
+    },
+  ].map((event) => JSON.stringify(event)).join("\n");
+
+  const report = runSelfUpdate({
+    projectRoot,
+    stdio: "pipe",
+    onProgress: (event) => events.push(event),
+    runCommand: (spec) => ({
+      ok: true,
+      command: spec.command,
+      args: spec.args ?? [],
+      status: 0,
+      signal: null,
+      stdout: "bootstrap ok",
+      stderr: "",
+    }),
+    runPostUpdateCommand: (spec) => {
+      assert.equal(spec.args?.includes("--progress-json"), true);
+      return {
+        ok: true,
+        command: spec.command,
+        args: spec.args ?? [],
+        status: 0,
+        signal: null,
+        stdout: nestedProgress,
+        stderr: "",
+      };
+    },
+  });
+
+  assert.equal(report.status, "applied");
+  assert.deepEqual(events.map((event) => `${event.stepId}:${event.status}`), [
+    "resolve:running",
+    "resolve:pass",
+    "download:running",
+    "install:running",
+    "download:pass",
+    "install:pass",
+    "post-check:running",
+    "patches-pre-sync:pass",
+    "sync:running",
+    "sync:pass",
+    "post-check:pass",
   ]);
 });
 
