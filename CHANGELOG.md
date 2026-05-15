@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.32 - Spinner volta com redraw controlado
+
+- Reativa o spinner da UI rica por padrao em terminais interativos seguros.
+- Reduz o redraw animado para um intervalo mais calmo, evitando a avalanche ANSI do update longo.
+- Permite desativar a animacao com `OGB_UI_ANIMATE=0`.
+
 ## 0.1.31 - Update sem redraw agressivo
 
 - Para de animar a UI rica por padrao, evitando redraws ANSI periodicos enquanto bootstrap/check ficam sem output.

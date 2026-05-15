@@ -76,9 +76,10 @@ test("rich ritual UI is opt-in to an interactive human terminal", () => {
   assert.equal(shouldUseRitualUi({ stdoutIsTTY: true, env: { OGB_UI: "0" } }), false);
 });
 
-test("ritual UI animation is explicit opt-in", () => {
-  assert.equal(shouldAnimateRitualUi({}), false);
+test("ritual UI animation is on by default but can be disabled", () => {
+  assert.equal(shouldAnimateRitualUi({}), true);
   assert.equal(shouldAnimateRitualUi({ OGB_UI_ANIMATE: "1" }), true);
+  assert.equal(shouldAnimateRitualUi({ OGB_UI_ANIMATE: "0" }), false);
 });
 
 test("Ink frame cleanup keeps the final rendered frame for transcript captures", () => {

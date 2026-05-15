@@ -139,6 +139,7 @@ function countChangedWrites(report: InstallReport | ResetReport): number | undef
 const ANSI_ESCAPE_PATTERN = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
 const MAX_DISPLAY_LINE_LENGTH = 280;
 const MIN_RITUAL_UI_COLUMNS = 80;
+const RITUAL_UI_SPINNER_INTERVAL_MS = 1000;
 
 function isTransferProgressLine(line: string): boolean {
   if (/^% Total\s+% Received\s+% Xferd/.test(line)) return true;
@@ -529,7 +530,7 @@ export function shouldUseRitualUi(options: RitualUiOptions = {}): boolean {
 }
 
 export function shouldAnimateRitualUi(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.OGB_UI_ANIMATE === "1";
+  return env.OGB_UI_ANIMATE !== "0";
 }
 
 export function cleanInkFrame(raw: string): string {
@@ -613,7 +614,7 @@ function useTicker(final: boolean, animate: boolean): number {
   const [tick, setTick] = useState(Date.now());
   useEffect(() => {
     if (final || !animate) return undefined;
-    const timer = setInterval(() => setTick(Date.now()), 160);
+    const timer = setInterval(() => setTick(Date.now()), RITUAL_UI_SPINNER_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [final, animate]);
   return animate ? tick : Date.now();
@@ -642,16 +643,16 @@ function RitualPanel(props: { model: LiveRitualModel; animate: boolean }) {
   const width = useTerminalWidth();
   const tick = useTicker(model.final, props.animate);
   const spinnerFrames = useMemo(() => ["◐", "◓", "◑", "◒"], []);
-  const spinner = props.animate ? spinnerFrames[Math.floor(tick / 160) % spinnerFrames.length] : "RUN";
+  const spinner = props.animate ? spinnerFrames[Math.floor(tick / RITUAL_UI_SPINNER_INTERVAL_MS) % spinnerFrames.length] : "RUN";
+  const rowStatus = "RUN";
   const current = visibleSteps.find((step) => step.status === "running")
     ?? visibleSteps.find((step) => step.stepId === model.currentStepId)
     ?? visibleSteps.find((step) => step.status === "queued")
     ?? visibleSteps.at(-1);
   const elapsed = formatElapsed((model.finishedAt ?? tick) - model.startedAt);
+  const headerStatus = model.final ? elapsed : "running";
   const borderColor = model.final ? colorFromTone(model.tone) : "gray";
-  const headline = model.final
-    ? model.statusLabel
-    : props.animate ? `${spinner} RUN` : "RUN";
+  const headline = model.final ? model.statusLabel : "RUN";
 
   return React.createElement(
     Box,
@@ -663,7 +664,7 @@ function RitualPanel(props: { model: LiveRitualModel; animate: boolean }) {
         React.createElement(Text, { color: model.final ? colorFromTone(model.tone) : "cyan", bold: true }, `${headline} `),
         React.createElement(Text, { bold: true }, model.title),
       ),
-      React.createElement(Text, { color: "gray" }, elapsed),
+      React.createElement(Text, { color: "gray" }, headerStatus),
     ),
     React.createElement(Text, { color: "gray" }, model.subtitle),
     React.createElement(Box, { marginTop: 1, flexDirection: "column" },
@@ -685,11 +686,16 @@ function RitualPanel(props: { model: LiveRitualModel; animate: boolean }) {
       : null,
     React.createElement(Box, { flexDirection: "column", marginTop: 1 },
       React.createElement(SectionTitle, null, "TODOs"),
-      ...visibleSteps.map((step) => React.createElement(TodoRow, { key: step.stepId, step, spinner })),
+      ...visibleSteps.map((step) => React.createElement(TodoRow, { key: step.stepId, step, spinner: rowStatus })),
     ),
     React.createElement(BulletList, { title: model.tone === "fail" ? "Problems" : "Notes", items: model.callouts, tone: model.tone === "fail" ? "fail" : "warn" }),
     React.createElement(BulletList, { title: "Next", items: model.next }),
     React.createElement(BulletList, { title: "Reports", items: model.files }),
+    !model.final && props.animate
+      ? React.createElement(Box, { marginTop: 1 },
+        React.createElement(Text, { color: "cyan" }, `${spinner} active ${elapsed}`),
+      )
+      : null,
   );
 }
 
