@@ -209,6 +209,39 @@ test("runPass repairs stale global startup plugin without install force", () => 
   process.exitCode = oldExitCode;
 });
 
+test("runPass installs the global OpenCode profile when checking home mode", () => {
+  const homeDir = tempRoot();
+  const oldExitCode = process.exitCode;
+
+  const report = runPass({
+    projectRoot: homeDir,
+    homeDir,
+    force: true,
+    skipExtensionUpdate: true,
+    skipValidation: true,
+    skipSecurity: true,
+    skipDashboard: true,
+    silent: true,
+    setExitCode: false,
+    rulesyncMode: "off",
+  });
+
+  const configDir = path.join(homeDir, ".config", "opencode");
+  const configPath = path.join(configDir, "opencode.json");
+  const yoloPath = path.join(configDir, "agents", "YOLO.md");
+  const startupPluginPath = path.join(configDir, "plugins", "ogb-startup-sync.js");
+  const startupConfigPath = path.join(homeDir, ".config", "opencode-gemini-bridge", "generated", "ogb-startup-sync.json");
+
+  assert.equal(report.automated.includes("setup-ux"), true);
+  assert.equal(fs.existsSync(configPath), true);
+  assert.equal(fs.existsSync(yoloPath), true);
+  assert.equal(fs.existsSync(startupPluginPath), true);
+  assert.equal(fs.existsSync(startupConfigPath), true);
+  assert.match(fs.readFileSync(configPath, "utf8"), /ogb-startup-sync\.js/);
+  assert.match(fs.readFileSync(yoloPath, "utf8"), /permission/);
+  process.exitCode = oldExitCode;
+});
+
 test("runPass turns patch warnings into check blockers without stopping doctor", () => {
   const projectRoot = tempRoot();
   const oldExitCode = process.exitCode;

@@ -58,6 +58,7 @@ export interface SetupUxOptions {
   resetGlobal?: boolean;
   installPlugins?: boolean;
   installTuiDependencies?: boolean;
+  installTuiSidebar?: boolean;
   installOpenCode?: boolean;
   writeProjectProfile?: boolean;
 }
@@ -789,30 +790,32 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
     filePath: globalStartupPluginPath,
     text: startupPluginSourceText,
   }));
-  const globalTuiRuntime = ensureGlobalTuiRuntime({
-    configDir: root,
-    pathApi: adapter.pathApi,
-    dryRun: options.dryRun,
-    install: options.installTuiDependencies,
-    profileWriter,
-    protectInstall: localRole.enabled,
-  });
-  writes.push(globalTuiRuntime.packageJson);
-  commands.push(...globalTuiRuntime.commands);
-  const globalTui = ensureGlobalTuiSidebar({
-    configDir: root,
-    dryRun: options.dryRun,
-    profileWriter,
-    pluginSource: tuiSidebarPluginSourceText,
-    configDefaults: UX_PROFILE_PRESET.tuiConfig,
-  });
-  writes.push(globalTui.plugin, globalTui.config);
-  if (globalTui.plugin.status === "updated") {
-    notices.push("Global TUI sidebar updated; restart OpenCode to load it.");
-  } else if (globalTui.plugin.status === "created") {
-    notices.push("Global TUI sidebar installed; restart OpenCode to load it.");
+  if (options.installTuiSidebar !== false) {
+    const globalTuiRuntime = ensureGlobalTuiRuntime({
+      configDir: root,
+      pathApi: adapter.pathApi,
+      dryRun: options.dryRun,
+      install: options.installTuiDependencies,
+      profileWriter,
+      protectInstall: localRole.enabled,
+    });
+    writes.push(globalTuiRuntime.packageJson);
+    commands.push(...globalTuiRuntime.commands);
+    const globalTui = ensureGlobalTuiSidebar({
+      configDir: root,
+      dryRun: options.dryRun,
+      profileWriter,
+      pluginSource: tuiSidebarPluginSourceText,
+      configDefaults: UX_PROFILE_PRESET.tuiConfig,
+    });
+    writes.push(globalTui.plugin, globalTui.config);
+    if (globalTui.plugin.status === "updated") {
+      notices.push("Global TUI sidebar updated; restart OpenCode to load it.");
+    } else if (globalTui.plugin.status === "created") {
+      notices.push("Global TUI sidebar installed; restart OpenCode to load it.");
+    }
+    warnings.push(...globalTui.warnings);
   }
-  warnings.push(...globalTui.warnings);
   const startupConfigWrite = runtimeWriter.writeText({
     filePath: globalStartupConfigPath,
     text: startupConfigSource({

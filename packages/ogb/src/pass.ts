@@ -10,7 +10,7 @@ import { globalOpenCodeConfigDir } from "./opencode-paths.js";
 import { resolveProjectPaths } from "./paths.js";
 import { runSecurityCheck, type SecurityReport } from "./security.js";
 import { setupOpenCode, type SetupOpenCodeReport } from "./setup-opencode.js";
-import { ensureGlobalStartupPlugin } from "./setup-ux.js";
+import { ensureGlobalStartupPlugin, setupUx, type SetupUxReport } from "./setup-ux.js";
 import { syncToOpenCode, type SyncReport } from "./sync.js";
 import { hookTrustHash, hookTrustKeys, readTrustFile, writeTrustFile } from "./trust.js";
 import { ensureGlobalTuiSidebar } from "./tui-sidebar.js";
@@ -188,6 +188,12 @@ function needsGlobalTuiRepair(warnings: readonly string[]): boolean {
 
 function needsGlobalStartupRepair(warnings: readonly string[]): boolean {
   return warnings.some((warning) => /Global OGB startup plugin is (missing|stale)/i.test(warning));
+}
+
+function checkSetupWarnings(report: SetupOpenCodeReport | SetupUxReport): string[] {
+  return report.warnings.filter((warning) =>
+    !/^OpenCode is not installed\. Re-run with --install-opencode or install OpenCode first\.$/.test(warning)
+  );
 }
 
 function patchAction(result: { nextAction?: string; id: string }): string {
@@ -381,6 +387,8 @@ export function runPass(options: PassOptions = {}): PassReport {
   const automated: string[] = [];
   const blockers: PassBlocker[] = [];
   let setup: SetupOpenCodeReport | undefined;
+  let globalSetup: SetupUxReport | undefined;
+  let setupWarnings: string[] = [];
   let extensionUpdate: ExtensionCommandReport | undefined;
   let globalSync: SyncReport | undefined;
   let sync: SyncReport | undefined;
@@ -394,14 +402,29 @@ export function runPass(options: PassOptions = {}): PassReport {
   if (!options.skipSetup) {
     emitCheckProgress(options.onProgress, "setup", "running");
     try {
-      setup = setupOpenCode({
-        projectRoot: paths.projectRoot,
-        homeDir: paths.homeDir,
-        dryRun: options.dryRun,
-        force: options.force,
-        skipDoctor: true,
-        skipCommandCheck: true,
-      });
+      if (paths.homeMode) {
+        globalSetup = setupUx({
+          projectRoot: paths.projectRoot,
+          homeDir: paths.homeDir,
+          dryRun: options.dryRun,
+          force: options.force,
+          installOpenCode: false,
+          installPlugins: false,
+          installTuiDependencies: false,
+          installTuiSidebar: false,
+        });
+        setupWarnings = checkSetupWarnings(globalSetup);
+      } else {
+        setup = setupOpenCode({
+          projectRoot: paths.projectRoot,
+          homeDir: paths.homeDir,
+          dryRun: options.dryRun,
+          force: options.force,
+          skipDoctor: true,
+          skipCommandCheck: true,
+        });
+        setupWarnings = checkSetupWarnings(setup);
+      }
     } catch (error) {
       emitCheckProgress(options.onProgress, "setup", "fail", error instanceof Error ? error.message : String(error));
       throw error;
@@ -409,11 +432,15 @@ export function runPass(options: PassOptions = {}): PassReport {
     emitCheckProgress(
       options.onProgress,
       "setup",
-      setup.warnings.length > 0 ? "warn" : "pass",
-      setup.warnings.length > 0 ? `${setup.warnings.length} warning(s)` : "Startup sync wiring is present.",
+      setupWarnings.length > 0 ? "warn" : "pass",
+      setupWarnings.length > 0
+        ? `${setupWarnings.length} warning(s)`
+        : paths.homeMode
+          ? "Global OpenCode profile is present."
+          : "Startup sync wiring is present.",
     );
-    automated.push("setup-opencode");
-    for (const warning of setup.warnings) blockers.push(blocker("setup", "warn", warning, "Revise conflitos do setup; rode `ogb check --force` se quiser sobrescrever arquivos gerenciados."));
+    automated.push(paths.homeMode ? "setup-ux" : "setup-opencode");
+    for (const warning of setupWarnings) blockers.push(blocker("setup", "warn", warning, "Revise conflitos do setup; rode `ogb check --force` se quiser sobrescrever arquivos gerenciados."));
   }
 
   function runPatchPhase(phase: PatchPhase): PatchRunReport | undefined {
@@ -689,8 +716,15 @@ export function runPass(options: PassOptions = {}): PassReport {
   if (setup) {
     steps.push({
       name: "setup-opencode",
-      status: setup.warnings.length > 0 ? "warn" : "pass",
-      detail: setup.warnings.length > 0 ? `${setup.warnings.length} warning(s)` : undefined,
+      status: setupWarnings.length > 0 ? "warn" : "pass",
+      detail: setupWarnings.length > 0 ? `${setupWarnings.length} warning(s)` : undefined,
+    });
+  }
+  if (globalSetup) {
+    steps.push({
+      name: "setup-ux",
+      status: setupWarnings.length > 0 ? "warn" : "pass",
+      detail: setupWarnings.length > 0 ? `${setupWarnings.length} warning(s)` : undefined,
     });
   }
   appendPatchStep("pre-extension-update");
