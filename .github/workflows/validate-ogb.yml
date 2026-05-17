@@ -6,7 +6,14 @@ on:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    name: validate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: actions/setup-node@v6.4.0
@@ -30,6 +37,7 @@ jobs:
         working-directory: packages/ogb
         run: node --check dist/tui-sidebar.js
       - name: Syntax check shell installers
+        if: runner.os != 'Windows'
         run: |
           bash -n scripts/install-posix.sh
           bash -n scripts/install-mac.sh
@@ -57,7 +65,8 @@ jobs:
           $errors = $null
           $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content artifacts/scripts/bootstrap-windows.ps1 -Raw), [ref]$errors)
           if ($errors) { throw ($errors | Out-String) }
-      - name: CLI smoke test
+      - name: CLI smoke test (POSIX)
+        if: runner.os != 'Windows'
         run: |
           mkdir -p "$RUNNER_TEMP/ogb-smoke"
           printf 'Smoke rules\n' > "$RUNNER_TEMP/ogb-smoke/GEMINI.md"
@@ -68,8 +77,29 @@ jobs:
           node packages/ogb/dist/cli.js --project "$RUNNER_TEMP/ogb-smoke" validate
           node packages/ogb/dist/cli.js --project "$RUNNER_TEMP/ogb-smoke" security-check
           node packages/ogb/dist/cli.js --project "$RUNNER_TEMP/ogb-smoke" bridge --no-refresh
+      - name: CLI smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $project = Join-Path $env:RUNNER_TEMP "ogb-smoke"
+          New-Item -ItemType Directory -Force -Path $project | Out-Null
+          Set-Content -Path (Join-Path $project "GEMINI.md") -Value "Smoke rules"
+          node packages/ogb/dist/cli.js --project $project init
+          node packages/ogb/dist/cli.js --project $project setup-ux --dry-run --no-install-opencode --no-plugins
+          node packages/ogb/dist/cli.js --project $project self-update --dry-run --no-setup --no-ux --no-install-opencode
+          node packages/ogb/dist/cli.js --project $project sync --rulesync off
+          node packages/ogb/dist/cli.js --project $project validate --windows
+          node packages/ogb/dist/cli.js --project $project security-check
+          node packages/ogb/dist/cli.js --project $project bridge --no-refresh
+      - name: Home-mode check smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path (Join-Path $env:USERPROFILE ".gemini") | Out-Null
+          Set-Content -Path (Join-Path $env:USERPROFILE ".gemini/GEMINI.md") -Value "Global smoke rules"
+          node packages/ogb/dist/cli.js --project $env:USERPROFILE check --force --rulesync off --windows --plain
       - name: Pack dry run
         working-directory: packages/ogb
         run: npm pack --dry-run
       - name: Validate schemas exist
-        run: test -f packages/ogb/schemas/inventory.schema.json && test -f packages/ogb/schemas/gemini-extension-compat.schema.json
+        run: node -e "const fs=require('node:fs'); for (const p of ['packages/ogb/schemas/inventory.schema.json','packages/ogb/schemas/gemini-extension-compat.schema.json']) if (!fs.existsSync(p)) throw new Error(p + ' missing')"
