@@ -52,7 +52,7 @@ plugins:
 
 test("global AGENTS.md preset uses platform-neutral external terminal guidance", () => {
   assert.doesNotMatch(GLOBAL_AGENTS_MD, /macOS Terminal/);
-  assert.match(GLOBAL_AGENTS_MD, /PowerShell or Windows Terminal/);
+  assert.match(GLOBAL_AGENTS_MD, /normal external terminal for the current operating system/);
 });
 
 test("setupUx writes global OpenCode UX profile and project fallback profile", () => {
@@ -90,10 +90,30 @@ test("setupUx writes global OpenCode UX profile and project fallback profile", (
   assert.equal(globalConfig.agent.agent.permission.bash["*"], "ask");
   assert.equal(globalConfig.agent.agent.permission.bash["git status*"], "allow");
   assert.equal(globalConfig.agent.agent.permission.bash["rg*"], "allow");
+  assert.equal(globalConfig.agent.agent.permission.bash["stat *"], "allow");
+  assert.equal(globalConfig.agent.agent.permission.read, "allow");
+  assert.equal(globalConfig.agent.agent.permission.glob, "allow");
+  assert.equal(globalConfig.agent.agent.permission.grep, "allow");
+  assert.equal(globalConfig.agent.agent.permission.list, "allow");
   assert.equal(globalConfig.agent.agent.permission.bash["git push*"], "deny");
   assert.equal(globalConfig.agent.plan.permission.bash["*"], "ask");
   assert.equal(globalConfig.agent.plan.permission.bash["git status*"], "allow");
   assert.equal(globalConfig.agent.plan.permission.bash["rg*"], "allow");
+  assert.equal(globalConfig.agent.plan.permission.bash["stat *"], "allow");
+  assert.equal(globalConfig.agent.plan.permission.bash["du *"], "allow");
+  assert.equal(globalConfig.agent.plan.permission.bash["git cat-file*"], "allow");
+  assert.equal(globalConfig.agent.plan.permission.bash["gh auth status*"], "allow");
+  assert.equal(globalConfig.agent.plan.permission.bash["gh pr view*"], "allow");
+  assert.equal(globalConfig.agent.plan.permission.bash["gh release view*"], "allow");
+  assert.equal(globalConfig.agent.plan.permission.bash["gh run view*"], "allow");
+  assert.equal(globalConfig.agent.plan.permission.bash["gh api repos/*"], "allow");
+  assert.equal(globalConfig.agent.plan.permission.bash["gh pr checkout*"], "deny");
+  assert.equal(globalConfig.agent.plan.permission.bash["gh release delete*"], "deny");
+  assert.equal(globalConfig.agent.plan.permission.bash["gh api *--method POST*"], "deny");
+  assert.equal(globalConfig.agent.plan.permission.read, "allow");
+  assert.equal(globalConfig.agent.plan.permission.glob, "allow");
+  assert.equal(globalConfig.agent.plan.permission.grep, "allow");
+  assert.equal(globalConfig.agent.plan.permission.list, "allow");
   assert.equal(globalConfig.agent.plan.permission.bash["git push*"], "deny");
   assert.equal(globalConfig.agent.plan.permission.edit, "ask");
   assert.equal(globalConfig.agent.plan.permission.question, "allow");

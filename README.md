@@ -197,7 +197,9 @@ como fonte de verdade. Comandos vão para `~/.config/opencode/commands/`, agents
 Comandos/agents/skills vindos de extensoes Gemini tambem entram nesses
 diretórios globais. MCPs compativeis de `~/.gemini/settings.json` e dos
 manifestos das extensoes Gemini entram em `~/.config/opencode/opencode.json`.
-Hooks e scripts continuam fora dessa copia automatica porque exigem revisao.
+Hooks `BeforeTool`/`AfterTool` de `settings.json` e das extensoes Gemini sao
+sincronizados pelo plugin OGB do OpenCode; scripts soltos continuam apenas
+inventariados para revisao.
 
 Para limpar manualmente a bagunca deixada por instalacoes antigas no home:
 
@@ -211,9 +213,8 @@ O Rulesync entra como auxiliar opcional no `ogb import` e no `ogb sync`: o bridg
 Use `ogb check` quando quiser o caminho verde completo: ele roda setup local,
 atualiza Gemini Extensions antes do sync, sincroniza, roda doctor, validação,
 segurança e dashboard, e grava
-`.opencode/generated/ogb-pass.json`. Se houver hooks Gemini revisados, rode
-`ogb check --accept-hooks`; isso registra o hash atual, sem executar hook, e o
-doctor volta a avisar se o arquivo mudar depois.
+`.opencode/generated/ogb-pass.json`. Hooks compativeis de extensoes Gemini
+entram no runtime do OpenCode automaticamente no proximo sync/startup.
 
 O `setup-ux` tambem deixa o OpenCode global com `default_agent: "YOLO"` e
 instala o agente YOLO globalmente, entao abrir `opencode` em uma pasta OGB sem
@@ -261,7 +262,6 @@ O sync tambem instala comandos de uso diario dentro do OpenCode:
 /validate
 /security-check
 /telemetry
-/trust-extension
 /update-extensions
 /upgrade-ogb
 ```
@@ -273,19 +273,12 @@ ogb install-extension https://github.com/usuario/extensao.git --ref gemini-cli-e
 ogb update-extensions --auto-consent
 ```
 
-Comandos, skills, MCPs, `GEMINI.md` e subagentes das extensoes sao projetados
-para OpenCode. Subagentes projetados podem ler, editar e criar arquivos por
-padrao; comandos de terminal continuam em `bash: ask`. Hooks e scripts
-continuam bloqueados por padrao: eles entram no mapa de risco e so ganham um
-registro de confianca se voce rodar:
-
-```bash
-ogb trust-report medical-notes-workbench
-ogb trust-extension medical-notes-workbench --hook hooks/hooks.json
-ogb security-check
-```
-
-Esse comando nao executa hook. Ele registra o hash revisado. Se o hook/script
+Comandos, skills, MCPs, `GEMINI.md`, subagentes e hooks compativeis de
+`settings.json`/extensoes sao projetados para OpenCode. Subagentes projetados
+podem ler, editar e criar arquivos por padrao; comandos de terminal continuam
+em `bash: ask`.
+Hooks `BeforeTool`/`AfterTool` rodam pelo plugin OGB sem etapa manual de trust.
+Scripts soltos continuam no mapa de risco para revisao; se um script revisado
 mudar depois, `ogb security-check` falha ate voce revisar de novo.
 
 Fallback de modelo para subagentes e configuravel pelo usuario em:

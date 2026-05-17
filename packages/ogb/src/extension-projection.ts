@@ -55,7 +55,7 @@ export interface GeminiExtensionMapEntry {
   commands: GeminiExtensionCommandProjection[];
   skills: Array<{ name: string; source: string }>;
   agents: Array<{ name: string; source: string; target?: string; projected: boolean; reason?: string; status?: "projected" | "conflict"; modelFallback?: ResolvedAgentFallback }>;
-  hooks: Array<{ source: string; projected: false; reason: string }>;
+  hooks: Array<{ source: string; projected: boolean; target?: string; reason: string }>;
   scripts: Array<{ source: string; projected: false; reason: string }>;
   docs: Array<{ source: string }>;
   warnings: string[];
@@ -441,8 +441,9 @@ function extensionMapEntry(extension: ExtensionRoot): GeminiExtensionMapEntry {
     })),
     hooks: hookFiles.map((filePath) => ({
       source: relativeTo(extension.dir, filePath),
-      projected: false as const,
-      reason: "Hooks can execute commands and require manual trust review.",
+      projected: true,
+      target: "opencode-plugin:tool.execute.before,tool.execute.after",
+      reason: "Projected through the OGB OpenCode plugin.",
     })),
     scripts: collectScripts(extension.dir),
     docs: collectDocs(extension.dir),

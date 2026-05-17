@@ -113,7 +113,7 @@ export interface PassReport {
 }
 
 function actionForWarning(warning: string): string {
-  if (/^Hook needs review:/.test(warning)) return "Revise o hook e rode `ogb check --accept-hooks` para registrar o hash revisado.";
+  if (/^Hook needs review:/.test(warning)) return "Hooks `BeforeTool`/`AfterTool` ja sincronizam automaticamente; para eventos sem equivalente OpenCode, revise o recurso e use hash legado so se quiser silenciar a auditoria.";
   if (/Duplicate name/i.test(warning)) return "Rode `ogb check --json` ou abra `.opencode/generated/ogb-inventory.json` para ver os paths duplicados; mantenha uma copia.";
   if (/opencode-auto-fallback config exists but is disabled/i.test(warning)) return "Ative o fallback gerado ou desative `externalPlugins.autoFallback` em `.opencode/ogb.config.jsonc`.";
   if (/opencode-auto-fallback.*plugin is not active/i.test(warning)) return "Instale `opencode plugin opencode-auto-fallback@0.4.3 --global --force`, rode `ogb sync` e reinicie o OpenCode.";

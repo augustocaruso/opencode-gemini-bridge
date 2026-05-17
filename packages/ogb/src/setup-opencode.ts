@@ -40,6 +40,7 @@ const STARTUP_LOCK_FILE = "ogb-startup-sync.lock";
 const UPDATE_STATUS_FILE = "ogb-update-status.json";
 const DASHBOARD_FILE = "ogb-dashboard.md";
 const MCP_ENV_FILE = path.join(os.homedir(), ".config", "opencode-gemini-bridge", "mcp-env.json");
+const EXTENSION_MAP_FILE = "ogb-extension-map.json";
 const STARTUP_DELAY_MS = 2500;
 const OGB_DIRECT_COMMANDS = {
   bridge: {
@@ -332,6 +333,396 @@ async function log(client, body) {
     await bestEffort(client.app.log({ body }));
   } catch {
     // Best effort.
+  }
+}
+
+function extensionMapPath(cwd) {
+  return path.join(generatedDir(cwd), EXTENSION_MAP_FILE);
+}
+
+function stripJsonComments(text) {
+  let out = "";
+  let inString = false;
+  let quote = "";
+  let escaping = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (escaping) {
+      out += char;
+      escaping = false;
+      continue;
+    }
+    if (inString) {
+      out += char;
+      if (char === "\\") escaping = true;
+      else if (char === quote) inString = false;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      inString = true;
+      quote = char;
+      out += char;
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      while (index < text.length && text[index] !== "\n") index += 1;
+      out += "\n";
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      index += 2;
+      while (index < text.length && !(text[index] === "*" && text[index + 1] === "/")) {
+        if (text[index] === "\n") out += "\n";
+        index += 1;
+      }
+      index += 1;
+      continue;
+    }
+    out += char;
+  }
+  return out;
+}
+
+function stripTrailingCommas(text) {
+  let out = "";
+  let inString = false;
+  let quote = "";
+  let escaping = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (escaping) {
+      out += char;
+      escaping = false;
+      continue;
+    }
+    if (inString) {
+      out += char;
+      if (char === "\\") escaping = true;
+      else if (char === quote) inString = false;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      inString = true;
+      quote = char;
+      out += char;
+      continue;
+    }
+    if (char === ",") {
+      let lookahead = index + 1;
+      while (/\s/.test(text[lookahead] || "")) lookahead += 1;
+      if (text[lookahead] === "}" || text[lookahead] === "]") continue;
+    }
+    out += char;
+  }
+  return out;
+}
+
+function parseJsonLike(text) {
+  return JSON.parse(stripTrailingCommas(stripJsonComments(String(text || ""))));
+}
+
+function readExtensionMap(cwd) {
+  try {
+    return parseJsonLike(fs.readFileSync(extensionMapPath(cwd), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function expandExtensionHookCommand(value, extensionPath) {
+  return String(value || "")
+    .split("$" + "{extensionPath}").join(extensionPath)
+    .split("$" + "{/}").join(path.sep);
+}
+
+function hookEntriesForEvent(parsed, eventName) {
+  const root = parsed && typeof parsed === "object" && parsed.hooks && typeof parsed.hooks === "object"
+    ? parsed.hooks
+    : {};
+  const entries = root[eventName];
+  return Array.isArray(entries) ? entries : [];
+}
+
+function commandHooksFromEntry(entry) {
+  if (!entry || typeof entry !== "object") return [];
+  if (Array.isArray(entry.hooks)) return entry.hooks.filter((hook) => hook && typeof hook === "object");
+  if (typeof entry.command === "string") return [entry];
+  return [];
+}
+
+function toolMatchesMatcher(matcher, toolName) {
+  if (!matcher) return true;
+  const names = geminiToolAliases(toolName);
+  try {
+    const regex = new RegExp(String(matcher));
+    return names.some((name) => regex.test(name));
+  } catch {
+    return names.includes(String(matcher));
+  }
+}
+
+function geminiToolAliases(toolName) {
+  const original = String(toolName || "");
+  const lower = original.toLowerCase();
+  const aliases = new Set([original, lower]);
+  const map = {
+    bash: ["Bash", "run_shell_command", "shell"],
+    shell: ["Bash", "run_shell_command", "bash"],
+    read: ["Read", "read_file"],
+    write: ["Write", "write_file"],
+    edit: ["Edit", "replace"],
+    grep: ["Grep", "search_file_content"],
+    glob: ["Glob", "glob"],
+    list: ["LS", "list_directory"],
+    ls: ["LS", "list_directory"],
+    webfetch: ["WebFetch", "web_fetch"],
+    websearch: ["WebSearch", "google_web_search"],
+  };
+  for (const alias of map[lower] || []) aliases.add(alias);
+  return [...aliases].filter(Boolean);
+}
+
+function geminiToolName(toolName) {
+  const lower = String(toolName || "").toLowerCase();
+  const map = {
+    bash: "run_shell_command",
+    shell: "run_shell_command",
+    read: "read_file",
+    write: "write_file",
+    edit: "replace",
+    grep: "search_file_content",
+    glob: "glob",
+    list: "list_directory",
+    ls: "list_directory",
+    webfetch: "web_fetch",
+    websearch: "google_web_search",
+  };
+  return map[lower] || String(toolName || "");
+}
+
+function readGeminiHookFile(extension, hookRef) {
+  const hookPath = path.join(extension.path, ...String(hookRef.source || "").split("/").filter(Boolean));
+  try {
+    return { hookPath, parsed: parseJsonLike(fs.readFileSync(hookPath, "utf8")) };
+  } catch {
+    return { hookPath, parsed: {} };
+  }
+}
+
+function geminiExtensionHookCommands(cwd, eventName, toolName) {
+  const map = readExtensionMap(cwd);
+  const commands = [];
+  for (const extension of Array.isArray(map.extensions) ? map.extensions : []) {
+    if (!extension || typeof extension.path !== "string") continue;
+    for (const hookRef of Array.isArray(extension.hooks) ? extension.hooks : []) {
+      const { hookPath, parsed } = readGeminiHookFile(extension, hookRef);
+      for (const entry of hookEntriesForEvent(parsed, eventName)) {
+        if (!toolMatchesMatcher(entry.matcher, toolName)) continue;
+        for (const hook of commandHooksFromEntry(entry)) {
+          if (hook.type && hook.type !== "command") continue;
+          if (typeof hook.command !== "string" || !hook.command.trim()) continue;
+          commands.push({
+            extensionName: String(extension.name || path.basename(extension.path)),
+            extensionPath: extension.path,
+            cwd: extension.path,
+            hookPath,
+            eventName,
+            name: String(hook.name || hook.command),
+            command: expandExtensionHookCommand(hook.command, extension.path),
+            timeout: Number.isFinite(Number(hook.timeout)) ? Math.max(100, Math.trunc(Number(hook.timeout))) : 10_000,
+          });
+        }
+      }
+    }
+  }
+  return commands;
+}
+
+function geminiSettingsHookFiles(cwd) {
+  const seen = new Set();
+  const files = [
+    path.join(cwd, ".gemini", "settings.json"),
+    path.join(os.homedir(), ".gemini", "settings.json"),
+  ];
+  return files.filter((filePath) => {
+    const resolved = path.resolve(filePath);
+    if (seen.has(resolved) || !fs.existsSync(resolved)) return false;
+    seen.add(resolved);
+    return true;
+  });
+}
+
+function readGeminiSettingsHookFile(settingsPath) {
+  try {
+    return parseJsonLike(fs.readFileSync(settingsPath, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function geminiSettingsHookCommands(cwd, eventName, toolName) {
+  const commands = [];
+  for (const settingsPath of geminiSettingsHookFiles(cwd)) {
+    const parsed = readGeminiSettingsHookFile(settingsPath);
+    for (const entry of hookEntriesForEvent(parsed, eventName)) {
+      if (!toolMatchesMatcher(entry.matcher, toolName)) continue;
+      for (const hook of commandHooksFromEntry(entry)) {
+        if (hook.type && hook.type !== "command") continue;
+        if (typeof hook.command !== "string" || !hook.command.trim()) continue;
+        commands.push({
+          extensionName: "gemini-settings",
+          cwd,
+          hookPath: settingsPath,
+          eventName,
+          name: String(hook.name || hook.command),
+          command: hook.command,
+          timeout: Number.isFinite(Number(hook.timeout)) ? Math.max(100, Math.trunc(Number(hook.timeout))) : 10_000,
+        });
+      }
+    }
+  }
+  return commands;
+}
+
+function geminiHookCommands(cwd, eventName, toolName) {
+  return [
+    ...geminiSettingsHookCommands(cwd, eventName, toolName),
+    ...geminiExtensionHookCommands(cwd, eventName, toolName),
+  ];
+}
+
+function compactToolOutput(value) {
+  if (!value || typeof value !== "object") return {};
+  if (typeof value.output === "string") return { output: value.output };
+  if (typeof value.text === "string") return { text: value.text };
+  if (typeof value.stderr === "string" || typeof value.stdout === "string") {
+    return {
+      stdout: value.stdout,
+      stderr: value.stderr,
+      exitCode: value.exitCode ?? value.exit_code,
+    };
+  }
+  return value;
+}
+
+function geminiHookPayload(cwd, eventName, input, output) {
+  const openCodeToolName = String(input?.tool || input?.name || input?.toolName || "");
+  const toolName = geminiToolName(openCodeToolName);
+  const toolInput = output?.args && typeof output.args === "object"
+    ? output.args
+    : input?.args && typeof input.args === "object"
+      ? input.args
+      : {};
+  return {
+    hook_event_name: eventName,
+    session_id: String(input?.sessionID || input?.sessionId || input?.session_id || ""),
+    call_id: String(input?.callID || input?.callId || input?.call_id || ""),
+    cwd,
+    tool_name: toolName,
+    original_request_name: openCodeToolName,
+    tool: { name: openCodeToolName },
+    tool_input: toolInput,
+    tool_response: eventName === "AfterTool" ? compactToolOutput(output) : undefined,
+  };
+}
+
+function parseHookJson(stdout) {
+  const text = String(stdout || "").trim();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
+function runHookCommand(hookCommand, payload) {
+  return new Promise((resolve) => {
+    const args = splitCommandArgs(hookCommand.command);
+    if (args.length === 0) {
+      resolve({ code: 0, stdout: "", stderr: "" });
+      return;
+    }
+    const env = {
+      ...process.env,
+      OGB_HOOK_SOURCE: hookCommand.hookPath,
+      OGB_EXTENSION_NAME: hookCommand.extensionName,
+    };
+    if (hookCommand.extensionPath) env.GEMINI_EXTENSION_PATH = hookCommand.extensionPath;
+    const child = spawn(args[0], args.slice(1), {
+      cwd: hookCommand.cwd || payload.cwd,
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        // Best effort.
+      }
+      resolve({ code: null, stdout, stderr, timedOut: true });
+    }, hookCommand.timeout);
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk) => stdout += chunk);
+    child.stderr?.on("data", (chunk) => stderr += chunk);
+    child.stdin?.on("error", () => {
+      // The hook may exit before reading stdin after deciding to block.
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code: null, stdout, stderr: (stderr + "\n" + (error instanceof Error ? error.message : String(error))).trim(), error });
+    });
+    child.on("close", (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code, signal, stdout, stderr });
+    });
+    child.stdin?.end(JSON.stringify(payload) + "\n");
+  });
+}
+
+async function runGeminiExtensionToolHooks(cwd, client, eventName, input, output) {
+  const toolName = String(input?.tool || input?.name || input?.toolName || "");
+  const commands = geminiHookCommands(cwd, eventName, toolName);
+  for (const command of commands) {
+    const payload = geminiHookPayload(cwd, eventName, input, output);
+    const result = await runHookCommand(command, payload);
+    const hookOutput = parseHookJson(result.stdout);
+    if (result.code === 2) {
+      throw new Error(String(result.stderr || hookOutput.reason || (command.extensionName + "/" + command.name + " blocked " + toolName)));
+    }
+    if (result.timedOut || result.code !== 0) {
+      await log(client, {
+        service: "ogb-extension-hooks",
+        level: "warn",
+        message: "Gemini extension hook failed open.",
+        extension: command.extensionName,
+        hook: command.name,
+        event: eventName,
+        code: result.code,
+        timedOut: Boolean(result.timedOut),
+        stderr: tail(result.stderr),
+      });
+      continue;
+    }
+    const decision = String(hookOutput.decision || "").toLowerCase();
+    if (decision === "deny" || decision === "block") {
+      throw new Error(String(hookOutput.reason || (command.extensionName + "/" + command.name + " denied " + toolName)));
+    }
+    const rewrittenInput = hookOutput?.hookSpecificOutput?.tool_input;
+    if (eventName === "BeforeTool" && rewrittenInput && typeof rewrittenInput === "object" && output?.args && typeof output.args === "object") {
+      Object.assign(output.args, rewrittenInput);
+    }
   }
 }
 
@@ -1142,6 +1533,12 @@ export const OgbStartupSync = async ({ client, directory, worktree }) => {
       if (await handleDirectBridgeCommand({ cwd, client, input })) {
         throw new Error("__OGB_COMMAND_HANDLED__");
       }
+    },
+    "tool.execute.before": async (input, output) => {
+      await runGeminiExtensionToolHooks(cwd, client, "BeforeTool", input, output);
+    },
+    "tool.execute.after": async (input, output) => {
+      await runGeminiExtensionToolHooks(cwd, client, "AfterTool", input, output);
     },
   };
 };

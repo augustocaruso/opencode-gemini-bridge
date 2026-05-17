@@ -25,7 +25,7 @@ Não edite manualmente arquivos gerados do OpenCode.
 | MCPs | `.gemini/settings.json` | `opencode.jsonc` → `mcp` | Converter/sincronizar. |
 | Subagentes | `agents/` em Gemini Extensions | `.opencode/agents` | Projetar com leitura/edição/diretório externo liberados; bash continua pedindo confirmação. |
 | Commands | Gemini custom commands/extensions | `.opencode/commands` | Converter. |
-| Hooks | Gemini hooks | trust ledger | Mapear; confiar só por `ogb trust-extension`. |
+| Hooks | `settings.json` e Gemini extension hooks | OGB OpenCode plugin | `BeforeTool`/`AfterTool` sincronizam automaticamente. |
 | Extensões | Gemini Extensions | projeção OpenCode | Gemini continua pacote publicável. |
 | Status/diagnóstico | `/memory`, `/mcp`, `/skills` | `/bridge`, `/doctor`, sidebar | dashboard + plugin de startup + TUI. |
 
@@ -41,7 +41,7 @@ Não edite manualmente arquivos gerados do OpenCode.
 7. launch wrapper
 8. subagents/commands de extensões
 9. plugin/status visual e quotas
-10. trust de hooks/scripts
+10. security-check de hooks/scripts
 11. sync bidirecional rules-only
 12. GitHub Actions
 13. deploy Windows

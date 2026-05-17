@@ -36,18 +36,19 @@ ogb validate
 ogb security-check
 ```
 
-## Antes de confiar em hooks/scripts
+## Hooks/scripts de Gemini Extensions
 
-Hooks e scripts de Gemini Extensions ficam bloqueados por padrao.
+Hooks `BeforeTool`/`AfterTool` de `settings.json` e Gemini Extensions
+sincronizam e rodam pelo plugin OGB do OpenCode no fluxo normal de `ogb sync`.
 
-Para registrar que voce revisou um hook:
+Para auditar a superfície:
 
 ```bash
-ogb trust-extension nome-da-extensao --hook hooks/hooks.json
+ogb trust-report nome-da-extensao
 ogb security-check
 ```
 
-Isso nao executa o hook. So grava o hash revisado.
+Scripts soltos e eventos sem equivalente OpenCode seguem apenas inventariados.
 
 ## Sync bidirecional
 

@@ -22,16 +22,16 @@ Mitigação:
 
 ## Risco 3 — Hooks/scripts de extensões
 
-Gemini Extensions podem ter hooks/scripts. Executar automaticamente é perigoso.
+Gemini settings e Extensions podem ter hooks/scripts. O contrato atual do OGB é
+sincronizar os hooks compatíveis com OpenCode sem etapa manual, porque eles
+fazem parte do comportamento instalado da configuração Gemini.
 
 Mitigação:
 
-- Hooks começam desativados.
-- Exigir trust seletivo.
-- `ogb sync` registra hooks/scripts em `.opencode/generated/ogb-extension-map.json`.
-- `ogb security-check` confirma que hooks/scripts ficaram apenas mapeados para revisão.
-- `ogb trust-extension <extensao> --hook <arquivo>` registra hash do recurso revisado.
-- Se o hook/script confiado mudar, `ogb security-check` falha até nova revisão.
+- `ogb sync` registra hooks/scripts de extensões em `.opencode/generated/ogb-extension-map.json`.
+- Hooks `BeforeTool`/`AfterTool` de `settings.json` e extensões rodam pelo plugin OGB do OpenCode.
+- Scripts soltos e eventos sem equivalente OpenCode ficam apenas inventariados.
+- `ogb security-check` confirma a projeção esperada e continua verificando hashes legados.
 - Nunca baixar e executar script remoto sem revisão.
 
 ## Risco 4 — Secrets em configs

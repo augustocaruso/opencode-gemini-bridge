@@ -36,7 +36,7 @@ de conter a inteligencia principal.
 - Nao reescrever tudo de uma vez.
 - Nao remover comandos antigos imediatamente.
 - Nao mudar a estrategia de sync Gemini/OpenCode neste roadmap.
-- Nao ativar hooks/scripts de extensoes automaticamente.
+- Ativar hooks `BeforeTool`/`AfterTool` de `settings.json` e extensoes automaticamente pelo plugin OGB; manter scripts soltos em revisão.
 - Nao transformar startup em mecanismo de update automatico.
 - Nao criar release apenas para este documento.
 

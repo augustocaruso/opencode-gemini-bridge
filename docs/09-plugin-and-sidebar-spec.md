@@ -199,7 +199,7 @@ Comportamento:
 - tenta mostrar toast na TUI quando o OpenCode permite;
 - lê `.opencode/generated/ogb-startup-sync.json` para saber qual comando chamar;
 - não roda `gemini extensions update --all`;
-- não ativa hooks/scripts de extensão.
+- ativa hooks `BeforeTool`/`AfterTool` de `settings.json` e extensões via plugin OGB quando presentes.
 
 Instalador implementado:
 

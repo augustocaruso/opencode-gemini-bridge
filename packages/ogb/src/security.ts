@@ -247,12 +247,14 @@ function checkExtensionProjection(mapPath: string): SecurityFinding {
   }
 
   const projectedRisk: string[] = [];
-  let hooks = 0;
+  let activeHooks = 0;
+  let reviewOnlyHooks = 0;
   let scripts = 0;
   for (const extension of map.extensions ?? []) {
     for (const hook of extension.hooks ?? []) {
-      hooks += 1;
-      if (hook.projected !== false) projectedRisk.push(`${extension.name}/${hook.source}`);
+      if (hook.projected === true && typeof hook.target === "string" && hook.target.startsWith("opencode-plugin:")) activeHooks += 1;
+      else if (hook.projected !== false) projectedRisk.push(`${extension.name}/${hook.source}`);
+      else reviewOnlyHooks += 1;
     }
     for (const script of extension.scripts ?? []) {
       scripts += 1;
@@ -265,7 +267,7 @@ function checkExtensionProjection(mapPath: string): SecurityFinding {
     status: projectedRisk.length ? "fail" : "pass",
     message: projectedRisk.length
       ? `Hooks/scripts should not be auto-projected: ${projectedRisk.join(", ")}.`
-      : `${hooks} hook(s) and ${scripts} script-like file(s) are mapped for review, not copied into OpenCode.`,
+      : `${activeHooks} hook(s) are synced through the OGB OpenCode plugin; ${reviewOnlyHooks} hook(s) and ${scripts} script-like file(s) are review-only.`,
   };
 }
 
@@ -305,8 +307,8 @@ function checkTrustedExtensionResources(mapPath: string, projectRoot: string, ho
     message: failures.length
       ? `Trusted hook/script changed or disappeared: ${failures.join(", ")}. Re-review before trusting again.`
       : trusted > 0
-        ? `${trusted} trusted hook/script resource(s) still match recorded hashes.`
-        : "No extension hooks/scripts are trusted for execution.",
+        ? `${trusted} reviewed hook/script hash record(s) still match.`
+        : "No manual hook/script hash records; supported extension hooks are synced automatically.",
     files: failures,
   };
 }

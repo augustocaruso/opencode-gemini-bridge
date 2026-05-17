@@ -275,7 +275,12 @@ test("runPass carries the first validation failure into blocker copy and next ac
 test("trusted Gemini hooks require review again after settings change", () => {
   const projectRoot = tempRoot();
   const oldExitCode = process.exitCode;
-  writeHookSettings(projectRoot);
+  fs.mkdirSync(path.join(projectRoot, ".gemini"), { recursive: true });
+  fs.writeFileSync(path.join(projectRoot, ".gemini", "settings.json"), JSON.stringify({
+    hooks: {
+      BeforeAgent: [{ command: "echo ok" }],
+    },
+  }, null, 2), "utf8");
   runPass({
     projectRoot,
     homeDir: projectRoot,
@@ -288,7 +293,7 @@ test("trusted Gemini hooks require review again after settings change", () => {
 
   fs.writeFileSync(path.join(projectRoot, ".gemini", "settings.json"), JSON.stringify({
     hooks: {
-      BeforeTool: [{ command: "echo changed" }],
+      BeforeAgent: [{ command: "echo changed" }],
     },
   }, null, 2), "utf8");
 

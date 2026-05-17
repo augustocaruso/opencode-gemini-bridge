@@ -733,7 +733,7 @@ function diagnosticContext(workflow: string, payload: unknown, summary: Record<s
   } else if (includesAny(messagesText, ["hook needs review", "needs_review", "trusted hook/script changed", "trusted hook", "hooks/scripts"])) {
     code = "trust_review_required";
     label = "Hooks/scripts precisam de revisao";
-    recovery = "Revise o recurso e rode ogb trust-extension ou ogb check --accept-hooks quando for seguro.";
+    recovery = "Hooks BeforeTool/AfterTool sincronizam automaticamente; revise scripts ou eventos sem equivalente OpenCode e registre hash legado so se quiser silenciar a auditoria.";
   } else if (payloadBoolean(payload, "restartRequired") || payloadOutcome === "updated") {
     code = "restart_required";
     label = "OpenCode precisa reiniciar para carregar mudancas";

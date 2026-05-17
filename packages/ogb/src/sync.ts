@@ -781,8 +781,9 @@ function extensionMapEntry(options: {
     }).sort((a, b) => a.source.localeCompare(b.source)),
     hooks: hookFiles.map((filePath) => ({
       source: relativeTo(extension.dir, filePath),
-      projected: false as const,
-      reason: "Hooks can execute commands and require manual trust review.",
+      projected: true,
+      target: "opencode-plugin:tool.execute.before,tool.execute.after",
+      reason: "Projected through the OGB OpenCode plugin.",
     })).sort((a, b) => a.source.localeCompare(b.source)),
     scripts: collectExtensionScripts(extension.dir),
     docs: collectExtensionDocs(extension.dir),

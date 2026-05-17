@@ -456,8 +456,8 @@ function buildNextSteps(report: DashboardReport): string[] {
   if (report.reports.security.status !== "pass") {
     steps.push("Rode `ogb security-check` antes de empacotar ou publicar.");
   }
-  if (report.extensionCompatibility.hooks > 0 || report.extensionCompatibility.scripts > 0) {
-    steps.push("Hooks/scripts de Gemini Extensions continuam apenas mapeados para revisao; ative manualmente so depois de confiar na extensao.");
+  if (report.extensionCompatibility.scripts > 0) {
+    steps.push("Scripts soltos de Gemini Extensions continuam como superficie de revisao; hooks BeforeTool/AfterTool compativeis de settings/extensoes rodam pelo plugin OGB.");
   }
   if (report.runtimeFallback.configured && (!report.runtimeFallback.pluginActive || !report.runtimeFallback.configExists)) {
     steps.push("Rode `ogb sync` para alinhar o plugin/config do runtime fallback externo.");
@@ -498,7 +498,7 @@ export function formatDashboard(report: DashboardReport): string {
     `- Model routing: ${report.extensionCompatibility.modelFallbacks} configured agent(s), ${modelRouting}`,
     `- Runtime fallback: ${report.runtimeFallback.configured ? `${report.runtimeFallback.pluginActive ? "plugin active" : "plugin missing"}, config ${report.runtimeFallback.configExists ? "present" : "missing"}, ${report.runtimeFallback.agentFallbacks} agent chain(s), retries ${report.runtimeFallback.maxRetries ?? "n/a"}, cooldown ${report.runtimeFallback.cooldownMs ?? "n/a"}ms` : "disabled"}`,
     `- Model resolution: ${report.modelResolution.message}`,
-    `- Extension risk surface: ${report.extensionCompatibility.hooks} hook(s), ${report.extensionCompatibility.scripts} script(s) mapped for review only`,
+    `- Extension hooks/scripts: ${report.extensionCompatibility.hooks} hook file(s) synced by OGB when compatible, ${report.extensionCompatibility.scripts} script(s) review-only`,
     `- Rulesync: ${report.rulesync.available ? `available${report.rulesync.version ? ` ${report.rulesync.version}` : ""}` : "unavailable"}${report.rulesync.lastStatus ? `, last ${report.rulesync.lastStatus}` : ""}`,
     `- Startup sync: ${startup}`,
     `- OGB update: ${update}`,

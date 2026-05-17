@@ -11,7 +11,7 @@
 | Skills | Skills nativas OpenCode | Projetar para `.opencode/skills`. |
 | Subagents | Agents/subagents OpenCode | Converter; revisar semântica. |
 | Commands | `.opencode/commands` | Converter templates. |
-| Hooks | Plugins/scripts/trust ledger | Mapear e confiar seletivamente por hash. |
+| Hooks | Plugin OGB do OpenCode | Sincronizar `BeforeTool`/`AfterTool` de `settings.json` e extensões; scripts soltos ficam no mapa de revisão. |
 | Gemini Extensions | OpenCode pack/plugin | Criar compatibility layer. |
 | YOLO | `permission` allow | Agente `yolo` + sandbox externo. |
 | Model steering | Parcial | `question`, checkpoints, interrupt. |

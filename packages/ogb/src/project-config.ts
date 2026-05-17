@@ -3,7 +3,7 @@ import path from "node:path";
 import { parse as parseJsonc } from "jsonc-parser";
 import { createBackupSession, type BackupRecord, type BackupRetentionReport } from "./backup-policy.js";
 import { sha256Text } from "./file-hash.js";
-import { PLAN_READ_ONLY_BASH_PERMISSIONS } from "./opencode-permissions.js";
+import { PLAN_NATIVE_READ_PERMISSIONS, PLAN_READ_ONLY_BASH_PERMISSIONS } from "./opencode-permissions.js";
 import { resolveProjectPaths } from "./paths.js";
 import { emptySyncState, managedHashFor, readSyncState, upsertManagedFile, writeSyncState } from "./sync-state.js";
 import { OGB_VERSION } from "./types.js";
@@ -45,6 +45,7 @@ export function projectConfigText(options: { mcp?: Record<string, unknown>; plug
         mode: "primary",
         description: "Agente principal para conversar, editar e executar ferramentas conforme permissoes.",
         permission: {
+          ...PLAN_NATIVE_READ_PERMISSIONS,
           bash: { ...PLAN_READ_ONLY_BASH_PERMISSIONS },
           question: "allow",
           plan_enter: "allow",
@@ -54,6 +55,7 @@ export function projectConfigText(options: { mcp?: Record<string, unknown>; plug
         mode: "primary",
         description: "Planeja e inspeciona o workspace sem modificar arquivos.",
         permission: {
+          ...PLAN_NATIVE_READ_PERMISSIONS,
           bash: { ...PLAN_READ_ONLY_BASH_PERMISSIONS },
           edit: "ask",
           question: "allow",

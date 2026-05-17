@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.38 - Hooks Gemini sem opt-in
+
+- Faz hooks Gemini `BeforeTool`/`AfterTool` de `settings.json` e extensões rodarem automaticamente pelo plugin OGB do OpenCode durante o fluxo normal de sync.
+- Mapeia nomes de ferramentas entre OpenCode e Gemini, incluindo `bash`/`run_shell_command`, e respeita `decision: "deny"`/`"block"`, exit code `2` e reescrita de `tool_input`.
+- Mantém scripts soltos e eventos sem equivalente OpenCode como superfície de auditoria, sem bloquear o caminho normal de `ogb sync`.
+- Atualiza o `AGENTS.md` global distribuído para orientação de terminal neutra ao sistema operacional.
+- Expande permissões de leitura do agente Plan, incluindo comandos GitHub CLI somente-leitura.
+
 ## 0.1.37 - Reparo global pos-sync
 
 - Faz o `ogb check --force` rodar um sync global antes do sync de projeto, limpando projeções antigas em `~/.config/opencode`.

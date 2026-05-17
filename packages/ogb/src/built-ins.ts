@@ -189,7 +189,7 @@ Execute ou oriente a execucao de ogb security-check.
 Explique em linguagem simples:
 - se ha segredo/token materializado;
 - se o YOLO manteve guardrails;
-- se hooks/scripts de extensoes ficaram apenas mapeados para revisao;
+- se hooks de settings/extensoes foram sincronizados e scripts soltos ficaram apenas em revisao;
 - o que precisa ser corrigido antes de distribuir.
 `,
   },

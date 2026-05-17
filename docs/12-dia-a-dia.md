@@ -88,19 +88,19 @@ ogb trust-report
 
 ## Segurança de hooks/scripts
 
-Por padrao, hooks e scripts de extensoes ficam apenas mapeados. Eles nao rodam
-so porque a extensao existe.
+Por padrao, hooks `BeforeTool`/`AfterTool` de `settings.json` e extensoes
+Gemini sincronizam e rodam pelo plugin OGB do OpenCode. Eles fazem parte do
+comportamento instalado da configuracao Gemini.
 
-Fluxo seguro:
+Fluxo normal:
 
 ```bash
-ogb trust-report medical-notes-workbench
-ogb trust-extension medical-notes-workbench --hook hooks/hooks.json
+ogb sync
 ogb security-check
 ```
 
-Confiar em um hook registra o hash revisado. Se o arquivo mudar depois, o
-`security-check` falha ate voce revisar de novo.
+Scripts soltos e eventos Gemini sem equivalente OpenCode continuam apenas
+inventariados para revisao. `ogb trust-report` segue util para auditoria.
 
 ## Fallback de modelo
 

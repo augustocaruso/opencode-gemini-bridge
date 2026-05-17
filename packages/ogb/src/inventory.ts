@@ -298,12 +298,15 @@ function collectHooks(projectRoot: string, homeDir: string, homeMode: boolean): 
     const hookRoot = parsed?.hooks;
     if (!hookRoot || typeof hookRoot !== "object") continue;
     for (const name of Object.keys(hookRoot).sort()) {
+      const autoSynced = name === "BeforeTool" || name === "AfterTool";
       hooks.push({
         name,
         source: settingsPath,
         scope,
-        status: "needs_review",
-        message: "Hooks can execute commands and require manual trust review",
+        status: autoSynced ? "ok" : "needs_review",
+        message: autoSynced
+          ? "Synced automatically through the OGB OpenCode plugin"
+          : "No compatible OpenCode hook projection yet; keep under manual review",
       });
     }
   }

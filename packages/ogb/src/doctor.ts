@@ -175,7 +175,10 @@ function collectWarnings(inv: Inventory, projectRoot: string, homeDir: string): 
   for (const mcp of inv.mcps) if (mcp.status !== "ok") pushWarning(`MCP warning: ${mcp.name} - ${mcp.message}`);
   for (const agent of inv.agents) if (agent.status === "needs_review") pushWarning(`Agent needs review: ${agent.name}`);
   for (const command of inv.commands) if (command.status === "needs_review") pushWarning(`Command needs review: ${command.name}`);
-  for (const hook of inv.hooks) if (!hookIsTrusted(hook, projectRoot, homeDir)) pushWarning(`Hook needs review: ${hook.name} - ${hook.message}`);
+  for (const hook of inv.hooks) {
+    if (hook.status === "ok") continue;
+    if (!hookIsTrusted(hook, projectRoot, homeDir)) pushWarning(`Hook needs review: ${hook.name} - ${hook.message}`);
+  }
   for (const extension of inv.extensions) pushWarning(`Extension needs review: ${extension.name} - ${extension.message}`);
 
   return warnings;

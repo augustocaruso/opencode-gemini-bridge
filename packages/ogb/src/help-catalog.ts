@@ -315,16 +315,16 @@ export const HELP_COMMANDS: HelpCommand[] = [
   {
     name: "trust-report",
     category: "Extensions",
-    summary: "Review mapped Gemini extension hooks/scripts.",
-    description: "Shows hook/script risk surface and trust hash status without executing extension hooks or scripts.",
+    summary: "Audit mapped Gemini extension hooks/scripts.",
+    description: "Shows hook/script surface and legacy trust hash status. Compatible extension hooks sync automatically through the OGB plugin.",
     usage: "ogb trust-report [extension] [--json]",
     examples: ["ogb trust-report", "ogb trust-report browsermcp-extension"],
   },
   {
     name: "trust-extension",
     category: "Extensions",
-    summary: "Record trust for reviewed extension hooks/scripts.",
-    description: "Stores reviewed hashes for extension hook/script resources after manual review.",
+    summary: "Record legacy review hashes for extension hooks/scripts.",
+    description: "Stores reviewed hashes for extension hook/script resources after manual review; this is not needed to activate compatible hooks.",
     usage: "ogb trust-extension <extension> [--all-hooks] [--all-scripts]",
     examples: ["ogb trust-extension browsermcp-extension --all-hooks"],
     runnable: false,
@@ -502,7 +502,7 @@ function inferredActionDescription(command: HelpCommand, args: string[] | undefi
   if (args.includes("--no-sync") || args.includes("--skip-sync")) return "Skips the sync/projection part of the flow.";
   if (args.includes("--no-extension-update")) return "Skips the automatic Gemini extension update before sync.";
   if (args.includes("--no-patches")) return "Skips versioned OGB repair patches during the check.";
-  if (args.includes("--accept-hooks")) return "Records current Gemini hooks as reviewed by hash during the check.";
+  if (args.includes("--accept-hooks")) return "Legacy: records unsupported Gemini hook events as reviewed by hash during the check.";
   if (args.includes("--auto-consent") || args.includes("--yes")) return "Runs unattended by answering supported confirmation prompts automatically.";
   if (args.includes("--reset-global")) return "Rebuilds the global OpenCode profile from OGB defaults.";
   return command.summary;

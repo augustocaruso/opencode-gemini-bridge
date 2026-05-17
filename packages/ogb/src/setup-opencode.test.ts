@@ -406,6 +406,235 @@ test("startup plugin sends OGB command output directly to chat", async () => {
   }
 });
 
+test("startup plugin runs projected Gemini extension tool hooks automatically", async () => {
+  const root = tempProject();
+  const projectRoot = path.join(root, "project");
+  const pluginDir = path.join(root, "plugin");
+  const pluginPath = path.join(pluginDir, "ogb-startup-sync.js");
+  const extensionDir = path.join(root, "extensions", "study-pack");
+  const hookLog = path.join(root, "hook-log.jsonl");
+  fs.mkdirSync(path.join(projectRoot, ".opencode", "generated"), { recursive: true });
+  fs.mkdirSync(path.join(pluginDir), { recursive: true });
+  fs.mkdirSync(path.join(extensionDir, "hooks"), { recursive: true });
+  fs.writeFileSync(path.join(pluginDir, "package.json"), "{\"type\":\"module\"}\n", "utf8");
+  fs.writeFileSync(pluginPath, STARTUP_SYNC_PLUGIN_SOURCE, "utf8");
+  fs.writeFileSync(path.join(projectRoot, ".opencode", "generated", "ogb-startup-sync.json"), JSON.stringify({
+    version: 1,
+    enabled: false,
+    autoUpdate: false,
+    command: "ogb",
+    baseArgs: [],
+    syncArgs: ["startup-sync"],
+  }, null, 2) + "\n");
+  fs.writeFileSync(path.join(projectRoot, ".opencode", "generated", "ogb-extension-map.json"), JSON.stringify({
+    _generated: { tool: "ogb", version: "test", warning: "test" },
+    projectRoot,
+    generatedAt: new Date().toISOString(),
+    extensions: [{
+      name: "study-pack",
+      scope: "global",
+      path: extensionDir,
+      manifestPath: path.join(extensionDir, "gemini-extension.json"),
+      commands: [],
+      skills: [],
+      agents: [],
+      hooks: [{
+        source: "hooks/hooks.json",
+        projected: true,
+        target: "opencode-plugin:tool.execute.before",
+        reason: "Projected through the OGB OpenCode plugin.",
+      }],
+      scripts: [],
+      docs: [],
+      warnings: [],
+    }],
+    projectedCommands: [],
+    projectedAgents: [],
+    modelFallbacks: [],
+    removedCommands: [],
+    removedAgents: [],
+    warnings: [],
+  }, null, 2) + "\n");
+  fs.writeFileSync(path.join(extensionDir, "hooks", "hooks.json"), JSON.stringify({
+    hooks: {
+      BeforeTool: [{
+        matcher: "^bash$",
+        hooks: [{
+          name: "study-guard",
+          type: "command",
+          command: `node "${"${extensionPath}"}${"${/}"}hook-runner.mjs" before`,
+          timeout: 2000,
+        }],
+      }],
+      AfterTool: [{
+        matcher: "^bash$",
+        hooks: [{
+          name: "study-capture",
+          type: "command",
+          command: `node "${"${extensionPath}"}${"${/}"}hook-runner.mjs" after`,
+          timeout: 2000,
+        }],
+      }],
+    },
+  }, null, 2) + "\n");
+  fs.writeFileSync(path.join(extensionDir, "hook-runner.mjs"), `
+import fs from "node:fs";
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => input += chunk);
+process.stdin.on("end", () => {
+  const payload = JSON.parse(input || "{}");
+  fs.appendFileSync(process.env.OGB_TEST_HOOK_LOG, JSON.stringify({
+    argv: process.argv.slice(2),
+    input: payload,
+  }) + "\\n");
+  if (payload.tool_input?.command === "deny") {
+    process.stdout.write(JSON.stringify({ decision: "deny", reason: "blocked by study hook" }));
+  } else if (payload.tool_input?.command === "rewrite") {
+    process.stdout.write(JSON.stringify({ hookSpecificOutput: { tool_input: { command: "echo rewritten" } } }));
+  } else {
+    process.stdout.write(JSON.stringify({ suppressOutput: true }));
+  }
+});
+`, "utf8");
+
+  const previousDelay = process.env.OGB_STARTUP_DELAY_MS;
+  const previousHookLog = process.env.OGB_TEST_HOOK_LOG;
+  process.env.OGB_STARTUP_DELAY_MS = "600000";
+  process.env.OGB_TEST_HOOK_LOG = hookLog;
+  try {
+    const mod = await import(`${pathToFileURL(pluginPath).href}?t=${Date.now()}-extension-hooks`);
+    const plugin = await mod.default({
+      directory: projectRoot,
+      worktree: projectRoot,
+      client: {
+        app: { log: async () => undefined },
+        tui: { showToast: async () => undefined },
+      },
+    });
+
+    assert.equal(typeof plugin["tool.execute.before"], "function");
+    assert.equal(typeof plugin["tool.execute.after"], "function");
+    const beforeOutput = { args: { command: "echo ok" } };
+    await plugin["tool.execute.before"]({ tool: "bash", sessionID: "s1", callID: "c1" }, beforeOutput);
+    await plugin["tool.execute.after"]({ tool: "bash", sessionID: "s1", callID: "c1" }, { output: "ok" });
+    const rewriteOutput = { args: { command: "rewrite" } };
+    await plugin["tool.execute.before"]({ tool: "bash", sessionID: "s1", callID: "c3" }, rewriteOutput);
+
+    const records = fs.readFileSync(hookLog, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    assert.deepEqual(records.map((record) => record.argv), [["before"], ["after"], ["before"]]);
+    assert.equal(records[0].input.tool.name, "bash");
+    assert.equal(records[0].input.tool_name, "run_shell_command");
+    assert.equal(records[0].input.original_request_name, "bash");
+    assert.equal(records[0].input.tool_input.command, "echo ok");
+    assert.equal(records[1].input.tool_response.output, "ok");
+    assert.equal(rewriteOutput.args.command, "echo rewritten");
+    await assert.rejects(
+      () => plugin["tool.execute.before"]({ tool: "bash", sessionID: "s1", callID: "c2" }, { args: { command: "deny" } }),
+      /blocked by study hook/,
+    );
+  } finally {
+    if (previousDelay === undefined) delete process.env.OGB_STARTUP_DELAY_MS;
+    else process.env.OGB_STARTUP_DELAY_MS = previousDelay;
+    if (previousHookLog === undefined) delete process.env.OGB_TEST_HOOK_LOG;
+    else process.env.OGB_TEST_HOOK_LOG = previousHookLog;
+  }
+});
+
+test("startup plugin runs Gemini settings hooks automatically without trust opt-in", async () => {
+  const root = tempProject();
+  const projectRoot = path.join(root, "project");
+  const pluginDir = path.join(root, "plugin");
+  const pluginPath = path.join(pluginDir, "ogb-startup-sync.js");
+  const hookLog = path.join(root, "settings-hook-log.jsonl");
+  fs.mkdirSync(path.join(projectRoot, ".opencode", "generated"), { recursive: true });
+  fs.mkdirSync(path.join(projectRoot, ".gemini"), { recursive: true });
+  fs.mkdirSync(path.join(pluginDir), { recursive: true });
+  fs.writeFileSync(path.join(pluginDir, "package.json"), "{\"type\":\"module\"}\n", "utf8");
+  fs.writeFileSync(pluginPath, STARTUP_SYNC_PLUGIN_SOURCE, "utf8");
+  fs.writeFileSync(path.join(projectRoot, ".opencode", "generated", "ogb-startup-sync.json"), JSON.stringify({
+    version: 1,
+    enabled: false,
+    autoUpdate: false,
+    command: "ogb",
+    baseArgs: [],
+    syncArgs: ["startup-sync"],
+  }, null, 2) + "\n");
+  fs.writeFileSync(path.join(projectRoot, ".opencode", "generated", "ogb-extension-map.json"), JSON.stringify({
+    _generated: { tool: "ogb", version: "test", warning: "test" },
+    projectRoot,
+    generatedAt: new Date().toISOString(),
+    extensions: [],
+    projectedCommands: [],
+    projectedAgents: [],
+    modelFallbacks: [],
+    removedCommands: [],
+    removedAgents: [],
+    warnings: [],
+  }, null, 2) + "\n");
+  fs.writeFileSync(path.join(projectRoot, ".gemini", "settings.json"), `{
+    // Gemini tool names should still match OpenCode tool names.
+    "hooks": {
+      "BeforeTool": [{
+        "matcher": "run_shell_command|Bash",
+        "hooks": [{
+          "name": "settings-guard",
+          "type": "command",
+          "command": "node ./settings-hook-runner.mjs",
+          "timeout": 2000,
+        }],
+      }],
+    },
+  }\n`, "utf8");
+  fs.writeFileSync(path.join(projectRoot, "settings-hook-runner.mjs"), `
+import fs from "node:fs";
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => input += chunk);
+process.stdin.on("end", () => {
+  const payload = JSON.parse(input || "{}");
+  fs.appendFileSync(process.env.OGB_TEST_HOOK_LOG, JSON.stringify(payload) + "\\n");
+  if (payload.tool_input?.command === "block") {
+    process.stderr.write("blocked by settings hook");
+    process.exit(2);
+  }
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { tool_input: { command: "echo settings rewritten" } } }));
+});
+`, "utf8");
+
+  const previousDelay = process.env.OGB_STARTUP_DELAY_MS;
+  const previousHookLog = process.env.OGB_TEST_HOOK_LOG;
+  process.env.OGB_STARTUP_DELAY_MS = "600000";
+  process.env.OGB_TEST_HOOK_LOG = hookLog;
+  try {
+    const mod = await import(`${pathToFileURL(pluginPath).href}?t=${Date.now()}-settings-hooks`);
+    const plugin = await mod.default({
+      directory: projectRoot,
+      worktree: projectRoot,
+      client: {
+        app: { log: async () => undefined },
+        tui: { showToast: async () => undefined },
+      },
+    });
+
+    const beforeOutput = { args: { command: "echo ok" } };
+    await plugin["tool.execute.before"]({ tool: "bash", sessionID: "s1", callID: "c1" }, beforeOutput);
+    assert.equal(beforeOutput.args.command, "echo settings rewritten");
+    const record = JSON.parse(fs.readFileSync(hookLog, "utf8").trim());
+    assert.equal(record.tool_name, "run_shell_command");
+    assert.equal(record.original_request_name, "bash");
+    await assert.rejects(
+      () => plugin["tool.execute.before"]({ tool: "bash", sessionID: "s1", callID: "c2" }, { args: { command: "block" } }),
+      /blocked by settings hook/,
+    );
+  } finally {
+    if (previousDelay === undefined) delete process.env.OGB_STARTUP_DELAY_MS;
+    else process.env.OGB_STARTUP_DELAY_MS = previousDelay;
+    if (previousHookLog === undefined) delete process.env.OGB_TEST_HOOK_LOG;
+    else process.env.OGB_TEST_HOOK_LOG = previousHookLog;
+  }
+});
+
 test("startup plugin runs once for a burst of startup events", async () => {
   const root = tempProject();
   const projectRoot = path.join(root, "project");

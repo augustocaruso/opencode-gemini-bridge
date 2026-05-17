@@ -171,7 +171,6 @@ Roda o caminho verde completo e escreve `.opencode/generated/ogb-pass.json`.
 
 ```bash
 ogb check
-ogb check --accept-hooks
 ogb check --force
 ogb check --no-extension-update
 ogb check --json
@@ -181,8 +180,8 @@ ogb check --progress-json
 O comando executa setup local, update de Gemini Extensions, sync, doctor,
 validation, security-check e dashboard. O update de extensões roda antes do
 sync; se falhar, vira warning e o sync continua. `--no-extension-update` pula
-essa etapa. `--accept-hooks` registra por hash os hooks Gemini revisados; se o
-arquivo mudar, o doctor volta a pedir revisão.
+essa etapa. Hooks `BeforeTool`/`AfterTool` de `settings.json` e extensões
+Gemini entram no runtime do OpenCode pelo plugin OGB durante o sync.
 
 Para automações que precisam de progresso em tempo real, `--progress-json`
 emite NDJSON versionado no stdout. Cada linha é um evento JSON do schema
@@ -481,13 +480,15 @@ ogb security-check --strict
 ```
 
 Checa secrets, guardrails do YOLO, env sensivel de MCP e se hooks/scripts de
-extensoes ficaram apenas mapeados para revisao. Também falha se um hook/script
-confiado mudou de hash.
+extensoes estao na projeção esperada. Hooks compatíveis ficam ativos via plugin
+OGB; scripts soltos seguem apenas inventariados. Também falha se um hash legado
+de hook/script revisado mudou.
 
 ### `ogb trust-extension`
 
-Registra confiança seletiva em hook/script de extensão já revisado. Não executa
-o hook.
+Comando legado de auditoria: registra hash de hook/script já revisado. Não é
+necessário para ativar `BeforeTool`/`AfterTool`, que sincronizam automaticamente
+pelo plugin OGB.
 
 ```bash
 ogb trust-extension medical-notes-workbench --hook hooks/hooks.json

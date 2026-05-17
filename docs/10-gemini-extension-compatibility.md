@@ -127,7 +127,9 @@ Esse instalador:
 8. Registra hashes/source map em `.opencode/generated/ogb-sync-state.json`.
 9. Roda doctor.
 
-O instalador não deve ativar hooks/scripts automaticamente.
+O instalador deve ativar hooks `BeforeTool`/`AfterTool` compatíveis de
+`settings.json` e extensões por meio do plugin OGB. Scripts soltos continuam
+fora do runtime automático.
 Agentes de Gemini Extensions são projetados como subagentes OpenCode, mas com
 permissões de arquivo liberadas (`read`, `edit` e `external_directory` em
 `allow`) e `bash` ainda em `ask`. O agente embutido do bridge continua sendo
@@ -205,8 +207,8 @@ Nesse modo, o bridge deve deixar claro que a extensão linkada é desenvolviment
 | `agents/` | `.opencode/agents/<agent>.md` com permissões de arquivo liberadas e `bash: ask` |
 | `commands/` | `.opencode/commands/<path>/<command>.md`; prefixa/renomeia só em colisão |
 | `mcpServers` | `mcp` config |
-| `hooks/hooks.json` | source map para revisao; nao executar automaticamente |
-| `scripts/` | manter dentro da extensão; referenciar por caminho gerenciado |
+| `settings.json` e `hooks/hooks.json` | `BeforeTool`/`AfterTool` via plugin OGB do OpenCode; eventos sem equivalente ficam no mapa |
+| `scripts/` | manter dentro da extensão; referenciar por caminho gerenciado; scripts soltos ficam em revisão |
 | `docs/` | referências para skills, agents e generated context |
 | `policies/` | OpenCode permissions/plugin guardrails, sempre com revisão |
 | `settings[]` | avisos no doctor; não copiar secrets |
@@ -316,26 +318,24 @@ Esta extensão parece não ser auto-updatable. Para auto-update, instale por Git
 
 ## Regras de segurança
 
-- Hooks não devem rodar automaticamente após instalação.
-- Scripts devem ser marcados como trusted/untrusted por hash.
-- Extensões de terceiros devem exigir `--trust` para ativar hooks/scripts.
-- `ogb trust-report` deve listar hooks/scripts e os comandos detectados.
+- Hooks `BeforeTool`/`AfterTool` de `settings.json` e extensões instaladas devem sincronizar automaticamente para OpenCode.
+- Scripts soltos devem continuar marcados como superfície de revisão.
+- `ogb trust-report` continua disponível para auditoria/hash legado de hooks/scripts.
 - Settings sensíveis da extensão não devem ser copiadas para `opencode.jsonc`.
 - `mcpServers` devem usar caminhos portáveis, de preferência baseados no diretório da extensão.
 - Policies que liberam permissões automaticamente não devem virar `allow` no OpenCode sem consentimento.
 
-Fluxo safe/trusted:
+Fluxo padrao:
 
 ```bash
-ogb trust-report medical-notes-workbench
-ogb trust-extension medical-notes-workbench --hook hooks/hooks.json
+ogb sync
 ogb security-check
 ```
 
-O modo safe e o padrao: hooks/scripts ficam mapeados para revisao, mas nao sao
-ativados silenciosamente. O modo trusted e seletivo: registra o hash de um hook
-ou script revisado. Se o arquivo mudar, `ogb security-check` falha ate nova
-revisao.
+O modo padrao e sincronizar: hooks `BeforeTool`/`AfterTool` de `settings.json`
+e extensões rodam pelo plugin OGB do OpenCode sem etapa manual. Scripts soltos
+e eventos Gemini sem hook OpenCode equivalente permanecem inventariados para
+revisão.
 
 ## Integração com sync bidirecional
 

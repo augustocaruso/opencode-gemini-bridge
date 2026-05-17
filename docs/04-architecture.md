@@ -64,7 +64,7 @@ Converte recursos Gemini para OpenCode:
 - Skills.
 - Subagentes.
 - Commands.
-- Hooks/scripts apenas mapeados para revisão/trust.
+- Hooks `BeforeTool`/`AfterTool` de `settings.json` e extensões Gemini sincronizam pelo plugin OGB; scripts soltos ficam em revisão.
 - Extension manifests.
 
 ### 4. Doctor engine

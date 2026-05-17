@@ -136,8 +136,8 @@ export const CHECK_PROGRESS_STEPS = {
   },
   hookReview: {
     stepId: "hook-review",
-    label: "Record reviewed Gemini hooks.",
-    detail: "Stores trusted hook hashes when --accept-hooks is used.",
+    label: "Record legacy hook review hashes.",
+    detail: "Stores trusted hashes for unsupported hook events when --accept-hooks is used.",
   },
   validate: {
     stepId: "validate",
