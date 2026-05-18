@@ -95,6 +95,7 @@ function passReport(overrides: Partial<PassReport> = {}): PassReport {
       externalIntegrationFiles: 3,
       rulesyncStatus: "applied",
       rulesyncPromoted: 0,
+      notes: [],
     },
     doctor: { warnings: 0, errors: 0 },
     validation: { outcome: "pass" },
@@ -406,6 +407,28 @@ test("check ritual view model keeps blocker actions visible", () => {
   assert.equal(model.statusLabel, "WARN");
   assert.match(model.callouts[0], /browsermcp/);
   assert.equal(model.next[0], "Install npx or remove the MCP.");
+});
+
+test("check ritual view model surfaces non-blocking sync notes", () => {
+  const model = ritualViewModel("check", passReport({
+    sync: {
+      generatedConfigPath: `${projectRoot}/.opencode/generated/opencode.generated.json`,
+      builtInAgents: 1,
+      extensionAgents: 6,
+      builtInCommands: 2,
+      extensionCommands: 15,
+      skills: 17,
+      tuiFiles: 2,
+      externalIntegrationFiles: 3,
+      rulesyncStatus: "applied",
+      rulesyncPromoted: 0,
+      notes: ["Antigravity skill skipped: defuddle (untrusted mount point)."],
+    },
+  }));
+
+  assert.equal(model.statusLabel, "PASS");
+  assert.equal(model.metrics.find((metric) => metric.label === "blockers")?.value, "0");
+  assert.match(model.callouts.join("\n"), /Antigravity skill skipped: defuddle/);
 });
 
 test("install, reset and update models expose user-facing next steps", () => {

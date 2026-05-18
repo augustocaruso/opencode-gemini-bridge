@@ -73,6 +73,7 @@ export interface SyncReport {
   projectedExternalIntegrationFiles: string[];
   rulesync: RulesyncProjectionResult;
   backups: BackupRecord[];
+  notes: string[];
   warnings: string[];
 }
 
@@ -312,6 +313,10 @@ function errorMessage(error: unknown): string {
 
 function isUntrustedMountPointError(error: unknown): boolean {
   return /untrusted mount point|path cannot be traversed/i.test(errorMessage(error));
+}
+
+function antigravityProjectionSkipNote(label: string, source: string, error: unknown): string {
+  return `${label} skipped: ${source} (${errorMessage(error)})`;
 }
 
 function projectionFailureWarning(label: string, source: string, error: unknown): string {
@@ -1639,6 +1644,7 @@ interface ProjectSkillDirsResult {
 interface ProjectAntigravitySkillsResult extends ProjectSkillDirsResult {
   promotedAgents: string[];
   removedAgents: string[];
+  notes: string[];
 }
 
 interface ProjectAntigravityFilesResult {
@@ -2243,6 +2249,7 @@ function projectGlobalAntigravitySkills(options: {
   force?: boolean;
 }): ProjectAntigravitySkillsResult {
   const warnings: string[] = [];
+  const notes: string[] = [];
   const promoted: string[] = [];
   const promotedAgents: string[] = [];
   const keepSkillFiles = new Set<string>();
@@ -2266,7 +2273,9 @@ function projectGlobalAntigravitySkills(options: {
       if (copy.promoted) promoted.push(copy.promoted);
       if (copy.warning) warnings.push(copy.warning);
     } catch (error) {
-      if (!isUntrustedMountPointError(error)) {
+      if (isUntrustedMountPointError(error)) {
+        notes.push(antigravityProjectionSkipNote("Antigravity skill", skill.skillName, error));
+      } else {
         warnings.push(projectionFailureWarning("Antigravity skill", skill.skillName, error));
       }
     }
@@ -2290,7 +2299,9 @@ function projectGlobalAntigravitySkills(options: {
       if (copy.promoted) promoted.push(copy.promoted);
       if (copy.warning) warnings.push(copy.warning);
     } catch (error) {
-      if (!isUntrustedMountPointError(error)) {
+      if (isUntrustedMountPointError(error)) {
+        notes.push(antigravityProjectionSkipNote("Antigravity extension skill", `${skill.extensionName}/${skill.skillName}`, error));
+      } else {
         warnings.push(projectionFailureWarning("Antigravity extension skill", `${skill.extensionName}/${skill.skillName}`, error));
       }
     }
@@ -2316,7 +2327,7 @@ function projectGlobalAntigravitySkills(options: {
   const removedSkills = stale.removedDetails
     .filter((item) => item.kind !== "agent")
     .map((item) => item.path);
-  return { promoted, removed: removedSkills, promotedAgents, removedAgents, warnings };
+  return { promoted, removed: removedSkills, promotedAgents, removedAgents, notes: [...new Set(notes)], warnings };
 }
 
 function projectGlobalAntigravityAgents(options: {
@@ -2973,6 +2984,7 @@ function syncGlobalOpenCode(paths: ReturnType<typeof resolveProjectPaths>, optio
     projectedExternalIntegrationFiles: [],
     rulesync,
     backups: backupSession.backups,
+    notes: [...new Set(projectedAntigravitySkills.notes)],
     warnings: [...new Set([...warnings, ...backupSession.retention.warnings])],
   };
 
@@ -2999,6 +3011,7 @@ function syncGlobalOpenCode(paths: ReturnType<typeof resolveProjectPaths>, optio
     if (projectedAntigravityWorkflows.removed.length > 0) console.log(`Removed ${projectedAntigravityWorkflows.removed.length} stale global Antigravity workflow(s)`);
     if (projectedAntigravityMcps.promoted.length > 0) console.log(`${action} ${projectedAntigravityMcps.promoted.length} global Antigravity MCP server(s)`);
     if (projectedAntigravityMcps.removed.length > 0) console.log(`Removed ${projectedAntigravityMcps.removed.length} stale global Antigravity MCP server(s)`);
+    for (const note of report.notes) console.log(`Note: ${note}`);
     if (projectedExtensionMap.promoted) console.log(`${options.dryRun ? "Would generate" : "Generated"} global Gemini extension map at ${projectedExtensionMap.promoted}`);
     if (!projectedConfig.promoted && report.projectedCommands.length === 0 && report.projectedAgents.length === 0 && report.projectedExtensionAgents.length === 0 && report.projectedSkills.length === 0 && report.projectedAntigravitySkills.length === 0 && report.projectedAntigravityAgents.length === 0 && report.projectedAntigravityWorkflows.length === 0 && report.projectedAntigravityMcps.length === 0) {
       console.log("No global Gemini rules, MCPs, commands, agents, or skills found to sync.");
@@ -3219,6 +3232,7 @@ export function syncToOpenCode(options: SyncOptions = {}): SyncReport {
       ...projectedExtensionCommands.backups,
       ...rulesync.backups,
     ],
+    notes: [...new Set(projectedAntigravitySkills.notes)],
     warnings: [...new Set([
       ...warnings,
       ...projectConfigRetentionWarnings,
@@ -3263,6 +3277,7 @@ export function syncToOpenCode(options: SyncOptions = {}): SyncReport {
     if (report.projectedTuiFiles.length > 0) console.log(`${options.dryRun ? "Would project" : "Projected"} ${report.projectedTuiFiles.length} TUI sidebar file(s)`);
     if (report.projectedExternalPlugins.length > 0) console.log(`${options.dryRun ? "Would enable" : "Enabled"} external plugin(s): ${report.projectedExternalPlugins.join(", ")}`);
     if (report.projectedExternalIntegrationFiles.length > 0) console.log(`${options.dryRun ? "Would project" : "Projected"} ${report.projectedExternalIntegrationFiles.length} external integration file(s)`);
+    for (const note of report.notes) console.log(`Note: ${note}`);
     if (rulesync.status === "applied") console.log(`Rulesync promoted ${rulesync.promoted.length} file(s)`);
     if (rulesync.status === "partial") console.log(`Rulesync partially completed; promoted ${rulesync.promoted.length} file(s)`);
     if (rulesync.status === "preview") console.log("Rulesync dry-run completed");

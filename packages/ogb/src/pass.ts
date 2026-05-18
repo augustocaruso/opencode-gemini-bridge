@@ -66,6 +66,7 @@ export interface PassSyncSummary {
   externalIntegrationFiles: number;
   rulesyncStatus: SyncReport["rulesync"]["status"];
   rulesyncPromoted: number;
+  notes: string[];
 }
 
 export interface PassPatchSummary {
@@ -297,6 +298,11 @@ export function formatPassReport(report: PassReport): string {
     );
   }
 
+  if ((report.sync?.notes.length ?? 0) > 0) {
+    lines.push("", "Notes");
+    for (const note of report.sync!.notes) lines.push(`- ${note}`);
+  }
+
   if (report.acceptedHooks.length > 0) {
     lines.push("", "Trusted Hooks");
     for (const hook of report.acceptedHooks) lines.push(`- ${hook}`);
@@ -340,6 +346,7 @@ function buildSyncSummary(sync: SyncReport | undefined): PassSyncSummary | undef
     externalIntegrationFiles: sync.projectedExternalIntegrationFiles.length,
     rulesyncStatus: sync.rulesync.status,
     rulesyncPromoted: sync.rulesync.promoted.length,
+    notes: sync.notes,
   };
 }
 

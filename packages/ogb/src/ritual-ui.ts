@@ -265,6 +265,7 @@ function installModel(report: InstallReport): RitualViewModel {
 
 function checkModel(report: PassReport): RitualViewModel {
   const tone = toneFromOutcome(report.outcome);
+  const syncNotes = report.sync?.notes ?? [];
   return {
     title: titleForKind("check"),
     subtitle: report.projectRoot,
@@ -282,7 +283,10 @@ function checkModel(report: PassReport): RitualViewModel {
       status: toneFromOutcome(step.status),
       detail: step.detail,
     })),
-    callouts: report.blockers.slice(0, 5).map((item) => `${item.source}: ${item.message}`),
+    callouts: [
+      ...report.blockers.slice(0, 5).map((item) => `${item.source}: ${item.message}`),
+      ...syncNotes.slice(0, Math.max(0, 5 - report.blockers.length)),
+    ],
     next: report.blockers.length > 0
       ? report.blockers.slice(0, 3).map((item) => item.action)
       : ["Bridge is clean.", "OpenCode can start with the current global/project profile."],

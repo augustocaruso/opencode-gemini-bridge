@@ -690,6 +690,10 @@ test("syncToOpenCode skips Antigravity skills blocked by Windows untrusted mount
       report.warnings.some((warning) => warning.includes("Antigravity skill projection failed: defuddle")),
       false,
     );
+    assert.ok(report.notes.some((note) =>
+      note.includes("Antigravity skill skipped: defuddle")
+      && note.includes("untrusted mount point")
+    ));
     assert.equal(fs.readFileSync(path.join(projectedSkillDir, "SKILL.md"), "utf8"), "---\nname: defuddle\ndescription: Existing.\n---\n# Existing\n");
   } finally {
     fs.readdirSync = originalReaddirSync;

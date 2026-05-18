@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.45 - Notas visiveis para sync parcial
+
+- Mantem projeções Antigravity bloqueadas por `untrusted mount point` fora dos blockers do `check`.
+- Registra a perda parcial como nota explicita no sync/check, inclusive na UI rica, para nao esconder compatibilidade opcional quebrada.
+
 ## 0.1.44 - Check sem bronca por anexos grandes
 
 - Compacta snapshots de telemetria do Medical Notes Workbench antes do reenvio para evitar `413 body_too_large` no worker padrao.

@@ -512,6 +512,7 @@ test("formatPassReport prints a compact human report", () => {
       externalIntegrationFiles: 1,
       rulesyncStatus: "applied",
       rulesyncPromoted: 0,
+      notes: ["Antigravity skill skipped: defuddle (Windows blocked this optional projection: untrusted mount point)."],
     },
     doctor: { warnings: 1, errors: 0 },
     validation: { outcome: "warn" },
@@ -529,6 +530,7 @@ test("formatPassReport prints a compact human report", () => {
   assert.match(text, /Checks\n  OK    setup-opencode/);
   assert.match(text, /Needs Attention/);
   assert.match(text, /Auto fallback esta ligado, mas o plugin externo nao carregou\./);
+  assert.match(text, /Notes\n- Antigravity skill skipped: defuddle/);
   assert.match(text, /report:    \.opencode[/\\]generated[/\\]ogb-pass\.json/);
   assert.doesNotMatch(text, /Automacao|Pendencias|Relatorio/);
 });
