@@ -310,6 +310,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isUntrustedMountPointError(error: unknown): boolean {
+  return /untrusted mount point|path cannot be traversed/i.test(errorMessage(error));
+}
+
 function projectionFailureWarning(label: string, source: string, error: unknown): string {
   return `${label} projection failed: ${source}: ${errorMessage(error)}`;
 }
@@ -2262,7 +2266,9 @@ function projectGlobalAntigravitySkills(options: {
       if (copy.promoted) promoted.push(copy.promoted);
       if (copy.warning) warnings.push(copy.warning);
     } catch (error) {
-      warnings.push(projectionFailureWarning("Antigravity skill", skill.skillName, error));
+      if (!isUntrustedMountPointError(error)) {
+        warnings.push(projectionFailureWarning("Antigravity skill", skill.skillName, error));
+      }
     }
   }
 
@@ -2284,7 +2290,9 @@ function projectGlobalAntigravitySkills(options: {
       if (copy.promoted) promoted.push(copy.promoted);
       if (copy.warning) warnings.push(copy.warning);
     } catch (error) {
-      warnings.push(projectionFailureWarning("Antigravity extension skill", `${skill.extensionName}/${skill.skillName}`, error));
+      if (!isUntrustedMountPointError(error)) {
+        warnings.push(projectionFailureWarning("Antigravity extension skill", `${skill.extensionName}/${skill.skillName}`, error));
+      }
     }
   }
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.44 - Check sem bronca por anexos grandes
+
+- Compacta snapshots de telemetria do Medical Notes Workbench antes do reenvio para evitar `413 body_too_large` no worker padrao.
+- Mantem o snapshot local preservado e reduz scripts/diffs grandes em camadas antes de enviar o envelope.
+- Ignora projeções Antigravity bloqueadas por `untrusted mount point` no Windows, sem transformar o sync do OpenCode em warning/fail.
+
 ## 0.1.43 - Hooks globais preservam o workspace
 
 - Faz o plugin global do OpenCode cair para o estado global do OGB quando o workspace atual ainda não tem configuração de projeto.

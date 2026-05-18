@@ -824,7 +824,7 @@ const OGB_TELEMETRY_ENVELOPE_SCHEMA = "opencode-gemini-bridge.workflow-telemetry
 const MEDNOTES_RUN_RECORD_SCHEMA = "medical-notes-workbench.workflow-run-record.v1";
 const MEDNOTES_PRE_UPDATE_SNAPSHOT_SCHEMA = "medical-notes-workbench.pre-update-extension-snapshot.v1";
 const MEDNOTES_TRUSTED_DEBUG_PAYLOAD_LEVEL = "trusted_extension_debug";
-const MEDNOTES_MAX_TELEMETRY_ENVELOPE_BYTES = 1024 * 1024;
+const MEDNOTES_MAX_TELEMETRY_ENVELOPE_BYTES = 220 * 1024;
 const MEDNOTES_MAX_PATCH_CHARS = 160 * 1024;
 
 interface ManifestDrift {
@@ -1489,34 +1489,89 @@ function medNotesTelemetryEvidence(record: Record<string, unknown>, snapshot: Re
   };
 }
 
-function fitMedNotesEnvelope(envelope: Record<string, unknown>): Record<string, unknown> {
-  const size = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
-  if (size(envelope) <= MEDNOTES_MAX_TELEMETRY_ENVELOPE_BYTES) return envelope;
+function jsonByteSize(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+function truncatePayloadText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function compactPayloadItems(
+  value: unknown,
+  options: { maxItems: number; textField: string; maxTextChars: number; omittedReason: string },
+): unknown[] {
+  const items = Array.isArray(value) ? value : [];
+  const compacted = items.slice(0, options.maxItems).map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+    const next = { ...(item as Record<string, unknown>) };
+    const text = next[options.textField];
+    if (typeof text === "string") {
+      if (options.maxTextChars > 0) {
+        const truncated = truncatePayloadText(text, options.maxTextChars);
+        next[options.textField] = truncated;
+        if (truncated.length < text.length) next.truncated = true;
+      } else {
+        delete next[options.textField];
+        next.content_omitted_reason = options.omittedReason;
+        next.truncated = true;
+      }
+    }
+    return next;
+  });
+  if (items.length > options.maxItems) {
+    compacted.push({ kind: "summary", change: "truncated", omitted_count: items.length - options.maxItems });
+  }
+  return compacted;
+}
+
+function recordObject(envelope: Record<string, unknown>): Record<string, unknown> | undefined {
   const records = Array.isArray(envelope.records) ? envelope.records : [];
   const record = records[0];
-  if (!record || typeof record !== "object" || Array.isArray(record)) return envelope;
-  const mutable = record as Record<string, unknown>;
-  const diffs = Array.isArray(mutable.extension_diffs) ? mutable.extension_diffs : [];
-  for (const diff of diffs) {
-    if (!diff || typeof diff !== "object" || Array.isArray(diff)) continue;
-    const item = diff as Record<string, unknown>;
-    if (typeof item.patch === "string" && item.patch.length > 24 * 1024) {
-      item.patch = `${item.patch.slice(0, 24 * 1024 - 3).trimEnd()}...`;
-      item.truncated = true;
-    }
+  if (!record || typeof record !== "object" || Array.isArray(record)) return undefined;
+  return record as Record<string, unknown>;
+}
+
+function syncRecordIntegrityPayload(record: Record<string, unknown>): void {
+  const context = record.environment_context;
+  if (!context || typeof context !== "object" || Array.isArray(context)) return;
+  const integrity = (context as Record<string, unknown>).extension_integrity;
+  if (!integrity || typeof integrity !== "object" || Array.isArray(integrity)) return;
+  (integrity as Record<string, unknown>).extension_diffs = record.extension_diffs;
+  (integrity as Record<string, unknown>).generated_scripts = record.generated_scripts;
+}
+
+function compactMedNotesRecord(record: Record<string, unknown>, level: number): void {
+  const maxItems = level === 0 ? 8 : level === 1 ? 4 : level === 2 ? 2 : 0;
+  const maxPatchChars = level === 0 ? 24 * 1024 : level === 1 ? 8 * 1024 : level === 2 ? 2 * 1024 : 0;
+  const maxScriptChars = level === 0 ? 16 * 1024 : level === 1 ? 4 * 1024 : level === 2 ? 1024 : 0;
+  record.extension_diffs = compactPayloadItems(record.extension_diffs, {
+    maxItems,
+    textField: "patch",
+    maxTextChars: maxPatchChars,
+    omittedReason: "telemetry_payload_too_large",
+  });
+  record.generated_scripts = compactPayloadItems(record.generated_scripts, {
+    maxItems,
+    textField: "content",
+    maxTextChars: maxScriptChars,
+    omittedReason: "telemetry_payload_too_large",
+  });
+  syncRecordIntegrityPayload(record);
+}
+
+function fitMedNotesEnvelope(envelope: Record<string, unknown>): Record<string, unknown> {
+  if (jsonByteSize(envelope) <= MEDNOTES_MAX_TELEMETRY_ENVELOPE_BYTES) return envelope;
+  const mutable = recordObject(envelope);
+  if (!mutable) return envelope;
+  for (let level = 0; level < 4 && jsonByteSize(envelope) > MEDNOTES_MAX_TELEMETRY_ENVELOPE_BYTES; level += 1) {
+    compactMedNotesRecord(mutable, level);
   }
-  if (diffs.length > 8) {
-    mutable.extension_diffs = [
-      ...diffs.slice(0, 8),
-      { path: "", kind: "summary", change: "truncated", omitted_count: diffs.length - 8 },
-    ];
-  }
-  const context = mutable.environment_context;
-  if (context && typeof context === "object" && !Array.isArray(context)) {
-    const integrity = (context as Record<string, unknown>).extension_integrity;
-    if (integrity && typeof integrity === "object" && !Array.isArray(integrity)) {
-      (integrity as Record<string, unknown>).extension_diffs = mutable.extension_diffs;
-    }
+  if (jsonByteSize(envelope) > MEDNOTES_MAX_TELEMETRY_ENVELOPE_BYTES) {
+    mutable.extension_diffs = [{ kind: "summary", change: "omitted", content_omitted_reason: "telemetry_payload_too_large" }];
+    mutable.generated_scripts = [{ kind: "summary", change: "omitted", content_omitted_reason: "telemetry_payload_too_large" }];
+    syncRecordIntegrityPayload(mutable);
   }
   return envelope;
 }

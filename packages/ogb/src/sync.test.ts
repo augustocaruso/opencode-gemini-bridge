@@ -666,6 +666,36 @@ test("syncToOpenCode projects Gemini skills to global Antigravity skills", () =>
   ));
 });
 
+test("syncToOpenCode skips Antigravity skills blocked by Windows untrusted mounts", () => {
+  const projectRoot = tempProject();
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));
+  const sourceSkillDir = path.join(homeDir, ".gemini", "skills", "defuddle");
+  const projectedSkillDir = path.join(homeDir, ".gemini", "antigravity", "skills", "defuddle");
+  const originalReaddirSync = fs.readdirSync;
+  fs.mkdirSync(sourceSkillDir, { recursive: true });
+  fs.mkdirSync(projectedSkillDir, { recursive: true });
+  fs.writeFileSync(path.join(sourceSkillDir, "SKILL.md"), "---\nname: defuddle\ndescription: Defuddle.\n---\n# Defuddle\n");
+  fs.writeFileSync(path.join(projectedSkillDir, "SKILL.md"), "---\nname: defuddle\ndescription: Existing.\n---\n# Existing\n");
+  try {
+    (fs.readdirSync as typeof fs.readdirSync) = ((target: fs.PathLike, options?: unknown) => {
+      if (path.resolve(String(target)) === path.resolve(projectedSkillDir)) {
+        throw new Error("Unknown error: The path cannot be traversed because it contains an untrusted mount point.");
+      }
+      return originalReaddirSync(target, options as never);
+    }) as typeof fs.readdirSync;
+
+    const report = syncToOpenCode({ projectRoot, homeDir, rulesyncMode: "off", silent: true });
+
+    assert.equal(
+      report.warnings.some((warning) => warning.includes("Antigravity skill projection failed: defuddle")),
+      false,
+    );
+    assert.equal(fs.readFileSync(path.join(projectedSkillDir, "SKILL.md"), "utf8"), "---\nname: defuddle\ndescription: Existing.\n---\n# Existing\n");
+  } finally {
+    fs.readdirSync = originalReaddirSync;
+  }
+});
+
 test("syncToOpenCode adopts identical unmanaged Antigravity skill projections", () => {
   const projectRoot = tempProject();
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));

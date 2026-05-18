@@ -81,6 +81,37 @@ server.listen(0, "127.0.0.1", () => {
 `;
 }
 
+function limitedTelemetryServerScript(maxBytes: number): string {
+  return `
+const fs = require("node:fs");
+const http = require("node:http");
+const requestLog = process.argv[1];
+const portFile = process.argv[2];
+const maxBytes = ${JSON.stringify(maxBytes)};
+const server = http.createServer((request, response) => {
+  let body = "";
+  request.setEncoding("utf8");
+  request.on("data", (chunk) => { body += chunk; });
+  request.on("end", () => {
+    let requests = [];
+    try { requests = JSON.parse(fs.readFileSync(requestLog, "utf8")); } catch {}
+    requests.push({ path: request.url || "", auth: String(request.headers.authorization || ""), bytes: Buffer.byteLength(body, "utf8"), body });
+    fs.writeFileSync(requestLog, JSON.stringify(requests), "utf8");
+    if (Buffer.byteLength(body, "utf8") > maxBytes) {
+      response.writeHead(413, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: "body_too_large" }));
+      return;
+    }
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ ok: true, accepted_records: 1 }));
+  });
+});
+server.listen(0, "127.0.0.1", () => {
+  fs.writeFileSync(portFile, String(server.address().port), "utf8");
+});
+`;
+}
+
 function hasGit(): boolean {
   const result = spawnSync("git", ["--version"], { encoding: "utf8" });
   return !result.error && result.status === 0;
@@ -701,6 +732,79 @@ test("medical notes pre-update snapshot sends in the same update after fresh def
       assert.ok(workflowRequest);
       assert.equal(workflowRequest?.auth, "Bearer test-token");
       assert.match(JSON.stringify(JSON.parse(workflowRequest?.body ?? "{}")), /same update rescue/);
+    } finally {
+      server.kill();
+    }
+  });
+});
+
+test("medical notes pre-update snapshot compacts oversized resend payloads", async () => {
+  await withEnv({ OGB_TELEMETRY_DEFAULTS_DISABLED: "1", OGB_TELEMETRY_DEFAULTS: undefined, OGB_TELEMETRY_CONFIG: undefined }, async () => {
+    const homeDir = tempRoot();
+    const extensionPath = path.join(homeDir, ".gemini", "extensions", "medical-notes-workbench");
+    const snapshotDir = path.join(homeDir, ".gemini", "medical-notes-workbench", "feedback", "pre-update-snapshots", "large-snapshot");
+    const requestLog = path.join(homeDir, "telemetry-requests.json");
+    const portFile = path.join(homeDir, "telemetry-port.txt");
+    const serverScript = limitedTelemetryServerScript(256 * 1024);
+    const server = spawn(process.execPath, ["-e", serverScript, requestLog, portFile], { stdio: ["ignore", "ignore", "pipe"] });
+    try {
+      await waitForFile(portFile);
+      const port = fs.readFileSync(portFile, "utf8").trim();
+      const endpoint = `http://127.0.0.1:${port}/v1/telemetry/workflow-runs`;
+      fs.mkdirSync(extensionPath, { recursive: true });
+      fs.mkdirSync(snapshotDir, { recursive: true });
+      fs.mkdirSync(path.join(homeDir, ".gemini", "medical-notes-workbench"), { recursive: true });
+      fs.writeFileSync(
+        path.join(homeDir, ".gemini", "medical-notes-workbench", "config.toml"),
+        `[telemetry]\nendpoint_url = "${endpoint}"\nauth_token = "test-token"\npayload_level = "trusted_extension_debug"\ninstall_id = "friend-install"\n`,
+        "utf8",
+      );
+      fs.writeFileSync(path.join(snapshotDir, "tracked.diff"), "", "utf8");
+      fs.writeFileSync(path.join(snapshotDir, "staged.diff"), "", "utf8");
+      fs.writeFileSync(path.join(snapshotDir, "untracked.diff"), "", "utf8");
+      fs.writeFileSync(
+        path.join(snapshotDir, "snapshot.json"),
+        JSON.stringify({
+          schema: "medical-notes-workbench.pre-update-extension-snapshot.v1",
+          snapshot_id: "large-snapshot",
+          recorded_at: "2026-05-18T15:23:32.732Z",
+          extension_name: "medical-notes-workbench",
+          extension_path: extensionPath,
+          snapshot_path: snapshotDir,
+          current_version: "0.3.10",
+          git_head: "oldhead",
+          changed_path_count: 1,
+          untracked_path_count: 0,
+          changed_paths: ["scripts/huge_generated.py"],
+          generated_scripts: [{
+            path: "scripts/huge_generated.py",
+            language: "python",
+            size_bytes: 340 * 1024,
+            source: "ogb_update_patch",
+            content: "print('large payload')\\n" + "x".repeat(340 * 1024),
+          }],
+        }, null, 2),
+        "utf8",
+      );
+
+      const report = runPatchesForPhase({
+        phase: "post-extension-update",
+        projectRoot: homeDir,
+        homeDir,
+        registry: OGB_PATCHES,
+        now: new Date("2026-05-18T15:24:00.000Z"),
+      });
+      const sendResult = JSON.parse(fs.readFileSync(path.join(snapshotDir, "send-result.json"), "utf8"));
+      const envelopeBytes = fs.statSync(path.join(snapshotDir, "telemetry-envelope.json")).size;
+      const requests = JSON.parse(fs.readFileSync(requestLog, "utf8")) as Array<{ path: string; bytes: number }>;
+      const workflowRequest = requests.find((item) => item.path === "/v1/telemetry/workflow-runs");
+
+      assert.equal(report.outcome, "pass");
+      assert.equal(report.results[0]?.status, "applied");
+      assert.equal(sendResult.sent, true);
+      assert.ok(envelopeBytes <= 256 * 1024, `envelope was ${envelopeBytes} bytes`);
+      assert.ok(workflowRequest);
+      assert.ok(workflowRequest.bytes <= 256 * 1024);
     } finally {
       server.kill();
     }
