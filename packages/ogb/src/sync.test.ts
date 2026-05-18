@@ -919,6 +919,39 @@ test("syncToOpenCode projects Gemini extension subagents to native Antigravity a
   ));
 });
 
+test("syncToOpenCode notes Antigravity agent directory failures without warning", () => {
+  const projectRoot = tempProject();
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));
+  const extensionDir = path.join(homeDir, ".gemini", "extensions", "study-pack");
+  const agentsDir = path.join(extensionDir, "agents");
+  const antigravityAgentsDir = path.join(homeDir, ".gemini", "antigravity", "agents");
+  const originalMkdirSync = fs.mkdirSync;
+  fs.mkdirSync(agentsDir, { recursive: true });
+  fs.writeFileSync(path.join(agentsDir, "researcher.md"), "---\ndescription: Research notes.\n---\n# Researcher\n");
+
+  try {
+    (fs.mkdirSync as typeof fs.mkdirSync) = ((target: fs.PathLike, options?: unknown) => {
+      if (path.resolve(String(target)) === path.resolve(antigravityAgentsDir)) {
+        throw new Error(`UNKNOWN: unknown error, mkdir '${antigravityAgentsDir}'`);
+      }
+      return originalMkdirSync(target, options as never);
+    }) as typeof fs.mkdirSync;
+
+    const report = syncToOpenCode({ projectRoot, homeDir, rulesyncMode: "off", silent: true });
+
+    assert.equal(
+      report.warnings.some((warning) => warning.includes("Antigravity extension agent projection failed")),
+      false,
+    );
+    assert.ok(report.notes.some((note) =>
+      note.includes("Antigravity extension agent skipped: study-pack/agents/researcher.md")
+      && note.includes("UNKNOWN: unknown error, mkdir")
+    ));
+  } finally {
+    fs.mkdirSync = originalMkdirSync;
+  }
+});
+
 test("syncToOpenCode migrates old Antigravity agent compatibility skills to native agents", () => {
   const projectRoot = tempProject();
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));

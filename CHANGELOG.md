@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.50 - Validação repara o path exato do OpenCode
+
+- Quando `opencode debug config` falha com `EEXIST: file already exists, mkdir ...\\.config\\opencode`, o OGB agora extrai o path exato reportado pelo OpenCode, faz backup, repara a pasta e tenta a validação novamente.
+- Fecha o caso em que o reparo prévio calculava um caminho, mas o OpenCode quebrava em outro durante o post-check do `ogb update`.
+- Falhas de filesystem na projeção auxiliar de agentes/workflows Antigravity agora viram notas não-bloqueantes, preservando o sync do OpenCode sem transformar o check em FAIL.
+
 ## 0.1.49 - Bootstrap repara OpenCode bloqueado
 
 - Faz o bootstrap e o instalador Windows repararem, com backup, um arquivo antigo ocupando `~/.config/opencode` antes de chamar qualquer `mkdir`.

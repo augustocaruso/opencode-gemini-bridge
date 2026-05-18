@@ -1669,6 +1669,7 @@ interface ProjectAntigravitySkillsResult extends ProjectSkillDirsResult {
 interface ProjectAntigravityFilesResult {
   promoted: string[];
   removed: string[];
+  notes: string[];
   warnings: string[];
 }
 
@@ -2357,6 +2358,7 @@ function projectGlobalAntigravityAgents(options: {
   force?: boolean;
 }): ProjectAntigravityFilesResult {
   const warnings: string[] = [];
+  const notes: string[] = [];
   const promoted: string[] = [];
   const keepPaths = new Set<string>();
   const used = new Set<string>();
@@ -2385,9 +2387,9 @@ function projectGlobalAntigravityAgents(options: {
         force: options.force,
       });
       if (write.promoted) promoted.push(write.promoted);
-      if (write.warning) warnings.push(write.warning);
+      if (write.warning) notes.push(write.warning);
     } catch (error) {
-      warnings.push(projectionFailureWarning("Antigravity agent", agent.sourceRelPath, error));
+      notes.push(antigravityProjectionSkipNote("Antigravity agent", agent.sourceRelPath, error));
     }
   }
 
@@ -2417,9 +2419,9 @@ function projectGlobalAntigravityAgents(options: {
         force: options.force,
       });
       if (write.promoted) promoted.push(write.promoted);
-      if (write.warning) warnings.push(write.warning);
+      if (write.warning) notes.push(write.warning);
     } catch (error) {
-      warnings.push(projectionFailureWarning("Antigravity extension agent", `${agent.extensionName}/${agent.sourceRelPath}`, error));
+      notes.push(antigravityProjectionSkipNote("Antigravity extension agent", `${agent.extensionName}/${agent.sourceRelPath}`, error));
     }
   }
 
@@ -2447,9 +2449,9 @@ function projectGlobalAntigravityAgents(options: {
         label: "Antigravity agent prompt",
         force: options.force,
       });
-  warnings.push(...staleAgents.warnings, ...stalePrompts.warnings);
+  notes.push(...staleAgents.warnings, ...stalePrompts.warnings);
 
-  return { promoted, removed: [...staleAgents.removed, ...stalePrompts.removed], warnings };
+  return { promoted, removed: [...staleAgents.removed, ...stalePrompts.removed], notes: [...new Set(notes)], warnings };
 }
 
 function projectGlobalAntigravityWorkflows(options: {
@@ -2460,6 +2462,7 @@ function projectGlobalAntigravityWorkflows(options: {
   force?: boolean;
 }): ProjectAntigravityFilesResult {
   const warnings: string[] = [];
+  const notes: string[] = [];
   const promoted: string[] = [];
   const keepPaths = new Set<string>();
   const used = new Set<string>();
@@ -2483,9 +2486,9 @@ function projectGlobalAntigravityWorkflows(options: {
         force: options.force,
       });
       if (write.promoted) promoted.push(write.promoted);
-      if (write.warning) warnings.push(write.warning);
+      if (write.warning) notes.push(write.warning);
     } catch (error) {
-      warnings.push(projectionFailureWarning("Antigravity workflow", workflow.sourceRelPath, error));
+      notes.push(antigravityProjectionSkipNote("Antigravity workflow", workflow.sourceRelPath, error));
     }
   }
 
@@ -2508,9 +2511,9 @@ function projectGlobalAntigravityWorkflows(options: {
         force: options.force,
       });
       if (write.promoted) promoted.push(write.promoted);
-      if (write.warning) warnings.push(write.warning);
+      if (write.warning) notes.push(write.warning);
     } catch (error) {
-      warnings.push(projectionFailureWarning("Antigravity extension workflow", `${workflow.extensionName}/${workflow.sourceRelPath}`, error));
+      notes.push(antigravityProjectionSkipNote("Antigravity extension workflow", `${workflow.extensionName}/${workflow.sourceRelPath}`, error));
     }
   }
 
@@ -2526,9 +2529,9 @@ function projectGlobalAntigravityWorkflows(options: {
         label: "Antigravity workflow",
         force: options.force,
       });
-  warnings.push(...stale.warnings);
+  notes.push(...stale.warnings);
 
-  return { promoted, removed: stale.removed, warnings };
+  return { promoted, removed: stale.removed, notes: [...new Set(notes)], warnings };
 }
 
 function normalizeYoloOptionalPermissions(text: string): string {
@@ -3003,7 +3006,11 @@ function syncGlobalOpenCode(paths: ReturnType<typeof resolveProjectPaths>, optio
     projectedExternalIntegrationFiles: [],
     rulesync,
     backups: backupSession.backups,
-    notes: [...new Set(projectedAntigravitySkills.notes)],
+    notes: [...new Set([
+      ...projectedAntigravitySkills.notes,
+      ...projectedAntigravityAgents.notes,
+      ...projectedAntigravityWorkflows.notes,
+    ])],
     warnings: [...new Set([...warnings, ...backupSession.retention.warnings])],
   };
 
@@ -3251,7 +3258,11 @@ export function syncToOpenCode(options: SyncOptions = {}): SyncReport {
       ...projectedExtensionCommands.backups,
       ...rulesync.backups,
     ],
-    notes: [...new Set(projectedAntigravitySkills.notes)],
+    notes: [...new Set([
+      ...projectedAntigravitySkills.notes,
+      ...projectedAntigravityAgents.notes,
+      ...projectedAntigravityWorkflows.notes,
+    ])],
     warnings: [...new Set([
       ...warnings,
       ...projectConfigRetentionWarnings,

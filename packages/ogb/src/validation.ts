@@ -78,34 +78,63 @@ function globalOpenCodeConfigPath(homeDir: string): string {
   return files.find((filePath) => fs.existsSync(filePath)) ?? path.join(globalOpenCodeConfigDir({ homeDir }), "opencode.json");
 }
 
-function repairGlobalOpenCodeConfigDir(paths: ReturnType<typeof resolveProjectPaths>, checks: ValidationCheck[]): void {
-  const globalRoot = globalOpenCodeConfigDir({ homeDir: paths.homeDir });
-  if (!fs.existsSync(globalRoot)) return;
-  if (fs.statSync(globalRoot).isDirectory()) return;
-
+function repairDirectoryBlocker(targetPath: string, paths: ReturnType<typeof resolveProjectPaths>, checks: ValidationCheck[], name: string): boolean {
+  if (!fs.existsSync(targetPath)) return false;
+  if (fs.statSync(targetPath).isDirectory()) return false;
   try {
     const backupSession = createBackupSession({
       bridgeConfigDir: paths.bridgeConfigDir,
-      operation: "validation",
+      operation: "validation-repair",
       roots: [{ root: paths.homeDir, prefix: "home" }],
     });
-    const backup = backupSession.backupExisting(globalRoot);
-    fs.rmSync(globalRoot, { recursive: true, force: true });
-    fs.mkdirSync(globalRoot, { recursive: true });
+    const backup = backupSession.backupExisting(targetPath);
+    fs.rmSync(targetPath, { recursive: true, force: true });
+    fs.mkdirSync(targetPath, { recursive: true });
     checks.push({
-      name: "Global OpenCode config directory",
+      name,
       status: "pass",
-      message: `Repaired stale file blocking ${globalRoot}; backup created at ${backup}.`,
-      details: { path: globalRoot, backup },
+      message: `Repaired stale file blocking ${targetPath}; backup created at ${backup}.`,
+      details: { path: targetPath, backup },
     });
+    return true;
   } catch (error) {
     checks.push({
-      name: "Global OpenCode config directory",
+      name,
       status: "fail",
-      message: `Could not repair stale file blocking ${globalRoot}: ${error instanceof Error ? error.message : String(error)}`,
-      details: { path: globalRoot },
+      message: `Could not repair stale file blocking ${targetPath}: ${error instanceof Error ? error.message : String(error)}`,
+      details: { path: targetPath },
     });
+    return false;
   }
+}
+
+function repairGlobalOpenCodeConfigDir(paths: ReturnType<typeof resolveProjectPaths>, checks: ValidationCheck[]): void {
+  repairDirectoryBlocker(globalOpenCodeConfigDir({ homeDir: paths.homeDir }), paths, checks, "Global OpenCode config directory");
+}
+
+function isInsideOrEqual(root: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function decodeErrorPath(candidate: string): string {
+  const trimmed = candidate.trim();
+  if (/^[A-Za-z]:\\\\/.test(trimmed)) return trimmed.replace(/\\\\/g, "\\");
+  return trimmed;
+}
+
+function openCodeConfigDirFromMkdirError(result: NativeCommandResult, homeDir: string): string | undefined {
+  const text = [result.error, result.stderr, result.stdout].filter(Boolean).join("\n");
+  if (!/\bEEXIST\b|file already exists/i.test(text)) return undefined;
+  if (!/\bmkdir\b|path:/i.test(text)) return undefined;
+  const candidates = [
+    ...text.matchAll(/\bmkdir\s+["']([^"']+)["']/gi),
+    ...text.matchAll(/\bpath:\s*["']([^"']+)["']/gi),
+  ].map((match) => decodeErrorPath(match[1] ?? ""));
+  return candidates.find((candidate) => {
+    const normalized = candidate.replace(/\\/g, "/").replace(/\/+$/, "");
+    return normalized.endsWith("/.config/opencode") && isInsideOrEqual(homeDir, candidate);
+  });
 }
 
 function resolveConfigPathReference(configPath: string, reference: string, homeDir: string): string {
@@ -247,14 +276,21 @@ function validateHomeGlobalFiles(paths: ReturnType<typeof resolveProjectPaths>, 
   });
 }
 
-function validateOpenCodeDebugConfig(projectRoot: string, homeDir: string, checks: ValidationCheck[], homeMode = false): void {
+function validateOpenCodeDebugConfig(paths: ReturnType<typeof resolveProjectPaths>, checks: ValidationCheck[]): void {
+  const { projectRoot, homeDir, homeMode } = paths;
   const opencode = resolveCommand("opencode", { homeDir });
   if (!opencode) {
     checks.push({ name: "OpenCode resolved config", status: "skip", message: "opencode is not on PATH." });
     return;
   }
 
-  const result = run(opencode, ["debug", "config"], projectRoot, 45000, { OGB_STARTUP_SYNC: "0" });
+  let result = run(opencode, ["debug", "config"], projectRoot, 45000, { OGB_STARTUP_SYNC: "0" });
+  if (result.error || result.status !== 0) {
+    const blockedConfigDir = openCodeConfigDirFromMkdirError(result, homeDir);
+    if (blockedConfigDir && repairDirectoryBlocker(blockedConfigDir, paths, checks, "OpenCode config directory from debug error")) {
+      result = run(opencode, ["debug", "config"], projectRoot, 45000, { OGB_STARTUP_SYNC: "0" });
+    }
+  }
   if (result.error || result.status !== 0) {
     checks.push({
       name: "OpenCode resolved config",
@@ -578,7 +614,7 @@ export function runValidation(options: ValidationOptions = {}): ValidationReport
     });
   }
 
-  validateOpenCodeDebugConfig(paths.projectRoot, paths.homeDir, checks, paths.homeMode);
+  validateOpenCodeDebugConfig(paths, checks);
   validateReleaseBootstrap(paths.projectRoot, checks);
   if (options.windows) validateWindowsInstaller(paths.projectRoot, checks);
   if (options.opencodeRun) validateOptionalOpenCodeRun(paths.projectRoot, paths.homeDir, checks);

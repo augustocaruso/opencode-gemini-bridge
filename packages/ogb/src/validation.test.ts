@@ -35,6 +35,67 @@ test("runValidation repairs a stale file blocking the global OpenCode config dir
   }
 });
 
+test("runValidation repairs the exact OpenCode mkdir EEXIST path and retries debug config", () => {
+  const homeDir = tempHome();
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-validation-project-"));
+  const binDir = path.join(homeDir, "bin");
+  const fakeOpencode = path.join(binDir, "fake-opencode.cjs");
+  const configDir = path.join(homeDir, ".config", "opencode");
+  const statePath = path.join(homeDir, "fake-opencode-state");
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(fakeOpencode, `
+const fs = require("node:fs");
+const path = require("node:path");
+const args = process.argv.slice(2);
+const statePath = process.env.OGB_FAKE_OPENCODE_STATE;
+const blockedDir = process.env.OGB_FAKE_BLOCKED_OPENCODE_DIR;
+if (args[0] === "--version") {
+  console.log("opencode fake");
+  process.exit(0);
+}
+if (args[0] === "debug" && args[1] === "config") {
+  if (!fs.existsSync(statePath)) {
+    fs.mkdirSync(path.dirname(blockedDir), { recursive: true });
+    fs.writeFileSync(blockedDir, "late stale file\\n", "utf8");
+    fs.writeFileSync(statePath, "failed-once", "utf8");
+    console.error("EEXIST: file already exists, mkdir '" + blockedDir + "'");
+    process.exit(2);
+  }
+  console.log(JSON.stringify({ agent: {}, command: {} }));
+  process.exit(0);
+}
+console.error("unexpected opencode args: " + args.join(" "));
+process.exit(1);
+`, "utf8");
+  fs.writeFileSync(path.join(binDir, "opencode"), `#!/usr/bin/env sh\nexec node "${fakeOpencode.replace(/"/g, "\\\"")}" "$@"\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(binDir, "opencode.cmd"), `@echo off\r\nnode "${fakeOpencode}" %*\r\n`, "utf8");
+
+  const originalPath = process.env.PATH;
+  const originalState = process.env.OGB_FAKE_OPENCODE_STATE;
+  const originalBlocked = process.env.OGB_FAKE_BLOCKED_OPENCODE_DIR;
+  process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+  process.env.OGB_FAKE_OPENCODE_STATE = statePath;
+  process.env.OGB_FAKE_BLOCKED_OPENCODE_DIR = configDir;
+  try {
+    const report = runValidation({ projectRoot, homeDir, silent: true });
+    const repairCheck = report.checks.find((check) => check.name === "OpenCode config directory from debug error");
+    const details = repairCheck?.details as { backup?: string } | undefined;
+    const debugFailure = report.checks.find((check) => check.name === "OpenCode resolved config" && check.status === "fail");
+
+    assert.equal(repairCheck?.status, "pass");
+    assert.equal(fs.statSync(configDir).isDirectory(), true);
+    assert.ok(details?.backup);
+    assert.equal(fs.readFileSync(details.backup, "utf8"), "late stale file\n");
+    assert.equal(debugFailure, undefined);
+  } finally {
+    process.env.PATH = originalPath;
+    if (originalState === undefined) delete process.env.OGB_FAKE_OPENCODE_STATE;
+    else process.env.OGB_FAKE_OPENCODE_STATE = originalState;
+    if (originalBlocked === undefined) delete process.env.OGB_FAKE_BLOCKED_OPENCODE_DIR;
+    else process.env.OGB_FAKE_BLOCKED_OPENCODE_DIR = originalBlocked;
+  }
+});
+
 test("runValidation validates home/global OpenCode files without project artifacts", () => {
   const homeDir = tempHome();
   const extensionDir = path.join(homeDir, ".gemini", "extensions", "study-pack");
