@@ -1,6 +1,6 @@
 {
   "schema": "opencode-gemini-bridge.ux-profile-authoring.manifest.v1",
-  "version": "0.1.50",
+  "version": "0.1.51",
   "presetSchema": "opencode-gemini-bridge.ux-profile.v1",
   "selected": [
     {

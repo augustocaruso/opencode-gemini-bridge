@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse as parseJsonc } from "jsonc-parser";
@@ -108,6 +109,14 @@ function repairDirectoryBlocker(targetPath: string, paths: ReturnType<typeof res
   }
 }
 
+function existingDirectory(targetPath: string): boolean {
+  try {
+    return fs.statSync(targetPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 function repairGlobalOpenCodeConfigDir(paths: ReturnType<typeof resolveProjectPaths>, checks: ValidationCheck[]): void {
   repairDirectoryBlocker(globalOpenCodeConfigDir({ homeDir: paths.homeDir }), paths, checks, "Global OpenCode config directory");
 }
@@ -123,10 +132,26 @@ function decodeErrorPath(candidate: string): string {
   return trimmed;
 }
 
+function nativeResultText(result: NativeCommandResult): string {
+  return [result.error, result.stderr, result.stdout].filter(Boolean).join("\n");
+}
+
+function isMkdirEexistText(text: string): boolean {
+  if (!/\bEEXIST\b|file already exists/i.test(text)) return false;
+  if (!/\bmkdir\b|path:/i.test(text)) return false;
+  return true;
+}
+
+function openCodeMkdirErrorMentionsGlobalConfig(result: NativeCommandResult): boolean {
+  const text = nativeResultText(result);
+  if (!isMkdirEexistText(text)) return false;
+  const normalized = text.replace(/\\\\/g, "\\").replace(/\\/g, "/");
+  return normalized.includes("/.config/opencode");
+}
+
 function openCodeConfigDirFromMkdirError(result: NativeCommandResult, homeDir: string): string | undefined {
-  const text = [result.error, result.stderr, result.stdout].filter(Boolean).join("\n");
-  if (!/\bEEXIST\b|file already exists/i.test(text)) return undefined;
-  if (!/\bmkdir\b|path:/i.test(text)) return undefined;
+  const text = nativeResultText(result);
+  if (!isMkdirEexistText(text)) return undefined;
   const candidates = [
     ...text.matchAll(/\bmkdir\s+["']([^"']+)["']/gi),
     ...text.matchAll(/\bpath:\s*["']([^"']+)["']/gi),
@@ -135,6 +160,17 @@ function openCodeConfigDirFromMkdirError(result: NativeCommandResult, homeDir: s
     const normalized = candidate.replace(/\\/g, "/").replace(/\/+$/, "");
     return normalized.endsWith("/.config/opencode") && isInsideOrEqual(homeDir, candidate);
   });
+}
+
+function openCodeDebugConfigMkdirGuardEnv(configDir: string): Record<string, string> {
+  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-opencode-debug-"));
+  return {
+    OPENCODE_CONFIG_DIR: configDir,
+    XDG_CONFIG_HOME: path.join(runtimeRoot, "config"),
+    XDG_DATA_HOME: path.join(runtimeRoot, "data"),
+    XDG_CACHE_HOME: path.join(runtimeRoot, "cache"),
+    XDG_STATE_HOME: path.join(runtimeRoot, "state"),
+  };
 }
 
 function resolveConfigPathReference(configPath: string, reference: string, homeDir: string): string {
@@ -286,9 +322,28 @@ function validateOpenCodeDebugConfig(paths: ReturnType<typeof resolveProjectPath
 
   let result = run(opencode, ["debug", "config"], projectRoot, 45000, { OGB_STARTUP_SYNC: "0" });
   if (result.error || result.status !== 0) {
-    const blockedConfigDir = openCodeConfigDirFromMkdirError(result, homeDir);
+    const blockedConfigDir = openCodeConfigDirFromMkdirError(result, homeDir)
+      ?? (openCodeMkdirErrorMentionsGlobalConfig(result) ? globalOpenCodeConfigDir({ homeDir }) : undefined);
     if (blockedConfigDir && repairDirectoryBlocker(blockedConfigDir, paths, checks, "OpenCode config directory from debug error")) {
       result = run(opencode, ["debug", "config"], projectRoot, 45000, { OGB_STARTUP_SYNC: "0" });
+    } else if (blockedConfigDir && existingDirectory(blockedConfigDir)) {
+      const guardEnv = openCodeDebugConfigMkdirGuardEnv(blockedConfigDir);
+      const guarded = run(opencode, ["debug", "config"], projectRoot, 45000, {
+        OGB_STARTUP_SYNC: "0",
+        ...guardEnv,
+      });
+      checks.push({
+        name: "OpenCode debug config mkdir guard",
+        status: guarded.error || guarded.status !== 0 ? "warn" : "pass",
+        message: guarded.error || guarded.status !== 0
+          ? `OpenCode still failed after OPENCODE_CONFIG_DIR mkdir guard: ${guarded.error ?? (guarded.stderr || "opencode debug config failed").trim()}`
+          : `OpenCode debug config succeeded with OPENCODE_CONFIG_DIR=${blockedConfigDir}.`,
+        details: {
+          configDir: blockedConfigDir,
+          xdgConfigHome: guardEnv.XDG_CONFIG_HOME,
+        },
+      });
+      if (!guarded.error && guarded.status === 0) result = guarded;
     }
   }
   if (result.error || result.status !== 0) {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.51 - Guard para mkdir do OpenCode no Windows
+
+- Quando `opencode debug config` falha no Windows com `EEXIST: file already exists, mkdir ...\\.config\\opencode` mas o alvo ja e um diretorio valido, o OGB agora reroda o probe com `OPENCODE_CONFIG_DIR` apontando para a config real e `XDG_*` temporario.
+- Fecha o caso em que o post-check continuava falhando mesmo depois dos reparos de arquivo bloqueador, porque nao havia arquivo a mover: o problema era o `mkdir` do proprio runtime OpenCode/Bun.
+- Adiciona regressao para o formato real do erro com `path: "C:\\Users\\...\\.config\\opencode", syscall: "mkdir", errno: -17, code: "EEXIST"`.
+
 ## 0.1.50 - Validação repara o path exato do OpenCode
 
 - Quando `opencode debug config` falha com `EEXIST: file already exists, mkdir ...\\.config\\opencode`, o OGB agora extrai o path exato reportado pelo OpenCode, faz backup, repara a pasta e tenta a validação novamente.

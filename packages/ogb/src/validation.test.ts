@@ -96,6 +96,60 @@ process.exit(1);
   }
 });
 
+test("runValidation retries OpenCode debug config with a Windows mkdir guard when the config dir already exists", () => {
+  const homeDir = tempHome();
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-validation-project-"));
+  const binDir = path.join(homeDir, "bin");
+  const fakeOpencode = path.join(binDir, "fake-opencode.cjs");
+  const configDir = path.join(homeDir, ".config", "opencode");
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(fakeOpencode, `
+const args = process.argv.slice(2);
+const blockedDir = process.env.OGB_FAKE_BLOCKED_OPENCODE_DIR;
+const displayDir = process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR || blockedDir;
+if (args[0] === "--version") {
+  console.log("opencode fake");
+  process.exit(0);
+}
+if (args[0] === "debug" && args[1] === "config") {
+  if (!process.env.XDG_CONFIG_HOME || process.env.OPENCODE_CONFIG_DIR !== blockedDir) {
+    console.error("EEXIST: file already exists, mkdir '" + displayDir + "'");
+    console.error('path: "' + displayDir.replace(/\\\\/g, "\\\\\\\\") + '", syscall: "mkdir", errno: -17, code: "EEXIST"');
+    process.exit(2);
+  }
+  console.log(JSON.stringify({ agent: {}, command: {} }));
+  process.exit(0);
+}
+console.error("unexpected opencode args: " + args.join(" "));
+process.exit(1);
+`, "utf8");
+  fs.writeFileSync(path.join(binDir, "opencode"), `#!/usr/bin/env sh\nexec node "${fakeOpencode.replace(/"/g, "\\\"")}" "$@"\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(binDir, "opencode.cmd"), `@echo off\r\nnode "${fakeOpencode}" %*\r\n`, "utf8");
+
+  const originalPath = process.env.PATH;
+  const originalBlocked = process.env.OGB_FAKE_BLOCKED_OPENCODE_DIR;
+  const originalDisplay = process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR;
+  process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+  process.env.OGB_FAKE_BLOCKED_OPENCODE_DIR = configDir;
+  process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR = "C:\\Users\\leo\\.config\\opencode";
+  try {
+    const report = runValidation({ projectRoot, homeDir, silent: true });
+    const guardCheck = report.checks.find((check) => check.name === "OpenCode debug config mkdir guard");
+    const debugFailure = report.checks.find((check) => check.name === "OpenCode resolved config" && check.status === "fail");
+
+    assert.equal(guardCheck?.status, "pass");
+    assert.match(guardCheck?.message ?? "", /OPENCODE_CONFIG_DIR/);
+    assert.equal(debugFailure, undefined);
+  } finally {
+    process.env.PATH = originalPath;
+    if (originalBlocked === undefined) delete process.env.OGB_FAKE_BLOCKED_OPENCODE_DIR;
+    else process.env.OGB_FAKE_BLOCKED_OPENCODE_DIR = originalBlocked;
+    if (originalDisplay === undefined) delete process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR;
+    else process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR = originalDisplay;
+  }
+});
+
 test("runValidation validates home/global OpenCode files without project artifacts", () => {
   const homeDir = tempHome();
   const extensionDir = path.join(homeDir, ".gemini", "extensions", "study-pack");
