@@ -11,6 +11,30 @@ function tempHome(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "ogb-validation-home-"));
 }
 
+test("runValidation repairs a stale file blocking the global OpenCode config dir before debug config", () => {
+  const homeDir = tempHome();
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-validation-project-"));
+  const configDir = path.join(homeDir, ".config", "opencode");
+  fs.mkdirSync(path.dirname(configDir), { recursive: true });
+  fs.writeFileSync(configDir, "stale projected file\n", "utf8");
+
+  const originalPath = process.env.PATH;
+  process.env.PATH = "";
+  try {
+    const report = runValidation({ projectRoot, homeDir, silent: true });
+    const repairCheck = report.checks.find((check) => check.name === "Global OpenCode config directory");
+    const details = repairCheck?.details as { backup?: string } | undefined;
+
+    assert.equal(repairCheck?.status, "pass");
+    assert.match(repairCheck?.message ?? "", /Repaired stale file/);
+    assert.equal(fs.statSync(configDir).isDirectory(), true);
+    assert.ok(details?.backup);
+    assert.equal(fs.readFileSync(details.backup, "utf8"), "stale projected file\n");
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
 test("runValidation validates home/global OpenCode files without project artifacts", () => {
   const homeDir = tempHome();
   const extensionDir = path.join(homeDir, ".gemini", "extensions", "study-pack");

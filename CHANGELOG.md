@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.47 - Validação repara diretório global bloqueado
+
+- Faz a etapa de validação reparar, com backup, um arquivo antigo ocupando `~/.config/opencode` antes de chamar `opencode debug config`.
+- Fecha o caso em que o sync/setup reparava recursos, mas o post-update check ainda falhava com `EEXIST: file already exists, mkdir .../.config/opencode`.
+
 ## 0.1.46 - Reparo do diretório global OpenCode
 
 - Faz `setup-ux` e `sync` repararem, com backup, um arquivo antigo ocupando o caminho `~/.config/opencode`.

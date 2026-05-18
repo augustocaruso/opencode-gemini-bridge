@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parse as parseJsonc } from "jsonc-parser";
+import { createBackupSession } from "./backup-policy.js";
 import { BUILT_IN_AGENTS, BUILT_IN_COMMANDS, REMOVED_BUILT_IN_AGENT_NAMES } from "./built-ins.js";
 import { resolveCommand } from "./command-resolution.js";
 import { runDoctor } from "./doctor.js";
@@ -75,6 +76,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function globalOpenCodeConfigPath(homeDir: string): string {
   const files = globalOpenCodeConfigFiles({ homeDir });
   return files.find((filePath) => fs.existsSync(filePath)) ?? path.join(globalOpenCodeConfigDir({ homeDir }), "opencode.json");
+}
+
+function repairGlobalOpenCodeConfigDir(paths: ReturnType<typeof resolveProjectPaths>, checks: ValidationCheck[]): void {
+  const globalRoot = globalOpenCodeConfigDir({ homeDir: paths.homeDir });
+  if (!fs.existsSync(globalRoot)) return;
+  if (fs.statSync(globalRoot).isDirectory()) return;
+
+  try {
+    const backupSession = createBackupSession({
+      bridgeConfigDir: paths.bridgeConfigDir,
+      operation: "validation",
+      roots: [{ root: paths.homeDir, prefix: "home" }],
+    });
+    const backup = backupSession.backupExisting(globalRoot);
+    fs.rmSync(globalRoot, { recursive: true, force: true });
+    fs.mkdirSync(globalRoot, { recursive: true });
+    checks.push({
+      name: "Global OpenCode config directory",
+      status: "pass",
+      message: `Repaired stale file blocking ${globalRoot}; backup created at ${backup}.`,
+      details: { path: globalRoot, backup },
+    });
+  } catch (error) {
+    checks.push({
+      name: "Global OpenCode config directory",
+      status: "fail",
+      message: `Could not repair stale file blocking ${globalRoot}: ${error instanceof Error ? error.message : String(error)}`,
+      details: { path: globalRoot },
+    });
+  }
 }
 
 function resolveConfigPathReference(configPath: string, reference: string, homeDir: string): string {
@@ -509,6 +540,7 @@ function validateOptionalOpenCodeRun(projectRoot: string, homeDir: string, check
 export function runValidation(options: ValidationOptions = {}): ValidationReport {
   const paths = resolveProjectPaths(options.projectRoot, options.homeDir);
   const checks: ValidationCheck[] = [];
+  repairGlobalOpenCodeConfigDir(paths, checks);
   const doctor = runDoctor({ projectRoot: paths.projectRoot, homeDir: paths.homeDir, silent: true });
 
   checks.push({
