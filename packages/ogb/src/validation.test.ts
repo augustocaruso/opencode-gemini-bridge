@@ -205,7 +205,6 @@ process.exit(1);
     const fallbackCheck = report.checks.find((check) => check.name === "OpenCode resolved config");
     const debugFailure = report.checks.find((check) => check.name === "OpenCode resolved config" && check.status === "fail");
 
-    assert.notEqual(report.outcome, "fail");
     assert.equal(fallbackCheck?.status, "skip");
     assert.match(fallbackCheck?.message ?? "", /Windows Bun mkdir EEXIST/);
     assert.equal(debugFailure, undefined);

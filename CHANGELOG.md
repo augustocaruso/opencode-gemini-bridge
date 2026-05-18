@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.54 - Reparo real do OpenCode ReadOnly no Windows
+
+- Mantem a correcao do `EEXIST` do OpenCode no Windows e ajusta a regressao para rodar igual em CI Linux/macOS/Windows.
+- Esta e a versao de release publicada para substituir a tag `v0.1.53`, que falhou antes de gerar artefatos.
+
 ## 0.1.53 - Check nao espera o OpenCode quebrado no Windows
 
 - Quando `opencode debug config` falha com `EEXIST: file already exists, mkdir ...\\.config\\opencode` e esse alvo ja e um diretorio valido, o OGB agora pula imediatamente o probe do OpenCode em vez de tentar um segundo probe com guard.
