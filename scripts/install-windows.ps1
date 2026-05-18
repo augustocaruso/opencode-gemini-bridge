@@ -175,6 +175,28 @@ function Ensure-OpenCodeExaEnvironment {
   $env:OPENCODE_ENABLE_EXA = "1"
 }
 
+function Repair-DirectoryBlocker($Dir, $Operation) {
+  if (-not (Test-Path -LiteralPath $Dir)) {
+    return
+  }
+  $Item = Get-Item -LiteralPath $Dir -Force
+  if ($Item.PSIsContainer) {
+    return
+  }
+
+  $Stamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH-mm-ss.fffZ") + "-" + [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
+  $BackupRoot = Join-Path $HOME ".config\opencode-gemini-bridge\backups\$Operation\$Stamp\home"
+  $Relative = $Dir
+  if ($Relative.StartsWith($HOME, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $Relative = $Relative.Substring($HOME.Length).TrimStart([char[]]@("\", "/"))
+  }
+  $BackupPath = Join-Path $BackupRoot $Relative
+  New-Item -ItemType Directory -Force (Split-Path -Parent $BackupPath) | Out-Null
+  Move-Item -LiteralPath $Dir -Destination $BackupPath -Force
+  New-Item -ItemType Directory -Force $Dir | Out-Null
+  Write-Host "Repaired file blocking OpenCode config directory: $Dir (backup: $BackupPath)"
+}
+
 function Remove-UserPath($Dir) {
   if (-not $Dir) {
     return
@@ -368,6 +390,7 @@ if ((-not $Prefix) -or $Prefix.Trim().StartsWith("-")) {
 
 Repair-BrokenForceInstall
 Repair-BrokenOgbShims $Prefix
+Repair-DirectoryBlocker (Join-Path $HOME ".config\opencode") "windows-installer"
 
 New-Item -ItemType Directory -Force (Join-Path $HOME ".config\opencode") | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $HOME ".agents\skills") | Out-Null

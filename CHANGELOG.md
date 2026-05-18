@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.49 - Bootstrap repara OpenCode bloqueado
+
+- Faz o bootstrap e o instalador Windows repararem, com backup, um arquivo antigo ocupando `~/.config/opencode` antes de chamar qualquer `mkdir`.
+- Fecha o caso em que o `opencode` puro morria com `EEXIST: file already exists, mkdir ...\\.config\\opencode` antes do plugin do OGB conseguir carregar.
+
 ## 0.1.48 - Update mostra o blocker real
 
 - Faz `ogb update` aproveitar o resumo final do `ogb check --progress-json` quando o post-check falha.

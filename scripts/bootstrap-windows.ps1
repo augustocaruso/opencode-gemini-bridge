@@ -33,8 +33,31 @@ function Normalize-PathArgument($Value) {
   return $Text
 }
 
+function Repair-DirectoryBlocker($Dir, $Operation) {
+  if (-not (Test-Path -LiteralPath $Dir)) {
+    return
+  }
+  $Item = Get-Item -LiteralPath $Dir -Force
+  if ($Item.PSIsContainer) {
+    return
+  }
+
+  $Stamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH-mm-ss.fffZ") + "-" + [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
+  $BackupRoot = Join-Path $HOME ".config\opencode-gemini-bridge\backups\$Operation\$Stamp\home"
+  $Relative = $Dir
+  if ($Relative.StartsWith($HOME, [System.StringComparison]::OrdinalIgnoreCase)) {
+    $Relative = $Relative.Substring($HOME.Length).TrimStart([char[]]@("\", "/"))
+  }
+  $BackupPath = Join-Path $BackupRoot $Relative
+  New-Item -ItemType Directory -Force (Split-Path -Parent $BackupPath) | Out-Null
+  Move-Item -LiteralPath $Dir -Destination $BackupPath -Force
+  New-Item -ItemType Directory -Force $Dir | Out-Null
+  Write-Host "Repaired file blocking OpenCode config directory: $Dir (backup: $BackupPath)"
+}
+
 $Project = Normalize-PathArgument $Project
 $Prefix = Normalize-PathArgument $Prefix
+Repair-DirectoryBlocker (Join-Path $HOME ".config\opencode") "bootstrap"
 
 $TempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("ogb-bootstrap-" + [System.Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force $TempDir | Out-Null

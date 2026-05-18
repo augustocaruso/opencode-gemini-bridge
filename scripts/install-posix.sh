@@ -65,6 +65,32 @@ require_node_22() {
   fi
 }
 
+repair_directory_blocker() {
+  local dir="$1"
+  local operation="$2"
+  if [[ ! -e "$dir" || -d "$dir" ]]; then
+    return
+  fi
+
+  local stamp
+  local backup_root
+  local relative
+  local backup_path
+  local home_prefix
+  stamp="$(date -u +"%Y-%m-%dT%H-%M-%SZ")-$$"
+  backup_root="$HOME/.config/opencode-gemini-bridge/backups/$operation/$stamp/home"
+  relative="$dir"
+  home_prefix="$HOME/"
+  case "$relative" in
+    "$home_prefix"*) relative="${relative#"$home_prefix"}" ;;
+  esac
+  backup_path="$backup_root/$relative"
+  mkdir -p "$(dirname "$backup_path")"
+  mv "$dir" "$backup_path"
+  mkdir -p "$dir"
+  echo "Repaired file blocking OpenCode config directory: $dir (backup: $backup_path)"
+}
+
 emit_unique_targets() {
   local seen=$'\n'
   local target
@@ -323,6 +349,8 @@ if [[ "$PROJECT_DIR" == "$HOME" && "$RUN_SETUP" -eq 1 ]]; then
   RUN_HOME_SYNC=1
   RUN_SETUP=0
 fi
+
+repair_directory_blocker "$HOME/.config/opencode" "posix-installer"
 
 mkdir -p "$HOME/.config/opencode"
 mkdir -p "$HOME/.agents/skills"

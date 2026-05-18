@@ -33,6 +33,19 @@ test("posix installer contract delegates the ritual to ogb install", () => {
   assert.doesNotMatch(text, /\brun_final_check\b/);
 });
 
+test("posix installer repairs a file blocking the OpenCode config dir before mkdir", () => {
+  assertScriptExists("install-posix.sh");
+  const text = script("install-posix.sh");
+
+  assert.match(text, /repair_directory_blocker\(\)/);
+  assert.match(text, /mv "\$dir" "\$backup_path"/);
+  assert.match(text, /Repaired file blocking OpenCode config directory/);
+  assert.ok(
+    text.indexOf('repair_directory_blocker "$HOME/.config/opencode" "posix-installer"')
+    < text.indexOf('mkdir -p "$HOME/.config/opencode"'),
+  );
+});
+
 test("mac installer remains a darwin wrapper around the shared POSIX installer", () => {
   const text = script("install-mac.sh");
 
