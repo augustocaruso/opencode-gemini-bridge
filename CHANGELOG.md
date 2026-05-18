@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.55 - Release do reparo Windows ReadOnly
+
+- Publica o reparo do `EEXIST`/`ReadOnly` com a regressao home-mode ajustada para CI Linux, macOS e Windows.
+- Esta e a versao de release publicada para substituir as tags `v0.1.53` e `v0.1.54`, que falharam antes de gerar artefatos.
+
 ## 0.1.54 - Reparo real do OpenCode ReadOnly no Windows
 
 - Mantem a correcao do `EEXIST` do OpenCode no Windows e ajusta a regressao para rodar igual em CI Linux/macOS/Windows.

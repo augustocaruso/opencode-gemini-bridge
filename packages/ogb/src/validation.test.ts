@@ -128,7 +128,7 @@ process.exit(1);
   const originalDisplay = process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR;
   process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
   process.env.OGB_FAKE_BLOCKED_OPENCODE_DIR = configDir;
-  process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR = "C:\\Users\\leo\\.config\\opencode";
+  process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR = configDir;
   try {
     const report = runValidation({ projectRoot, homeDir, silent: true });
     const skipCheck = report.checks.find((check) => check.name === "OpenCode resolved config" && check.status === "skip");
@@ -198,7 +198,7 @@ process.exit(1);
   const originalDisplay = process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR;
   const originalGuardInvoked = process.env.OGB_FAKE_GUARD_INVOKED;
   process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
-  process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR = "C:\\Users\\leo\\.config\\opencode";
+  process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR = configDir;
   process.env.OGB_FAKE_GUARD_INVOKED = guardInvokedPath;
   try {
     const report = runValidation({ projectRoot: homeDir, homeDir, silent: true });
