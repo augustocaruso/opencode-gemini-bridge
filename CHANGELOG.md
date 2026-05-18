@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.43 - Hooks globais preservam o workspace
+
+- Faz o plugin global do OpenCode cair para o estado global do OGB quando o workspace atual ainda não tem configuração de projeto.
+- Preserva o diretório real da sessão no payload dos hooks Gemini, para guards como o vault guard avaliarem o workspace correto.
+- Adiciona regressão cobrindo hooks globais de extensão rodando em workspaces comuns, sem `.opencode/generated` local.
+
 ## 0.1.42 - Update repara bloqueios antigos
 
 - Faz o sync com `--force` reparar arquivos legados que bloqueiam diretórios de projeção, criando backup central antes de remover o bloqueio.

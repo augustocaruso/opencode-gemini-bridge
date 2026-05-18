@@ -415,6 +415,122 @@ test("startup plugin sends OGB command output directly to chat", async () => {
   }
 });
 
+test("startup plugin runs global extension hooks from ordinary workspaces with workspace cwd", async () => {
+  const root = tempProject();
+  const homeDir = path.join(root, "home");
+  const workspaceDir = path.join(root, "workspace");
+  const generatedDir = path.join(homeDir, ".config", "opencode-gemini-bridge", "generated");
+  const pluginDir = path.join(root, "plugin");
+  const pluginPath = path.join(pluginDir, "ogb-startup-sync.js");
+  const extensionDir = path.join(homeDir, ".gemini", "extensions", "study-pack");
+  const hookLog = path.join(root, "hook-log.jsonl");
+  fs.mkdirSync(generatedDir, { recursive: true });
+  fs.mkdirSync(workspaceDir, { recursive: true });
+  fs.mkdirSync(path.join(pluginDir), { recursive: true });
+  fs.mkdirSync(path.join(extensionDir, "hooks"), { recursive: true });
+  fs.writeFileSync(path.join(pluginDir, "package.json"), "{\"type\":\"module\"}\n", "utf8");
+  fs.writeFileSync(pluginPath, STARTUP_SYNC_PLUGIN_SOURCE, "utf8");
+  fs.writeFileSync(path.join(generatedDir, "ogb-startup-sync.json"), JSON.stringify({
+    version: 1,
+    enabled: false,
+    autoUpdate: false,
+    command: "ogb",
+    baseArgs: ["--project", homeDir],
+    syncArgs: ["startup-sync"],
+  }, null, 2) + "\n");
+  fs.writeFileSync(path.join(generatedDir, "ogb-extension-map.json"), JSON.stringify({
+    _generated: { tool: "ogb", version: "test", warning: "test" },
+    projectRoot: homeDir,
+    generatedAt: new Date().toISOString(),
+    extensions: [{
+      name: "study-pack",
+      scope: "global",
+      path: extensionDir,
+      manifestPath: path.join(extensionDir, "gemini-extension.json"),
+      commands: [],
+      skills: [],
+      agents: [],
+      hooks: [{
+        source: "hooks/hooks.json",
+        projected: true,
+        target: "opencode-plugin:tool.execute.before",
+        reason: "Projected through the OGB OpenCode plugin.",
+      }],
+      scripts: [],
+      docs: [],
+      warnings: [],
+    }],
+    projectedCommands: [],
+    projectedAgents: [],
+    modelFallbacks: [],
+    removedCommands: [],
+    removedAgents: [],
+    warnings: [],
+  }, null, 2) + "\n");
+  fs.writeFileSync(path.join(extensionDir, "hooks", "hooks.json"), JSON.stringify({
+    hooks: {
+      BeforeTool: [{
+        matcher: "^bash$",
+        hooks: [{
+          name: "workspace-guard",
+          type: "command",
+          command: `node "${"${extensionPath}"}${"${/}"}hook-runner.mjs"`,
+          timeout: 2000,
+        }],
+      }],
+    },
+  }, null, 2) + "\n");
+  fs.writeFileSync(path.join(extensionDir, "hook-runner.mjs"), `
+import fs from "node:fs";
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => input += chunk);
+process.stdin.on("end", () => {
+  const payload = JSON.parse(input || "{}");
+  fs.appendFileSync(process.env.OGB_TEST_HOOK_LOG, JSON.stringify(payload) + "\\n");
+  if (payload.cwd === ${JSON.stringify(workspaceDir)}) {
+    process.stdout.write(JSON.stringify({ decision: "deny", reason: "workspace cwd preserved" }));
+  } else {
+    process.stdout.write(JSON.stringify({ decision: "allow", cwd: payload.cwd }));
+  }
+});
+`, "utf8");
+
+  const restoreHome = overrideProcessHome(homeDir);
+  const previousCwd = process.cwd();
+  const previousDelay = process.env.OGB_STARTUP_DELAY_MS;
+  const previousHookLog = process.env.OGB_TEST_HOOK_LOG;
+  process.env.OGB_STARTUP_DELAY_MS = "600000";
+  process.env.OGB_TEST_HOOK_LOG = hookLog;
+  try {
+    process.chdir(workspaceDir);
+    const mod = await import(`${pathToFileURL(pluginPath).href}?t=${Date.now()}-global-extension-hooks`);
+    const plugin = await mod.default({
+      directory: workspaceDir,
+      worktree: workspaceDir,
+      client: {
+        app: { log: async () => undefined },
+        tui: { showToast: async () => undefined },
+      },
+    });
+
+    assert.equal(typeof plugin["tool.execute.before"], "function");
+    await assert.rejects(
+      () => plugin["tool.execute.before"]({ tool: "bash", sessionID: "s1", callID: "c1", directory: workspaceDir, worktree: workspaceDir }, { args: { command: "git add ." } }),
+      /workspace cwd preserved/,
+    );
+    const record = JSON.parse(fs.readFileSync(hookLog, "utf8").trim());
+    assert.equal(record.cwd, workspaceDir);
+  } finally {
+    process.chdir(previousCwd);
+    restoreHome();
+    if (previousDelay === undefined) delete process.env.OGB_STARTUP_DELAY_MS;
+    else process.env.OGB_STARTUP_DELAY_MS = previousDelay;
+    if (previousHookLog === undefined) delete process.env.OGB_TEST_HOOK_LOG;
+    else process.env.OGB_TEST_HOOK_LOG = previousHookLog;
+  }
+});
+
 test("startup plugin runs projected Gemini extension tool hooks automatically", async () => {
   const root = tempProject();
   const projectRoot = path.join(root, "project");

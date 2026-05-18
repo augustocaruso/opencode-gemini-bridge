@@ -226,7 +226,27 @@ function resolveCwd({ directory, worktree }) {
   for (const candidate of candidates) {
     if (hasStartupConfig(candidate)) return candidate;
   }
+  const home = os.homedir();
+  if (hasStartupConfig(home)) return home;
   return undefined;
+}
+
+function resolveHookCwd(fallbackCwd, input) {
+  const candidates = [
+    input?.worktree,
+    input?.directory,
+    input?.cwd,
+    input?.path?.cwd,
+    input?.path?.root,
+  ].filter(Boolean).map(String);
+  for (const candidate of candidates) {
+    try {
+      if (path.resolve(candidate)) return candidate;
+    } catch {
+      // Ignore malformed hook context values.
+    }
+  }
+  return fallbackCwd;
 }
 
 function commandPlan(cwd) {
@@ -592,10 +612,10 @@ function geminiSettingsHookCommands(cwd, eventName, toolName) {
   return commands;
 }
 
-function geminiHookCommands(cwd, eventName, toolName) {
+function geminiHookCommands(bridgeCwd, hookCwd, eventName, toolName) {
   return [
-    ...geminiSettingsHookCommands(cwd, eventName, toolName),
-    ...geminiExtensionHookCommands(cwd, eventName, toolName),
+    ...geminiSettingsHookCommands(hookCwd, eventName, toolName),
+    ...geminiExtensionHookCommands(bridgeCwd, eventName, toolName),
   ];
 }
 
@@ -700,9 +720,10 @@ function runHookCommand(hookCommand, payload) {
 
 async function runGeminiExtensionToolHooks(cwd, client, eventName, input, output) {
   const toolName = String(input?.tool || input?.name || input?.toolName || "");
-  const commands = geminiHookCommands(cwd, eventName, toolName);
+  const hookCwd = resolveHookCwd(cwd, input);
+  const commands = geminiHookCommands(cwd, hookCwd, eventName, toolName);
   for (const command of commands) {
-    const payload = geminiHookPayload(cwd, eventName, input, output);
+    const payload = geminiHookPayload(hookCwd, eventName, input, output);
     const result = await runHookCommand(command, payload);
     const hookOutput = parseHookJson(result.stdout);
     if (result.code === 2) {
