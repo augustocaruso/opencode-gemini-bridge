@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.60 - Reparo real da projeção Antigravity no Windows
+
+- Repara roots Antigravity `skills`/`agents` que ficaram como symlinks Windows quebrados ou inatravessáveis, removendo o link com `--force` sem apagar o alvo e recriando uma árvore real.
+- Fecha o caso em que o sync dizia OK, mas `~\.gemini\antigravity\skills` e `~\.gemini\antigravity\agents` continuavam como reparse points para `~\.config\opencode`, gerando `untrusted mount point` e deixando Antigravity sem projeção verificável.
+- Adiciona regressão cobrindo roots Antigravity como symlink e conferindo que skills e agents nativos voltam a ser materializados.
+
 ## 0.1.57 - Sintaxe PowerShell do reparo ReadOnly
 
 - Corrige a interpolacao PowerShell `${Operation}:` nos instaladores Windows para manter o parser do CI Windows/Linux limpo.

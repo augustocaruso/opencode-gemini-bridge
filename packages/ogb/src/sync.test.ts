@@ -700,6 +700,46 @@ test("syncToOpenCode skips Antigravity skills blocked by Windows untrusted mount
   }
 });
 
+test("syncToOpenCode repairs Antigravity symlink projection roots with force", (t) => {
+  const projectRoot = tempProject();
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));
+  const sourceSkillDir = path.join(homeDir, ".gemini", "skills", "study-notes");
+  const extensionDir = path.join(homeDir, ".gemini", "extensions", "study-pack");
+  const agentsDir = path.join(extensionDir, "agents");
+  const antigravityRoot = path.join(homeDir, ".gemini", "antigravity");
+  const skillsLink = path.join(antigravityRoot, "skills");
+  const agentsLink = path.join(antigravityRoot, "agents");
+  const openCodeRoot = path.join(homeDir, ".config", "opencode");
+
+  fs.mkdirSync(sourceSkillDir, { recursive: true });
+  fs.mkdirSync(agentsDir, { recursive: true });
+  fs.mkdirSync(path.join(openCodeRoot, "skills"), { recursive: true });
+  fs.mkdirSync(path.join(openCodeRoot, "agents"), { recursive: true });
+  fs.mkdirSync(antigravityRoot, { recursive: true });
+  fs.writeFileSync(path.join(sourceSkillDir, "SKILL.md"), "---\nname: study-notes\ndescription: Study notes.\n---\n# Study\n");
+  fs.writeFileSync(path.join(agentsDir, "researcher.md"), "---\ndescription: Research notes.\n---\n# Researcher\n");
+
+  try {
+    fs.symlinkSync(path.join(openCodeRoot, "skills"), skillsLink, "dir");
+    fs.symlinkSync(path.join(openCodeRoot, "agents"), agentsLink, "dir");
+  } catch (error) {
+    t.skip(`symlink creation is not available in this test environment: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+
+  const report = syncToOpenCode({ projectRoot, homeDir, rulesyncMode: "off", force: true, silent: true });
+
+  assert.equal(fs.lstatSync(skillsLink).isSymbolicLink(), false);
+  assert.equal(fs.lstatSync(agentsLink).isSymbolicLink(), false);
+  assert.equal(fs.statSync(skillsLink).isDirectory(), true);
+  assert.equal(fs.statSync(agentsLink).isDirectory(), true);
+  assert.equal(fs.existsSync(path.join(antigravityRoot, "skills", "study-notes", "SKILL.md")), true);
+  assert.equal(fs.existsSync(path.join(antigravityRoot, "agents", "researcher")), true);
+  assert.equal(fs.existsSync(path.join(antigravityRoot, "agent_prompts", "researcher.md")), true);
+  assert.ok(report.projectedAntigravitySkills.includes(".gemini/antigravity/skills/study-notes"));
+  assert.ok(report.projectedAntigravityAgents.includes(".gemini/antigravity/agents/researcher"));
+});
+
 test("syncToOpenCode adopts identical unmanaged Antigravity skill projections", () => {
   const projectRoot = tempProject();
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));

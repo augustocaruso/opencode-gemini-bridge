@@ -307,6 +307,14 @@ function dirExists(dirPath: string): boolean {
   }
 }
 
+function lstatIfExists(filePath: string): fs.Stats | undefined {
+  try {
+    return fs.lstatSync(filePath);
+  } catch {
+    return undefined;
+  }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -338,13 +346,31 @@ function repairNonDirectoryPathBlockers(options: {
   const targetDir = path.resolve(options.targetDir);
   if (targetDir !== root && !pathIsInside(root, targetDir)) return undefined;
 
-  if (fs.existsSync(root) && !dirExists(root)) {
-    const blocker = path.basename(root);
+  function removeBlocker(blockerPath: string, blockerLabel: string, stat: fs.Stats): string | undefined {
     if (!options.force) {
-      return `${options.label} conflict: ${options.reportPath} is blocked by ${blocker}, which is not a directory; use --force to repair with backup`;
+      return `${options.label} conflict: ${options.reportPath} is blocked by ${blockerLabel}, which is not a directory; use --force to repair with backup`;
     }
-    options.backupSession.backupExisting(root);
-    fs.rmSync(root, { recursive: true, force: true });
+    if (stat.isSymbolicLink()) {
+      try {
+        const backupPath = `${options.backupSession.plannedPath(blockerPath)}.symlink.txt`;
+        fs.mkdirSync(path.dirname(backupPath), { recursive: true });
+        fs.writeFileSync(backupPath, `${fs.readlinkSync(blockerPath)}\n`, "utf8");
+      } catch {
+        // Best effort. Removing the link does not delete its target.
+      }
+      fs.rmSync(blockerPath, { force: true });
+      return undefined;
+    }
+    options.backupSession.backupExisting(blockerPath);
+    fs.rmSync(blockerPath, { recursive: true, force: true });
+    return undefined;
+  }
+
+  const rootStat = lstatIfExists(root);
+  if (rootStat && !rootStat.isDirectory()) {
+    const blocker = path.basename(root);
+    const warning = removeBlocker(root, blocker, rootStat);
+    if (warning) return warning;
   }
 
   const rel = path.relative(root, targetDir);
@@ -352,14 +378,12 @@ function repairNonDirectoryPathBlockers(options: {
   let cursor = root;
   for (const part of parts) {
     cursor = path.join(cursor, part);
-    if (!fs.existsSync(cursor) || dirExists(cursor)) continue;
+    const stat = lstatIfExists(cursor);
+    if (!stat || stat.isDirectory()) continue;
 
     const blocker = pathIsInside(root, cursor) ? relativeTo(root, cursor) : cursor;
-    if (!options.force) {
-      return `${options.label} conflict: ${options.reportPath} is blocked by ${blocker}, which is not a directory; use --force to repair with backup`;
-    }
-    options.backupSession.backupExisting(cursor);
-    fs.rmSync(cursor, { recursive: true, force: true });
+    const warning = removeBlocker(cursor, blocker, stat);
+    if (warning) return warning;
   }
 
   return undefined;
