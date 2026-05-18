@@ -2057,6 +2057,17 @@ function writeManagedAntigravityText(options: {
   const targetPath = targetPathFromReportPath(options.homeDir, options.reportPath);
   if (options.dryRun) return { promoted: options.reportPath };
 
+  const repairWarning = repairNonDirectoryPathBlockers({
+    root: options.homeDir,
+    targetDir: path.dirname(targetPath),
+    reportPath: options.reportPath,
+    label: options.label,
+    backupSession: options.backupSession,
+    dryRun: options.dryRun,
+    force: options.force,
+  });
+  if (repairWarning) return { warning: repairWarning };
+
   const desiredHash = sha256Text(options.content);
   if (fileExists(targetPath) && sha256File(targetPath) === desiredHash) {
     upsertManagedFile(options.state, {
@@ -2077,17 +2088,6 @@ function writeManagedAntigravityText(options: {
   if (fileExists(targetPath) && !options.force && previousHash && sha256File(targetPath) !== previousHash) {
     return { warning: `${options.label} conflict: ${options.reportPath} was edited manually; use --force to overwrite` };
   }
-
-  const repairWarning = repairNonDirectoryPathBlockers({
-    root: options.homeDir,
-    targetDir: path.dirname(targetPath),
-    reportPath: options.reportPath,
-    label: options.label,
-    backupSession: options.backupSession,
-    dryRun: options.dryRun,
-    force: options.force,
-  });
-  if (repairWarning) return { warning: repairWarning };
 
   if (fileExists(targetPath)) options.backupSession.backupExisting(targetPath);
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -2211,6 +2211,61 @@ function writeManagedAntigravityAgent(options: {
     dryRun: options.dryRun,
     force: options.force,
   });
+}
+
+function isLeakedOpenCodeAntigravityAgentConfig(options: {
+  fileName: string;
+  openCodeAgentPath: string;
+  antigravityAgentPath: string;
+}): boolean {
+  if (!fileExists(options.antigravityAgentPath)) return false;
+  if (sha256File(options.openCodeAgentPath) !== sha256File(options.antigravityAgentPath)) return false;
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(options.openCodeAgentPath, "utf8")) as {
+      name?: unknown;
+      command_spec?: { args?: unknown };
+    };
+    if (parsed.name !== options.fileName) return false;
+    const args = Array.isArray(parsed.command_spec?.args) ? parsed.command_spec.args : [];
+    return args.some((arg) =>
+      typeof arg === "string"
+      && arg.replace(/\\/g, "/").includes("/.gemini/antigravity/agent_prompts/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function removeLeakedOpenCodeAntigravityAgentConfigs(options: {
+  homeDir: string;
+  backupSession: BackupSession;
+  dryRun?: boolean;
+}): string[] {
+  const openCodeAgentsDir = path.join(options.homeDir, ".config", "opencode", "agents");
+  const antigravityAgentsDir = path.join(options.homeDir, ".gemini", "antigravity", "agents");
+  if (!dirExists(openCodeAgentsDir) || !dirExists(antigravityAgentsDir)) return [];
+
+  const removed: string[] = [];
+  for (const entry of fs.readdirSync(openCodeAgentsDir, { withFileTypes: true })) {
+    if (!entry.isFile() || entry.name.endsWith(".md")) continue;
+    const openCodeAgentPath = path.join(openCodeAgentsDir, entry.name);
+    const antigravityAgentPath = path.join(antigravityAgentsDir, entry.name);
+    if (!isLeakedOpenCodeAntigravityAgentConfig({
+      fileName: entry.name,
+      openCodeAgentPath,
+      antigravityAgentPath,
+    })) continue;
+
+    const reportPath = globalOpenCodeRelPath(`agents/${entry.name}`);
+    if (!options.dryRun) {
+      options.backupSession.backupExisting(openCodeAgentPath);
+      fs.rmSync(openCodeAgentPath, { force: true });
+    }
+    removed.push(reportPath);
+  }
+
+  return removed;
 }
 
 function projectGlobalGeminiSkills(options: {
@@ -2474,8 +2529,18 @@ function projectGlobalAntigravityAgents(options: {
         force: options.force,
       });
   notes.push(...staleAgents.warnings, ...stalePrompts.warnings);
+  const leakedOpenCodeAgents = removeLeakedOpenCodeAntigravityAgentConfigs({
+    homeDir: options.homeDir,
+    backupSession: options.backupSession,
+    dryRun: options.dryRun,
+  });
 
-  return { promoted, removed: [...staleAgents.removed, ...stalePrompts.removed], notes: [...new Set(notes)], warnings };
+  return {
+    promoted,
+    removed: [...staleAgents.removed, ...stalePrompts.removed, ...leakedOpenCodeAgents],
+    notes: [...new Set(notes)],
+    warnings,
+  };
 }
 
 function projectGlobalAntigravityWorkflows(options: {

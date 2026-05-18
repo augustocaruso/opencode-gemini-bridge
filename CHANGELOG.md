@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.61 - Limpeza de agentes Antigravity vazados no OpenCode
+
+- Remove automaticamente copias nativas do Antigravity que versoes anteriores podiam deixar em `~/.config/opencode/agents` quando `~/.gemini/antigravity/agents` era um symlink para o OpenCode.
+- A limpeza so apaga a copia vazada quando ela e identica ao agente Antigravity real e aponta para `~/.gemini/antigravity/agent_prompts`, mantendo backup antes da remocao.
+- Adiciona regressao para reparar roots Antigravity como symlink e limpar o agente extensionless que ficou no diretorio do OpenCode.
+
 ## 0.1.60 - Reparo real da projeção Antigravity no Windows
 
 - Repara roots Antigravity `skills`/`agents` que ficaram como symlinks Windows quebrados ou inatravessáveis, removendo o link com `--force` sem apagar o alvo e recriando uma árvore real.

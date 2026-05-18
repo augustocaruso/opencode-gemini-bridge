@@ -726,6 +726,15 @@ test("syncToOpenCode repairs Antigravity symlink projection roots with force", (
     t.skip(`symlink creation is not available in this test environment: ${error instanceof Error ? error.message : String(error)}`);
     return;
   }
+  const leakedOpenCodeAgent = path.join(openCodeRoot, "agents", "researcher");
+  fs.writeFileSync(leakedOpenCodeAgent, `${JSON.stringify({
+    name: "researcher",
+    description: "Research notes.",
+    command_spec: {
+      command: "/bin/cat",
+      args: [path.join(antigravityRoot, "agent_prompts", "researcher.md")],
+    },
+  }, null, 2)}\n`);
 
   const report = syncToOpenCode({ projectRoot, homeDir, rulesyncMode: "off", force: true, silent: true });
 
@@ -736,8 +745,10 @@ test("syncToOpenCode repairs Antigravity symlink projection roots with force", (
   assert.equal(fs.existsSync(path.join(antigravityRoot, "skills", "study-notes", "SKILL.md")), true);
   assert.equal(fs.existsSync(path.join(antigravityRoot, "agents", "researcher")), true);
   assert.equal(fs.existsSync(path.join(antigravityRoot, "agent_prompts", "researcher.md")), true);
+  assert.equal(fs.existsSync(leakedOpenCodeAgent), false);
   assert.ok(report.projectedAntigravitySkills.includes(".gemini/antigravity/skills/study-notes"));
   assert.ok(report.projectedAntigravityAgents.includes(".gemini/antigravity/agents/researcher"));
+  assert.ok(report.removedAntigravityAgents.includes(".config/opencode/agents/researcher"));
 });
 
 test("syncToOpenCode adopts identical unmanaged Antigravity skill projections", () => {
