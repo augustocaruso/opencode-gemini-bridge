@@ -16,7 +16,11 @@ test("Windows bootstrap normalizes quoted path arguments before forwarding them"
   assert.match(text, /function Normalize-PathArgument/);
   assert.match(text, /\$Project = Normalize-PathArgument \$Project/);
   assert.match(text, /\$Prefix = Normalize-PathArgument \$Prefix/);
-  assert.ok(text.indexOf("$Project = Normalize-PathArgument $Project") < text.indexOf('if ($Project) { $AllInstallerArgs += @("-Project", $Project) }'));
+  assert.match(text, /\$InstallerParams = @\{\}/);
+  assert.match(text, /\$InstallerParams\["Project"\] = \$Project/);
+  assert.match(text, /& \$Installer\.FullName @InstallerParams/);
+  assert.doesNotMatch(text, /@AllInstallerArgs/);
+  assert.ok(text.indexOf("$Project = Normalize-PathArgument $Project") < text.indexOf('$InstallerParams["Project"] = $Project'));
 });
 
 test("Windows bootstrap repairs a file blocking the OpenCode config dir before installer download", () => {

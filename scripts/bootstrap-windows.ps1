@@ -96,17 +96,20 @@ try {
     throw "Release pack did not contain scripts/install-windows.ps1."
   }
 
-  $AllInstallerArgs = @()
-  if ($Project) { $AllInstallerArgs += @("-Project", $Project) }
-  if ($Prefix) { $AllInstallerArgs += @("-Prefix", $Prefix) }
-  if ($Rulesync) { $AllInstallerArgs += @("-Rulesync", $Rulesync) }
-  if ($NoSetup) { $AllInstallerArgs += "-NoSetup" }
-  if ($NoUx) { $AllInstallerArgs += "-NoUx" }
-  if ($NoOpenCode) { $AllInstallerArgs += "-NoOpenCode" }
-  if ($Force) { $AllInstallerArgs += "-Force" }
-  $AllInstallerArgs += $InstallerArgs
+  $InstallerParams = @{}
+  if ($Project) { $InstallerParams["Project"] = $Project }
+  if ($Prefix) { $InstallerParams["Prefix"] = $Prefix }
+  if ($Rulesync) { $InstallerParams["Rulesync"] = $Rulesync }
+  if ($NoSetup) { $InstallerParams["NoSetup"] = $true }
+  if ($NoUx) { $InstallerParams["NoUx"] = $true }
+  if ($NoOpenCode) { $InstallerParams["NoOpenCode"] = $true }
+  if ($Force) { $InstallerParams["Force"] = $true }
 
-  & $Installer.FullName @AllInstallerArgs
+  if ($InstallerArgs -and $InstallerArgs.Count -gt 0) {
+    & $Installer.FullName @InstallerParams @InstallerArgs
+  } else {
+    & $Installer.FullName @InstallerParams
+  }
 } finally {
   Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
 }
