@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.42 - Update repara bloqueios antigos
+
+- Faz o sync com `--force` reparar arquivos legados que bloqueiam diretórios de projeção, criando backup central antes de remover o bloqueio.
+- Aplica o reparo a skills, agentes, comandos, workflows e MCPs gerenciados, reduzindo warnings para casos realmente ambíguos.
+- Troca a regressão anterior de "não quebrar" por "reparar e projetar", cobrindo o caso de `~/.config/opencode/skills` deixado como arquivo legado.
+
 ## 0.1.41 - Update resiliente a projeções antigas
 
 - Faz o inventário ignorar raízes globais inválidas, como `skills`/`agents` antigos deixados como arquivo em vez de diretório, sem derrubar `ogb update`.

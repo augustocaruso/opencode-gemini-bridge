@@ -496,7 +496,7 @@ test("syncToOpenCode projects Gemini extension skills into OpenCode skills", () 
   assert.match(projectedGuide, new RegExp(extensionDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
-test("syncToOpenCode keeps home-mode sync alive when one global extension skill cannot be projected", () => {
+test("syncToOpenCode repairs a legacy global skills file blocking home-mode projection", () => {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));
   const extensionDir = path.join(homeDir, ".gemini", "extensions", "study-pack");
   const skillDir = path.join(extensionDir, "skills", "review-notes");
@@ -507,13 +507,13 @@ test("syncToOpenCode keeps home-mode sync alive when one global extension skill 
   fs.mkdirSync(path.dirname(globalSkillsRoot), { recursive: true });
   fs.writeFileSync(globalSkillsRoot, "legacy file blocking the managed skills directory\n", "utf8");
 
-  const report = syncToOpenCode({ projectRoot: homeDir, homeDir, rulesyncMode: "off", silent: true });
+  const report = syncToOpenCode({ projectRoot: homeDir, homeDir, rulesyncMode: "off", silent: true, force: true });
+  const projectedSkill = path.join(homeDir, ".config", "opencode", "skills", "review-notes", "SKILL.md");
 
-  assert.equal(report.projectRoot, homeDir);
-  assert.ok(report.warnings.some((warning) =>
-    warning.includes("Global extension skill projection failed")
-    && warning.includes("review-notes")
-  ));
+  assert.ok(report.projectedSkills.includes(".config/opencode/skills/review-notes"));
+  assert.equal(fs.readFileSync(projectedSkill, "utf8"), "---\nname: review-notes\ndescription: Review notes.\n---\n# Review\n");
+  assert.equal(report.warnings.some((warning) => warning.includes("Global extension skill projection failed")), false);
+  assert.ok(report.backups.some((backup) => backup.source === globalSkillsRoot));
 });
 
 test("syncToOpenCode removes stale managed project extension skills", () => {

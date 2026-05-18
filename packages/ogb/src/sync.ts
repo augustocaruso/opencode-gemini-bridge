@@ -314,6 +314,39 @@ function projectionFailureWarning(label: string, source: string, error: unknown)
   return `${label} projection failed: ${source}: ${errorMessage(error)}`;
 }
 
+function repairNonDirectoryPathBlockers(options: {
+  root: string;
+  targetDir: string;
+  reportPath: string;
+  label: string;
+  backupSession: BackupSession;
+  dryRun?: boolean;
+  force?: boolean;
+}): string | undefined {
+  if (options.dryRun) return undefined;
+
+  const root = path.resolve(options.root);
+  const targetDir = path.resolve(options.targetDir);
+  if (targetDir !== root && !pathIsInside(root, targetDir)) return undefined;
+
+  const rel = path.relative(root, targetDir);
+  const parts = rel.split(path.sep).filter(Boolean);
+  let cursor = root;
+  for (const part of parts) {
+    cursor = path.join(cursor, part);
+    if (!fs.existsSync(cursor) || dirExists(cursor)) continue;
+
+    const blocker = pathIsInside(root, cursor) ? relativeTo(root, cursor) : cursor;
+    if (!options.force) {
+      return `${options.label} conflict: ${options.reportPath} is blocked by ${blocker}, which is not a directory; use --force to repair with backup`;
+    }
+    options.backupSession.backupExisting(cursor);
+    fs.rmSync(cursor, { recursive: true, force: true });
+  }
+
+  return undefined;
+}
+
 function globalGeminiContextInputs(homeDir: string): string[] {
   const inputs: string[] = [];
   const rootGemini = path.join(homeDir, ".gemini", "GEMINI.md");
@@ -885,6 +918,17 @@ function writeManagedGlobalText(options: {
     }
   }
 
+  const repairWarning = repairNonDirectoryPathBlockers({
+    root: options.globalRoot,
+    targetDir: path.dirname(targetPath),
+    reportPath,
+    label: options.label,
+    backupSession: options.backupSession,
+    dryRun: options.dryRun,
+    force: options.force,
+  });
+  if (repairWarning) return { warning: repairWarning };
+
   if (fileExists(targetPath)) options.backupSession.backupExisting(targetPath);
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
   fs.writeFileSync(targetPath, options.content, "utf8");
@@ -1070,6 +1114,19 @@ function projectGlobalAntigravityMcps(options: {
     const nextText = `${JSON.stringify(nextConfig, null, 2)}\n`;
     const currentText = fileExists(targetPath) ? fs.readFileSync(targetPath, "utf8") : undefined;
     if (currentText !== nextText) {
+      const repairWarning = repairNonDirectoryPathBlockers({
+        root: options.homeDir,
+        targetDir: path.dirname(targetPath),
+        reportPath: ANTIGRAVITY_MCP_CONFIG_REL_PATH,
+        label: "Antigravity MCP",
+        backupSession: options.backupSession,
+        dryRun: options.dryRun,
+        force: options.force,
+      });
+      if (repairWarning) {
+        warnings.push(repairWarning);
+        return { promoted, removed, warnings: [...new Set(warnings)] };
+      }
       if (fileExists(targetPath)) options.backupSession.backupExisting(targetPath);
       fs.mkdirSync(path.dirname(targetPath), { recursive: true });
       fs.writeFileSync(targetPath, nextText, "utf8");
@@ -1628,6 +1685,17 @@ function copyManagedSkillDir(options: {
     return { warning: `${options.label} conflict: ${options.reportDir} was edited manually; use --force to overwrite` };
   }
 
+  const repairWarning = repairNonDirectoryPathBlockers({
+    root: options.targetRoot,
+    targetDir,
+    reportPath: options.reportDir,
+    label: options.label,
+    backupSession: options.backupSession,
+    dryRun: options.dryRun,
+    force: options.force,
+  });
+  if (repairWarning) return { warning: repairWarning };
+
   if (dirExists(targetDir)) options.backupSession.backupExisting(targetDir);
   copyDir(options.sourceDir, targetDir, options.sourceBaseDir);
   recordManagedSkillDir({
@@ -1955,6 +2023,17 @@ function writeManagedAntigravityText(options: {
   if (fileExists(targetPath) && !options.force && previousHash && sha256File(targetPath) !== previousHash) {
     return { warning: `${options.label} conflict: ${options.reportPath} was edited manually; use --force to overwrite` };
   }
+
+  const repairWarning = repairNonDirectoryPathBlockers({
+    root: options.homeDir,
+    targetDir: path.dirname(targetPath),
+    reportPath: options.reportPath,
+    label: options.label,
+    backupSession: options.backupSession,
+    dryRun: options.dryRun,
+    force: options.force,
+  });
+  if (repairWarning) return { warning: repairWarning };
 
   if (fileExists(targetPath)) options.backupSession.backupExisting(targetPath);
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -2600,6 +2679,20 @@ function projectBuiltInFiles(options: {
         warnings.push(`${options.label} conflict: ${relPath} exists or was edited manually; use --force to overwrite`);
         continue;
       }
+    }
+
+    const repairWarning = repairNonDirectoryPathBlockers({
+      root: options.projectRoot,
+      targetDir: path.dirname(targetPath),
+      reportPath: relPath,
+      label: options.label,
+      backupSession: options.backupSession,
+      dryRun: options.dryRun,
+      force: options.force,
+    });
+    if (repairWarning) {
+      warnings.push(repairWarning);
+      continue;
     }
 
     if (fs.existsSync(targetPath)) options.backupSession.backupExisting(targetPath);
