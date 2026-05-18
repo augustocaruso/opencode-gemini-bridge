@@ -545,6 +545,33 @@ test("update final model surfaces bootstrap tails and useful retry actions", () 
   assert.match(model.next[0], /ogb update --plain/);
 });
 
+test("update final model surfaces post-update check summary without raw progress JSON", () => {
+  const model = ritualViewModel("update", {
+    status: "error",
+    command: ["ogb", "update"],
+    plan: buildInstallerPlan({ intent: "update", projectRoot, homeDir, release: "v0.0.61" }),
+    message: "OGB bootstrap completed, but the post-update check did not finish cleanly: Post-update check failed.",
+    postUpdate: {
+      status: "fail",
+      command: ["ogb", "check", "--force"],
+      message: "Post-update check failed: validation: Validation falhou: OpenCode resolved config.",
+      exitCode: 2,
+      stdoutTail: "{\"schemaVersion\":\"ogb.progress.v1\",\"type\":\"ritual.step\"}",
+      summary: {
+        callouts: ["validation: Validation falhou: OpenCode resolved config."],
+        next: ["OGB should repair this automatically."],
+      },
+      files: ["C:\\Users\\leo\\.config\\opencode-gemini-bridge\\generated\\ogb-pass.json"],
+    },
+  });
+
+  const text = model.callouts.join("\n");
+  assert.match(text, /Validation falhou: OpenCode resolved config/);
+  assert.doesNotMatch(text, /schemaVersion/);
+  assert.match(model.next[0], /repair this automatically/);
+  assert.match(model.files[0], /ogb-pass\.json/);
+});
+
 test("update final model compacts noisy bootstrap tails for the rich UI", () => {
   const model = ritualViewModel("update", {
     status: "error",

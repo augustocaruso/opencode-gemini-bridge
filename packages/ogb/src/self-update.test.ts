@@ -209,6 +209,69 @@ test("runSelfUpdate forwards post-update check progress in canonical order", () 
   ]);
 });
 
+test("runSelfUpdate surfaces post-update progress summary instead of raw NDJSON", () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-update-post-check-summary-"));
+  const progress = [
+    {
+      schemaVersion: RITUAL_PROGRESS_SCHEMA_VERSION,
+      ritualId: "check-test",
+      kind: "check",
+      timestamp: "2026-05-18T17:33:34.349Z",
+      type: "ritual.step",
+      stepId: "validate",
+      label: "Validate the resolved OpenCode configuration.",
+      status: "fail",
+      message: "OpenCode resolved config: EEXIST: file already exists, mkdir 'C:\\Users\\leo\\.config\\opencode'",
+    },
+    {
+      schemaVersion: RITUAL_PROGRESS_SCHEMA_VERSION,
+      ritualId: "check-test",
+      kind: "check",
+      timestamp: "2026-05-18T17:33:34.350Z",
+      type: "ritual.finished",
+      outcome: "fail",
+      exitCode: 2,
+      summary: {
+        callouts: [
+          "validation: Validation falhou: OpenCode resolved config: EEXIST: file already exists, mkdir 'C:\\Users\\leo\\.config\\opencode'",
+        ],
+        next: ["OGB should repair the blocking OpenCode config path automatically."],
+      },
+      files: ["C:\\Users\\leo\\.config\\opencode-gemini-bridge\\generated\\ogb-pass.json"],
+    },
+  ].map((event) => JSON.stringify(event)).join("\n");
+
+  const report = runSelfUpdate({
+    projectRoot,
+    stdio: "pipe",
+    runCommand: (spec) => ({
+      ok: true,
+      command: spec.command,
+      args: spec.args ?? [],
+      status: 0,
+      signal: null,
+      stdout: "bootstrap ok",
+      stderr: "",
+    }),
+    runPostUpdateCommand: (spec) => ({
+      ok: false,
+      command: spec.command,
+      args: spec.args ?? [],
+      status: 2,
+      signal: null,
+      stdout: progress,
+      stderr: "",
+    }),
+  });
+
+  assert.equal(report.status, "error");
+  assert.equal(report.postUpdate?.status, "fail");
+  assert.match(report.message, /Validation falhou: OpenCode resolved config/);
+  assert.match(report.postUpdate?.message ?? "", /Validation falhou: OpenCode resolved config/);
+  assert.doesNotMatch(report.postUpdate?.stdoutTail ?? "", /schemaVersion/);
+  assert.match(report.postUpdate?.stdoutTail ?? "", /Reports:/);
+});
+
 test("runSelfUpdate reports bootstrap stderr tail and specific progress failure", () => {
   const events: RitualProgressEvent[] = [];
   const report = runSelfUpdate({

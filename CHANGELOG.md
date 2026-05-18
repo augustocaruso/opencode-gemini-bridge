@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.48 - Update mostra o blocker real
+
+- Faz `ogb update` aproveitar o resumo final do `ogb check --progress-json` quando o post-check falha.
+- Para de mostrar NDJSON truncado como problema principal e passa a exibir blocker, proxima acao e reports gerados pelo proprio check.
+
 ## 0.1.47 - Validação repara diretório global bloqueado
 
 - Faz a etapa de validação reparar, com backup, um arquivo antigo ocupando `~/.config/opencode` antes de chamar `opencode debug config`.

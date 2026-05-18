@@ -4,7 +4,7 @@ import { buildInstallerPlan, type InstallerPlan } from "./installer-planner.js";
 import { runNativeCommand, type NativeCommandResult, type NativeCommandSpec } from "./native-runner.js";
 import { createPlatformAdapter } from "./platform-adapter.js";
 import { normalizePathInput, resolveProjectPaths } from "./paths.js";
-import { emitRitualProgress, progressStatusFromOutcome, RITUAL_PROGRESS_SCHEMA_VERSION, type RitualProgressJsonEvent, type RitualProgressSink, type RitualProgressStatus } from "./ritual-progress.js";
+import { emitRitualProgress, progressStatusFromOutcome, RITUAL_PROGRESS_SCHEMA_VERSION, type RitualProgressJsonEvent, type RitualProgressSink, type RitualProgressStatus, type RitualProgressSummary } from "./ritual-progress.js";
 import { writeStateRecord } from "./state-store.js";
 import { OGB_VERSION } from "./types.js";
 import type { RulesyncMode } from "./rulesync.js";
@@ -49,6 +49,8 @@ export interface PostUpdateRitualReport {
   message: string;
   stdoutTail?: string;
   stderrTail?: string;
+  summary?: RitualProgressSummary;
+  files?: string[];
 }
 
 export interface UpdateCheckOptions {
@@ -229,6 +231,106 @@ function outputTail(value: unknown, maxChars = 4000): string | undefined {
   return text.length > maxChars ? text.slice(-maxChars) : text;
 }
 
+function uniqueStrings(items: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of items) {
+    const text = item?.trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+  }
+  return out;
+}
+
+function parseProgressJsonLine(line: string): RitualProgressJsonEvent | undefined {
+  const trimmed = line.trim();
+  if (!trimmed) return undefined;
+  try {
+    const event = JSON.parse(trimmed) as Partial<RitualProgressJsonEvent>;
+    if (event.schemaVersion !== RITUAL_PROGRESS_SCHEMA_VERSION || typeof event.type !== "string") return undefined;
+    return event as RitualProgressJsonEvent;
+  } catch {
+    return undefined;
+  }
+}
+
+function postUpdateProgressDiagnostics(stdout: string, exitCode: number | null | undefined): {
+  summary?: RitualProgressSummary;
+  files: string[];
+  tail?: string;
+} {
+  const stepCallouts: string[] = [];
+  const finalCallouts: string[] = [];
+  const errorCallouts: string[] = [];
+  const next: string[] = [];
+  const files: string[] = [];
+  let sawProgress = false;
+  let lastStep: { label: string; status: string; message?: string } | undefined;
+
+  for (const line of stdout.split(/\r?\n/)) {
+    const event = parseProgressJsonLine(line);
+    if (!event) continue;
+    sawProgress = true;
+    if (event.type === "ritual.step") {
+      lastStep = { label: event.label, status: event.status, message: event.message };
+      if ((event.status === "fail" || event.status === "warn") && event.message) {
+        stepCallouts.push(`${event.label}: ${event.message}`);
+      }
+      continue;
+    }
+    if (event.type === "ritual.finished") {
+      finalCallouts.push(...(event.summary?.callouts ?? []));
+      next.push(...(event.summary?.next ?? []));
+      files.push(...(event.files ?? []));
+      if (event.outcome !== "pass" && (event.summary?.callouts?.length ?? 0) === 0) {
+        finalCallouts.push(`Post-update check finished with outcome ${event.outcome}.`);
+      }
+      continue;
+    }
+    if (event.type === "ritual.error") {
+      errorCallouts.push(event.error);
+      errorCallouts.push(...(event.summary?.callouts ?? []));
+      next.push(...(event.summary?.next ?? []));
+    }
+  }
+
+  if (sawProgress && exitCode !== 0 && finalCallouts.length === 0 && errorCallouts.length === 0 && stepCallouts.length === 0 && lastStep) {
+    stepCallouts.push(
+      `Post-update check stopped while ${lastStep.status === "running" ? "running" : "processing"} ${lastStep.label}${lastStep.message ? `: ${lastStep.message}` : "."}`,
+    );
+  }
+  const callouts = [...finalCallouts, ...errorCallouts, ...stepCallouts];
+
+  const summary: RitualProgressSummary | undefined = callouts.length > 0 || next.length > 0
+    ? {
+      callouts: uniqueStrings(callouts),
+      next: uniqueStrings(next),
+    }
+    : undefined;
+  const uniqueFiles = uniqueStrings(files);
+  const diagnosticLines = [
+    ...(summary?.callouts ?? []),
+    ...(summary?.next ?? []).map((item) => `Next: ${item}`),
+    ...uniqueFiles.map((item) => `Reports: ${item}`),
+  ];
+  return {
+    summary,
+    files: uniqueFiles,
+    tail: diagnosticLines.length > 0 ? outputTail(diagnosticLines.join("\n")) : undefined,
+  };
+}
+
+function firstPostUpdateIssue(summary: RitualProgressSummary | undefined): string | undefined {
+  return summary?.callouts?.find((item) => item.trim().length > 0);
+}
+
+function printPostUpdateDetails(report: PostUpdateRitualReport): void {
+  for (const callout of report.summary?.callouts ?? []) console.log(`- ${callout}`);
+  for (const next of report.summary?.next ?? []) console.log(`Next: ${next}`);
+  for (const file of report.files ?? []) console.log(`Report: ${file}`);
+}
+
 export function buildPostUpdateRitualCommand(options: SelfUpdateOptions = {}, platform: NodeJS.Platform = process.platform): string[] {
   const adapter = createPlatformAdapter({ platform, homeDir: options.projectRoot ?? process.cwd() });
   const projectRoot = adapter.resolvePath(options.projectRoot ?? process.cwd());
@@ -313,7 +415,8 @@ export function runPostUpdateRitual(options: SelfUpdateOptions = {}): PostUpdate
     },
   });
   replayPostUpdateProgress(result.stdout, options.onProgress);
-  const stdoutTail = outputTail(result.stdout);
+  const diagnostics = postUpdateProgressDiagnostics(result.stdout, result.status);
+  const stdoutTail = diagnostics.tail ?? outputTail(result.stdout);
   const stderrTail = outputTail(result.stderr);
 
   if (result.error) {
@@ -325,10 +428,13 @@ export function runPostUpdateRitual(options: SelfUpdateOptions = {}): PostUpdate
       message: `Post-update check could not run: ${result.error}`,
       stdoutTail,
       stderrTail,
+      summary: diagnostics.summary,
+      files: diagnostics.files,
     };
   }
 
   const status = result.status === 0 ? "pass" : result.status === 1 ? "warn" : "fail";
+  const firstIssue = firstPostUpdateIssue(diagnostics.summary);
   return {
     status,
     command,
@@ -337,10 +443,16 @@ export function runPostUpdateRitual(options: SelfUpdateOptions = {}): PostUpdate
     message: status === "pass"
       ? "Post-update check completed cleanly."
       : status === "warn"
-        ? "Post-update check completed with warnings."
-        : `Post-update check failed with exit code ${result.status ?? "unknown"}.`,
+        ? firstIssue
+          ? `Post-update check completed with warnings: ${firstIssue}`
+          : "Post-update check completed with warnings."
+        : firstIssue
+          ? `Post-update check failed: ${firstIssue}`
+          : `Post-update check failed with exit code ${result.status ?? "unknown"}.`,
     stdoutTail,
     stderrTail,
+    summary: diagnostics.summary,
+    files: diagnostics.files,
   };
 }
 
@@ -737,6 +849,7 @@ export function printSelfUpdateReport(report: SelfUpdateReport, json = false): v
   if (report.postUpdate) {
     console.log(`Post-update check: ${report.postUpdate.status}`);
     console.log(report.postUpdate.message);
+    printPostUpdateDetails(report.postUpdate);
     console.log(formatCommand(report.postUpdate.command));
   }
 }
@@ -762,6 +875,7 @@ export function printAutoUpdateReport(report: AutoUpdateReport, json = false): v
   if (report.postUpdate) {
     console.log(`Post-update check: ${report.postUpdate.status}`);
     console.log(report.postUpdate.message);
+    printPostUpdateDetails(report.postUpdate);
     console.log(formatCommand(report.postUpdate.command));
   }
 }

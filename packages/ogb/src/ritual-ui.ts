@@ -201,6 +201,27 @@ function checkNext(report: PassReport | undefined, fallback: string[]): string[]
   ], 4);
 }
 
+function postUpdateCallouts(report: SelfUpdateReport): string[] {
+  return uniqueLines([
+    report.message,
+    report.stderrTail,
+    report.stdoutTail,
+    report.postUpdate?.message,
+    ...(report.postUpdate?.summary?.callouts ?? []),
+    report.postUpdate?.stderrTail,
+    report.postUpdate?.summary ? undefined : report.postUpdate?.stdoutTail,
+  ]);
+}
+
+function postUpdateNext(report: SelfUpdateReport): string[] {
+  return uniqueLines([
+    ...(report.postUpdate?.summary?.next ?? []),
+    ...(report.postUpdate?.status === "fail" || report.postUpdate?.status === "error"
+      ? ["Run `ogb check --plain --force` to inspect the post-update failure directly.", "Run `ogb dashboard --plain` for the last persisted bridge state."]
+      : ["Run `ogb update --plain` so the bootstrap log is printed without the rich UI.", "Check Node/npm/PowerShell PATH and network access, then retry the same release."]),
+  ], 4);
+}
+
 function unexpectedErrorNext(kind: RitualKind, message: string): string[] {
   const command = `ogb ${kind} --plain`;
   const generic = [
@@ -354,15 +375,13 @@ function updateModel(report: SelfUpdateReport): RitualViewModel {
       { label: "download + bootstrap", status: tone, detail: bootstrapDetail },
       ...(report.postUpdate ? [{ label: "post-update check", status: postUpdateTone, detail: report.postUpdate.message }] : []),
     ],
-    callouts: report.status === "error" ? uniqueLines([report.message, report.stderrTail, report.stdoutTail, report.postUpdate?.stderrTail, report.postUpdate?.stdoutTail]) : [],
+    callouts: report.status === "error" ? postUpdateCallouts(report) : [],
     next: report.status === "preview"
       ? ["Run ogb update without --dry-run to apply this release."]
       : report.status === "applied"
         ? ["Restart OpenCode so the new plugin/sidebar code is loaded.", "Then run ogb check if you want a fresh human-readable pass."]
-        : report.postUpdate?.status === "fail" || report.postUpdate?.status === "error"
-          ? ["Run `ogb check --plain --force` to inspect the post-update failure directly.", "Run `ogb dashboard --plain` for the last persisted bridge state."]
-          : ["Run `ogb update --plain` so the bootstrap log is printed without the rich UI.", "Check Node/npm/PowerShell PATH and network access, then retry the same release."],
-    files: [],
+        : postUpdateNext(report),
+    files: report.postUpdate?.files ?? [],
   };
 }
 
