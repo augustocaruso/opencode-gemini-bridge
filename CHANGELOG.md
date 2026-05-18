@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.52 - Fallback real para EEXIST do OpenCode no Windows
+
+- Quando `opencode debug config` continua falhando com `EEXIST: file already exists, mkdir ...\\.config\\opencode` mesmo depois do guard com `OPENCODE_CONFIG_DIR` e `XDG_*`, o OGB agora pula apenas esse probe quebrado e usa a validação direta dos arquivos gerenciados.
+- Fecha o caso em que `ogb update` ainda terminava em `FAIL` porque dependia do JSON de debug do OpenCode, apesar de a config global, instructions, plugin, comandos e agentes do OGB ja terem sido validados.
+- Adiciona regressao para o erro persistente com `Bun v1.3.13 (Windows x64 baseline)`, garantindo que esse caminho conhecido nao volte a derrubar o post-check.
+
 ## 0.1.51 - Guard para mkdir do OpenCode no Windows
 
 - Quando `opencode debug config` falha no Windows com `EEXIST: file already exists, mkdir ...\\.config\\opencode` mas o alvo ja e um diretorio valido, o OGB agora reroda o probe com `OPENCODE_CONFIG_DIR` apontando para a config real e `XDG_*` temporario.

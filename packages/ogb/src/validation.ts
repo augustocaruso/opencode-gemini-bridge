@@ -332,18 +332,41 @@ function validateOpenCodeDebugConfig(paths: ReturnType<typeof resolveProjectPath
         OGB_STARTUP_SYNC: "0",
         ...guardEnv,
       });
-      checks.push({
-        name: "OpenCode debug config mkdir guard",
-        status: guarded.error || guarded.status !== 0 ? "warn" : "pass",
-        message: guarded.error || guarded.status !== 0
-          ? `OpenCode still failed after OPENCODE_CONFIG_DIR mkdir guard: ${guarded.error ?? (guarded.stderr || "opencode debug config failed").trim()}`
-          : `OpenCode debug config succeeded with OPENCODE_CONFIG_DIR=${blockedConfigDir}.`,
-        details: {
-          configDir: blockedConfigDir,
-          xdgConfigHome: guardEnv.XDG_CONFIG_HOME,
-        },
-      });
-      if (!guarded.error && guarded.status === 0) result = guarded;
+      if (!guarded.error && guarded.status === 0) {
+        checks.push({
+          name: "OpenCode debug config mkdir guard",
+          status: "pass",
+          message: `OpenCode debug config succeeded with OPENCODE_CONFIG_DIR=${blockedConfigDir}.`,
+          details: {
+            configDir: blockedConfigDir,
+            xdgConfigHome: guardEnv.XDG_CONFIG_HOME,
+          },
+        });
+        result = guarded;
+      } else if (openCodeMkdirErrorMentionsGlobalConfig(guarded)) {
+        checks.push({
+          name: "OpenCode resolved config",
+          status: "skip",
+          message: "Skipped opencode debug config after the known Windows Bun mkdir EEXIST bug; OGB already validated the managed OpenCode files directly.",
+          details: {
+            configDir: blockedConfigDir,
+            xdgConfigHome: guardEnv.XDG_CONFIG_HOME,
+            originalError: nativeResultText(result),
+            guardedError: nativeResultText(guarded),
+          },
+        });
+        return;
+      } else {
+        checks.push({
+          name: "OpenCode debug config mkdir guard",
+          status: "warn",
+          message: `OpenCode still failed after OPENCODE_CONFIG_DIR mkdir guard: ${guarded.error ?? (guarded.stderr || "opencode debug config failed").trim()}`,
+          details: {
+            configDir: blockedConfigDir,
+            xdgConfigHome: guardEnv.XDG_CONFIG_HOME,
+          },
+        });
+      }
     }
   }
   if (result.error || result.status !== 0) {

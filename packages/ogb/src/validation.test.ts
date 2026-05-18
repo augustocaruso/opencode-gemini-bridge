@@ -150,6 +150,67 @@ process.exit(1);
   }
 });
 
+test("runValidation does not fail when OpenCode keeps hitting the Windows mkdir EEXIST bug after the guard", () => {
+  const homeDir = tempHome();
+  const binDir = path.join(homeDir, "bin");
+  const fakeOpencode = path.join(binDir, "fake-opencode.cjs");
+  const configDir = path.join(homeDir, ".config", "opencode");
+  const extensionDir = path.join(homeDir, ".gemini", "extensions", "study-pack");
+  fs.mkdirSync(extensionDir, { recursive: true });
+  fs.writeFileSync(path.join(extensionDir, "GEMINI.md"), "Global extension rules\n", "utf8");
+
+  setupUx({
+    homeDir,
+    projectRoot: homeDir,
+    resetGlobal: true,
+    force: true,
+    installOpenCode: false,
+    installPlugins: false,
+    installTuiDependencies: false,
+  });
+  syncToOpenCode({ projectRoot: homeDir, homeDir, rulesyncMode: "off", silent: true, force: true });
+
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(fakeOpencode, `
+const args = process.argv.slice(2);
+const displayDir = process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR || "C:\\\\Users\\\\leo\\\\.config\\\\opencode";
+if (args[0] === "--version") {
+  console.log("opencode fake");
+  process.exit(0);
+}
+if (args[0] === "debug" && args[1] === "config") {
+  console.error("EEXIST: file already exists, mkdir '" + displayDir + "'");
+  console.error('path: "' + displayDir.replace(/\\\\/g, "\\\\\\\\") + '", syscall: "mkdir", errno: -17, code: "EEXIST"');
+  console.error("Bun v1.3.13 (Windows x64 baseline)");
+  process.exit(2);
+}
+console.error("unexpected opencode args: " + args.join(" "));
+process.exit(1);
+`, "utf8");
+  fs.writeFileSync(path.join(binDir, "opencode"), `#!/usr/bin/env sh\nexec node "${fakeOpencode.replace(/"/g, "\\\"")}" "$@"\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(binDir, "opencode.cmd"), `@echo off\r\nnode "${fakeOpencode}" %*\r\n`, "utf8");
+
+  const originalPath = process.env.PATH;
+  const originalDisplay = process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR;
+  process.env.PATH = `${binDir}${path.delimiter}${originalPath ?? ""}`;
+  process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR = "C:\\Users\\leo\\.config\\opencode";
+  try {
+    const report = runValidation({ projectRoot: homeDir, homeDir, silent: true });
+    const fallbackCheck = report.checks.find((check) => check.name === "OpenCode resolved config");
+    const debugFailure = report.checks.find((check) => check.name === "OpenCode resolved config" && check.status === "fail");
+
+    assert.notEqual(report.outcome, "fail");
+    assert.equal(fallbackCheck?.status, "skip");
+    assert.match(fallbackCheck?.message ?? "", /Windows Bun mkdir EEXIST/);
+    assert.equal(debugFailure, undefined);
+  } finally {
+    process.env.PATH = originalPath;
+    if (originalDisplay === undefined) delete process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR;
+    else process.env.OGB_FAKE_DISPLAY_OPENCODE_DIR = originalDisplay;
+  }
+});
+
 test("runValidation validates home/global OpenCode files without project artifacts", () => {
   const homeDir = tempHome();
   const extensionDir = path.join(homeDir, ".gemini", "extensions", "study-pack");
