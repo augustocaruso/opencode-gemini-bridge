@@ -1346,6 +1346,23 @@ test("syncToOpenCode repairs global OpenCode MCP entries written with Gemini sha
   });
 });
 
+test("syncToOpenCode backs up and replaces a stale file blocking the global OpenCode config dir", () => {
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));
+  const configDir = path.join(homeDir, ".config", "opencode");
+  fs.mkdirSync(path.join(homeDir, ".gemini"), { recursive: true });
+  fs.mkdirSync(path.dirname(configDir), { recursive: true });
+  fs.writeFileSync(path.join(homeDir, ".gemini", "GEMINI.md"), "Global rules\n", "utf8");
+  fs.writeFileSync(configDir, "stale projected file\n", "utf8");
+
+  const report = syncToOpenCode({ projectRoot: homeDir, homeDir, rulesyncMode: "off", silent: true, force: true });
+
+  assert.equal(fs.statSync(configDir).isDirectory(), true);
+  assert.equal(fs.existsSync(path.join(configDir, "opencode.json")), true);
+  const backup = report.backups.find((item) => item.source === configDir);
+  assert.ok(backup);
+  assert.equal(fs.readFileSync(backup.backup, "utf8"), "stale projected file\n");
+});
+
 test("syncToOpenCode can wire external quota UI and runtime fallback plugins", () => {
   const projectRoot = tempProject();
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "ogb-home-"));

@@ -178,6 +178,29 @@ test("setupUx writes global OpenCode UX profile and project fallback profile", (
   assert.equal(startupConfig.failureBackoffMs, 10 * 60_000);
 });
 
+test("setupUx backs up and replaces a stale file blocking the global OpenCode config dir", () => {
+  const root = tempRoot();
+  const homeDir = path.join(root, "home");
+  const configDir = path.join(homeDir, ".config", "opencode");
+  const projectRoot = path.join(root, "project");
+  fs.mkdirSync(path.dirname(configDir), { recursive: true });
+  fs.mkdirSync(projectRoot, { recursive: true });
+  fs.writeFileSync(configDir, "stale projected file\n", "utf8");
+
+  const report = setupUx({
+    homeDir,
+    projectRoot,
+    installOpenCode: false,
+    installPlugins: false,
+  });
+
+  assert.equal(fs.statSync(configDir).isDirectory(), true);
+  assert.equal(fs.existsSync(path.join(configDir, "opencode.json")), true);
+  const repair = report.writes.find((write) => write.path === configDir && write.status === "removed");
+  assert.ok(repair?.backup);
+  assert.equal(fs.readFileSync(repair.backup, "utf8"), "stale projected file\n");
+});
+
 test("setupUx replaces the legacy relative OGB startup plugin spec", () => {
   const root = tempRoot();
   const homeDir = path.join(root, "home");

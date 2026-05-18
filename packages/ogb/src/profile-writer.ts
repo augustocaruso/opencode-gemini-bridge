@@ -25,6 +25,7 @@ export interface ProfileWriter {
   maintainer: boolean;
   backupDir: string;
   retention: BackupRetentionReport;
+  ensureDirectory(dirPath: string, options?: { force?: boolean }): ProfileWrite | undefined;
   writeText(options: {
     filePath: string;
     text: string;
@@ -92,6 +93,25 @@ export function createProfileWriter(options: ProfileWriterOptions): ProfileWrite
     };
   }
 
+  function ensureDirectory(dirPath: string, ensureOptions: { force?: boolean } = {}): ProfileWrite | undefined {
+    if (!fs.existsSync(dirPath)) return undefined;
+    if (fs.statSync(dirPath).isDirectory()) return undefined;
+    if (options.dryRun) return { path: dirPath, status: "preview", reason: "preview" };
+    if (options.maintainer && ensureOptions.force !== true) {
+      return { path: dirPath, status: "protected", reason: "maintainer_protected" };
+    }
+
+    const backup = backupSession.backupExisting(dirPath);
+    fs.rmSync(dirPath, { recursive: true, force: true });
+    fs.mkdirSync(dirPath, { recursive: true });
+    return {
+      path: dirPath,
+      status: "removed",
+      backup,
+      reason: "profile_remove",
+    };
+  }
+
   function removeFileIfExists(filePath: string): ProfileWrite | undefined {
     if (!fs.existsSync(filePath)) return undefined;
     if (options.dryRun) return { path: filePath, status: "preview", reason: "preview" };
@@ -111,6 +131,7 @@ export function createProfileWriter(options: ProfileWriterOptions): ProfileWrite
     maintainer: Boolean(options.maintainer),
     backupDir: backupSession.backupDir,
     retention: backupSession.retention,
+    ensureDirectory,
     writeText,
     removeFileIfExists,
   };

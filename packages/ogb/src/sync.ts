@@ -338,6 +338,15 @@ function repairNonDirectoryPathBlockers(options: {
   const targetDir = path.resolve(options.targetDir);
   if (targetDir !== root && !pathIsInside(root, targetDir)) return undefined;
 
+  if (fs.existsSync(root) && !dirExists(root)) {
+    const blocker = path.basename(root);
+    if (!options.force) {
+      return `${options.label} conflict: ${options.reportPath} is blocked by ${blocker}, which is not a directory; use --force to repair with backup`;
+    }
+    options.backupSession.backupExisting(root);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+
   const rel = path.relative(root, targetDir);
   const parts = rel.split(path.sep).filter(Boolean);
   let cursor = root;
@@ -1180,6 +1189,16 @@ function ensureGlobalOpenCodeConfig(options: {
     if (mcpServers.length > 0) contentObject.mcp = mcp;
     const content = `${JSON.stringify(contentObject, null, 2)}\n`;
     if (options.dryRun) return { promoted: relPath, mcpServers };
+    const repairWarning = repairNonDirectoryPathBlockers({
+      root: options.globalRoot,
+      targetDir: path.dirname(configPath),
+      reportPath: relPath,
+      label: "Global OpenCode config",
+      backupSession: options.backupSession,
+      dryRun: options.dryRun,
+      force: options.force,
+    });
+    if (repairWarning) return { mcpServers: [], warning: repairWarning };
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(configPath, content, "utf8");
     upsertManagedFile(options.state, {

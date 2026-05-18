@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.46 - Reparo do diretório global OpenCode
+
+- Faz `setup-ux` e `sync` repararem, com backup, um arquivo antigo ocupando o caminho `~/.config/opencode`.
+- Evita que o post-update check termine em `EEXIST: file already exists, mkdir .../.config/opencode` durante `opencode debug config`.
+
 ## 0.1.45 - Notas visiveis para sync parcial
 
 - Mantem projeções Antigravity bloqueadas por `untrusted mount point` fora dos blockers do `check`.

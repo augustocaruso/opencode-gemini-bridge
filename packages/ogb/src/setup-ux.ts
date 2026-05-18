@@ -739,6 +739,8 @@ export function setupUx(options: SetupUxOptions = {}): SetupUxReport {
   if (hasLegacyGlobalStartupPluginConfig(currentConfig) || hasLegacyGlobalStartupPluginConfig(legacyConfig)) {
     warnings.push("A config global continha o plugin OGB antigo em file:plugins/ogb-startup-sync.js; setup-ux vai trocar pela URL local absoluta.");
   }
+  const repairedRoot = profileWriter.ensureDirectory(root, { force: true });
+  if (repairedRoot) writes.push(repairedRoot);
   if (!hasCurrentConfig && hasLegacyConfig) {
     warnings.push(`${legacyConfigPath} foi migrado para ${configPath}, que e o caminho lido pelo OpenCode atual.`);
   }
